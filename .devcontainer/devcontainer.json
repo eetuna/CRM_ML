@@ -1,0 +1,49 @@
+{
+  "name": "CRM_ML Development Environment",
+  "build": {
+    "dockerfile": "./Dockerfile",
+    "context": ".."
+  },
+
+  "features": {
+    "ghcr.io/devcontainers/features/common-utils:2": {
+      "installZsh": true,
+      "installOhMyZsh": true
+    }
+  },
+
+  "remoteUser": "root",
+
+  "customizations": {
+    "vscode": {
+      "extensions": [
+        "ms-vscode.cpptools",
+        "ms-vscode.cmake-tools",
+        "ms-python.python",
+        "ms-python.vscode-pylance",
+        "anthropic.claude-code"
+      ],
+      "settings": {
+        "python.defaultInterpreterPath": "/usr/bin/python3",
+        "cmake.configureOnOpen": false,
+        "C_Cpp.default.includePath": [
+          "${workspaceFolder}/src",
+          "${workspaceFolder}/numerical",
+          "/usr/include/eigen3"
+        ]
+      }
+    }
+  },
+
+  "mounts": [
+    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind,consistency=cached",
+    "source=${localEnv:HOME}/.config/claude,target=/root/.config/claude,type=bind,consistency=cached",
+    "source=vscode-server-${devcontainerId},target=/root/.vscode-server,type=volume"
+  ],
+
+  "postCreateCommand": "pip3 install -r requirements.txt && cd build && cmake -DBUILD_PYTHON_BINDINGS=ON .. && make -j$(nproc) crm_python",
+
+  "containerEnv": {
+    "PYTHONPATH": "/workspaces/CRM_ML"
+  }
+}

@@ -1,0 +1,35 @@
+# CRM ML/RL Framework Requirements
+# Core ML/RL
+torch>=2.0.0
+numpy>=1.24.0
+scipy>=1.10.0
+
+# Reinforcement Learning
+stable-baselines3>=2.1.0
+gymnasium>=0.29.0
+shimmy>=1.0.0
+
+# Data handling
+pandas>=2.0.0
+h5py>=3.8.0
+mat73>=0.60  # For loading MATLAB .mat files
+
+# Visualization
+matplotlib>=3.7.0
+tensorboard>=2.13.0
+wandb>=0.15.0
+
+# C++ bindings
+pybind11>=2.11.0
+
+# Optimization (for MPC)
+cvxpy>=1.4.0
+casadi>=3.6.0
+
+# Utilities
+tqdm>=4.65.0
+pyyaml>=6.0
+python-dotenv>=1.0.0
+
+# Testing
+pytest>=7.3.0

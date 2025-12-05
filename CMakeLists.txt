@@ -85,3 +85,56 @@ target_include_directories(CRMDYNTest PUBLIC
 		"${PROJECT_SOURCE_DIR}/numerical"
 		)
 
+# ============================================================
+# Python Bindings (optional - requires pybind11)
+# ============================================================
+option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" OFF)
+
+if(BUILD_PYTHON_BINDINGS)
+    # Find Python and pybind11
+    find_package(Python3 COMPONENTS Interpreter Development REQUIRED)
+    find_package(pybind11 CONFIG)
+
+    if(NOT pybind11_FOUND)
+        # Try to find pybind11 via pip installation
+        execute_process(
+            COMMAND ${Python3_EXECUTABLE} -m pybind11 --cmakedir
+            OUTPUT_VARIABLE pybind11_DIR
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+            ERROR_QUIET
+        )
+        if(pybind11_DIR)
+            find_package(pybind11 CONFIG PATHS ${pybind11_DIR})
+        endif()
+    endif()
+
+    if(pybind11_FOUND)
+        message(STATUS "pybind11 found, building Python bindings")
+
+        # Create the Python module
+        pybind11_add_module(crm_python
+            ${CMAKE_CURRENT_SOURCE_DIR}/crm_ml_rl/wrappers/crm_bindings.cpp
+            ${CRMSOURCES}
+        )
+
+        target_include_directories(crm_python PUBLIC
+            "${PROJECT_SOURCE_DIR}/src"
+            "${PROJECT_SOURCE_DIR}/numerical"
+        )
+
+        target_link_libraries(crm_python PUBLIC
+            Eigen3::Eigen
+        )
+
+        # Set output directory for the Python module
+        set_target_properties(crm_python PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY "${CMAKE_CURRENT_SOURCE_DIR}/crm_ml_rl/wrappers"
+        )
+
+        message(STATUS "Python module will be built at: ${CMAKE_CURRENT_SOURCE_DIR}/crm_ml_rl/wrappers")
+    else()
+        message(WARNING "pybind11 not found. Python bindings will not be built.")
+        message(STATUS "Install pybind11: pip install pybind11")
+    endif()
+endif()
+
