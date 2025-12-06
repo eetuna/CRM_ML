@@ -41,7 +41,7 @@
     "source=vscode-server-${devcontainerId},target=/root/.vscode-server,type=volume"
   ],
 
-  "postCreateCommand": "pip3 install -r requirements.txt && cd build && cmake -DBUILD_PYTHON_BINDINGS=ON .. && make -j$(nproc) crm_python",
+  "postCreateCommand": "pip3 install -r requirements.txt && cd build && cmake -DBUILD_PYTHON_BINDINGS=ON .. && make -j$(nproc)",
 
   "containerEnv": {
     "PYTHONPATH": "/workspaces/CRM_ML"

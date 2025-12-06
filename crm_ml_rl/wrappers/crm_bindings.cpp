@@ -382,7 +382,7 @@ public:
     }
 
     /**
-     * Reset dynamics state.
+     * Reset dynamics state to zeros (use initializeFromKinematics for proper initialization).
      */
     void reset() {
         for (int j = 0; j < NUM_ACT_SET; j++) {
@@ -400,6 +400,133 @@ public:
         for (int i = 0; i < NUM_STATES; i++) {
             xf[i] = 0.0;
         }
+    }
+
+    /**
+     * Initialize dynamics state from a valid forward kinematics solution.
+     *
+     * This MUST be called before stepDynamics() to ensure the solver starts
+     * from a physically valid configuration and avoids convergence issues.
+     *
+     * Args:
+     *     currents: Applied currents (NUM_ACT_SET * 3,)
+     *     insertion_length: Inserted length (mm)
+     *
+     * Returns:
+     *     True if initialization succeeded, false otherwise.
+     */
+    bool initializeFromKinematics(py::array_t<double> currents, double insertion_length) {
+        if (!initialized) {
+            throw std::runtime_error("Parameters not loaded.");
+        }
+
+        auto curr_buf = currents.request();
+        double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+
+        // Build input vector: currents + insertion_length
+        CRMCatheterModelParams* cparams = catheter.getParams();
+        int num_currents = cparams->no_act_set * 3;
+        int x_dim = num_currents + 1;
+        std::vector<double> in_x(x_dim);
+        for (int i = 0; i < num_currents; i++) {
+            in_x[i] = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+        }
+        in_x[num_currents] = insertion_length;
+
+        // Setup FK parameters
+        CRMForwardKinematicsData FKParams;
+        FKParams.CathParams = cparams;
+        FKParams.CathConfig = &catheter.config;
+        FKParams.ContactMode = ContactModeType::FREE_TIP;
+        FKParams.TipForce[0] = FKParams.TipForce[1] = FKParams.TipForce[2] = 0.0;
+        FKParams.TipConstraintPoint[0] = FKParams.TipConstraintPoint[1] = FKParams.TipConstraintPoint[2] = 0.0;
+        FKParams.deltau0_initialguess[0] = FKParams.deltau0_initialguess[1] = FKParams.deltau0_initialguess[2] = 0.0;
+        FKParams.ftip_initialguess[0] = FKParams.ftip_initialguess[1] = FKParams.ftip_initialguess[2] = 0.0;
+        FKParams.IntegrationStepSize = integrationStepSize;
+        FKParams.FinalValueOnly = false;  // Need intermediate values for coil states
+
+        // Allocate marker and coil storage
+        std::vector<double> markerPosData(cparams->no_locmarkers * 3);
+        FKParams.ReportedMarkerPos = reinterpret_cast<double(*)[3]>(markerPosData.data());
+
+        std::vector<double> coilOrientData(cparams->no_act_set * 9);
+        FKParams.ReportedCoilOrient = reinterpret_cast<double(*)[9]>(coilOrientData.data());
+
+        std::vector<double> coilPosData(cparams->no_act_set * 3);
+        FKParams.ReportedCoilPos = reinterpret_cast<double(*)[3]>(coilPosData.data());
+
+        // Output: p[3], R[9], deltau0[3] for FREE_TIP
+        int y_dim = 3 + 9 + 3;
+        std::vector<double> out_y(y_dim);
+
+        double potentialEnergy;
+
+        // Call FK to get valid configuration
+        int localmin = CRM_ForwardKinematics(in_x.data(), out_y.data(), potentialEnergy, FKParams);
+
+        if (localmin != 0) {
+            // FK didn't converge, return false but don't throw
+            py::print("Warning: FK did not converge during dynamics initialization");
+            return false;
+        }
+
+        // Initialize tip state (xf) from FK output
+        // FK output layout: p[0..2], R[0..8], deltau0[0..2]
+        // xf layout (same as FK output): p[0..2], R[0..8], u[0..2]
+        // Position from FK
+        xf[0] = out_y[0];
+        xf[1] = out_y[1];
+        xf[2] = out_y[2];
+
+        // Rotation matrix from FK
+        for (int i = 0; i < 9; i++) {
+            xf[3 + i] = out_y[3 + i];
+        }
+
+        // Curvature (u) from delta_u0
+        xf[12] = out_y[12];
+        xf[13] = out_y[13];
+        xf[14] = out_y[14];
+
+        // Initialize coil states from FK-reported coil positions and orientations
+        for (int j = 0; j < cparams->no_act_set && j < NUM_ACT_SET; j++) {
+            // Zero velocities (static equilibrium)
+            v_L[j][0] = 0.0;
+            v_L[j][1] = 0.0;
+            v_L[j][2] = 0.0;
+            w_L[j][0] = 0.0;
+            w_L[j][1] = 0.0;
+            w_L[j][2] = 0.0;
+
+            // Coil position from FK
+            p_L[j][0] = FKParams.ReportedCoilPos[j][0];
+            p_L[j][1] = FKParams.ReportedCoilPos[j][1];
+            p_L[j][2] = FKParams.ReportedCoilPos[j][2];
+
+            // Coil rotation from FK
+            for (int i = 0; i < 9; i++) {
+                R_L[j][i] = FKParams.ReportedCoilOrient[j][i];
+            }
+
+            // Reset internal force/moment guesses
+            mL_guess[j][0] = 0.0;
+            mL_guess[j][1] = 0.0;
+            mL_guess[j][2] = 0.0;
+            nL_guess[j][0] = 0.0;
+            nL_guess[j][1] = 0.0;
+            nL_guess[j][2] = 0.0;
+        }
+
+        // Validate rotation matrix orthogonality
+        double det = R_L[0][0] * (R_L[0][4] * R_L[0][8] - R_L[0][5] * R_L[0][7])
+                   - R_L[0][1] * (R_L[0][3] * R_L[0][8] - R_L[0][5] * R_L[0][6])
+                   + R_L[0][2] * (R_L[0][3] * R_L[0][7] - R_L[0][4] * R_L[0][6]);
+
+        if (std::abs(det - 1.0) > 0.01) {
+            py::print("Warning: Coil rotation matrix det =", det, "(should be 1.0)");
+        }
+
+        return true;
     }
 
     /**
@@ -476,21 +603,20 @@ public:
             xf[i] = xf_new[i];
         }
 
-        // Extract tip position from xf (indices 12-14 are position)
-        py::array_t<double> tip_pos(3);
-        auto pos_buf = tip_pos.request();
-        double* pos_ptr = static_cast<double*>(pos_buf.ptr);
-        pos_ptr[0] = xf[12];
-        pos_ptr[1] = xf[13];
-        pos_ptr[2] = xf[14];
+        // Extract tip position from xf (indices 0-2 are position)
+        std::vector<ssize_t> shape3 = {3};
+        auto tip_pos = py::array_t<double>(shape3);
+        auto pos_buf = tip_pos.mutable_unchecked<1>();
+        pos_buf(0) = xf[0];
+        pos_buf(1) = xf[1];
+        pos_buf(2) = xf[2];
 
         // Tip velocity from coil state
-        py::array_t<double> tip_vel(3);
-        auto vel_buf = tip_vel.request();
-        double* vel_ptr = static_cast<double*>(vel_buf.ptr);
-        vel_ptr[0] = v_L[0][0];
-        vel_ptr[1] = v_L[0][1];
-        vel_ptr[2] = v_L[0][2];
+        auto tip_vel = py::array_t<double>(shape3);
+        auto vel_buf = tip_vel.mutable_unchecked<1>();
+        vel_buf(0) = v_L[0][0];
+        vel_buf(1) = v_L[0][1];
+        vel_buf(2) = v_L[0][2];
 
         py::dict result;
         result["tip_position"] = tip_pos;
@@ -504,12 +630,14 @@ public:
      * Get current tip position.
      */
     py::array_t<double> getTipPosition() const {
-        py::array_t<double> result(3);
-        auto buf = result.request();
-        double* ptr = static_cast<double*>(buf.ptr);
-        ptr[0] = xf[12];
-        ptr[1] = xf[13];
-        ptr[2] = xf[14];
+        // Use explicit shape specification to ensure correct array creation
+        std::vector<ssize_t> shape = {3};
+        auto result = py::array_t<double>(shape);
+        auto buf = result.mutable_unchecked<1>();
+        // xf layout: p[0..2], R[3..11], u[12..14]
+        buf(0) = xf[0];
+        buf(1) = xf[1];
+        buf(2) = xf[2];
         return result;
     }
 
@@ -565,7 +693,10 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("dt"),
              "Set simulation timestep")
         .def("reset", &CRMDynamicsWrapper::reset,
-             "Reset dynamics state")
+             "Reset dynamics state to zeros")
+        .def("initialize_from_kinematics", &CRMDynamicsWrapper::initializeFromKinematics,
+             py::arg("currents"), py::arg("insertion_length"),
+             "Initialize dynamics from FK solution (MUST call before step)")
         .def("step", &CRMDynamicsWrapper::stepDynamics,
              py::arg("currents"), py::arg("insertion_length"),
              "Step dynamics forward")

@@ -51,6 +51,18 @@ class CatheterEnvConfig:
     # Use learned model instead of physics
     use_learned_dynamics: bool = False
 
+    # C++ physics parameters
+    use_cpp: bool = False  # Whether to use C++ bindings (slower but more accurate)
+    param_file: Optional[str] = None  # Path to catheter parameter file
+    config_file: Optional[str] = None  # Path to catheter configuration file
+    insertion_length: float = 50.0  # Default insertion length (mm)
+
+    # Damping coefficients for C++ dynamics (from CRMDYN_test.cpp)
+    damping: np.ndarray = field(default_factory=lambda: np.array([
+        12.1761626666366, 12.1761626666366, 284.429938756989,
+        0.0304776127617393, 0.0304776127617393, 0.00502712804532508
+    ]))
+
 
 class CatheterEnv(gym.Env):
     """
@@ -91,8 +103,18 @@ class CatheterEnv(gym.Env):
         self.config = config or CatheterEnvConfig()
         self.render_mode = render_mode
 
-        # Initialize simulator
-        self.simulator = CRMSimulator(dt=self.config.dt)
+        # Initialize simulator with proper parameters
+        self.simulator = CRMSimulator(
+            param_file=self.config.param_file,
+            config_file=self.config.config_file,
+            dt=self.config.dt,
+            use_cpp=self.config.use_cpp
+        )
+
+        # Configure damping for C++ dynamics
+        if self.config.use_cpp and self.simulator.wrapper.is_using_cpp:
+            self.simulator.wrapper.set_damping(self.config.damping)
+            self.simulator.wrapper.set_timestep(self.config.dt)
 
         # Action space: coil currents
         self.action_space = spaces.Box(
@@ -240,8 +262,12 @@ class CatheterEnv(gym.Env):
         """
         super().reset(seed=seed)
 
-        # Reset simulator
-        self.simulator.reset()
+        # Reset simulator with proper initialization
+        initial_currents = np.zeros(3)
+        self.simulator.reset(
+            initial_currents=initial_currents,
+            insertion_length=self.config.insertion_length
+        )
 
         # Reset state
         self.current_step = 0
@@ -315,7 +341,7 @@ class CatheterEnv(gym.Env):
             self._step_learned_dynamics(action)
         else:
             # Use physics simulation
-            state = self.simulator.step(action)
+            state = self.simulator.step(action, insertion_length=self.config.insertion_length)
             self.tip_position = state.position.copy()
 
         # Compute velocity

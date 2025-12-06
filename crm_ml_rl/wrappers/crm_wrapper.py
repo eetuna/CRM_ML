@@ -296,13 +296,43 @@ class CRMWrapper:
             }
 
     def reset(self):
-        """Reset dynamics state."""
+        """Reset dynamics state to zeros."""
         if self.use_cpp and self.initialized:
             self._cpp_dynamics.reset()
         else:
             self._position = self._equilibrium.copy()
             self._velocity = np.zeros(3)
             self._rotation = np.eye(3)
+
+    def initialize_dynamics(
+        self,
+        currents: np.ndarray,
+        insertion_length: float = 50.0
+    ) -> bool:
+        """
+        Initialize dynamics from a valid forward kinematics solution.
+
+        This MUST be called before step_dynamics() when using C++ bindings
+        to ensure the solver starts from a physically valid configuration
+        and avoids convergence issues ("Coil integration Unbounded!!").
+
+        Args:
+            currents: Applied currents for initial configuration
+            insertion_length: Inserted length in mm
+
+        Returns:
+            True if initialization succeeded, False otherwise.
+        """
+        currents = np.asarray(currents, dtype=np.float64).flatten()
+
+        if self.use_cpp and self.initialized:
+            return self._cpp_dynamics.initialize_from_kinematics(currents, insertion_length)
+        else:
+            # For simplified model, just compute initial position from FK
+            result = self.forward_kinematics(currents, insertion_length)
+            self._position = result['tip_position'].copy()
+            self._velocity = np.zeros(3)
+            return True
 
     def get_tip_position(self) -> np.ndarray:
         """Get current tip position."""
@@ -361,13 +391,40 @@ class CRMSimulator:
         self.state = CatheterState()
         self.history = []
 
-    def reset(self, initial_position: Optional[np.ndarray] = None):
-        """Reset simulator to initial state."""
+    def reset(
+        self,
+        initial_position: Optional[np.ndarray] = None,
+        initial_currents: Optional[np.ndarray] = None,
+        insertion_length: float = 50.0
+    ):
+        """
+        Reset simulator to initial state.
+
+        For C++ dynamics, this initializes from a forward kinematics solution
+        to ensure the solver starts from a valid physical configuration.
+
+        Args:
+            initial_position: Optional initial tip position (for simplified model)
+            initial_currents: Initial currents for FK initialization (default: zeros)
+            insertion_length: Insertion length for FK initialization
+        """
+        # First reset internal state
         self.wrapper.reset()
+
+        # For C++ dynamics, initialize from FK to avoid convergence issues
+        if self.wrapper.is_using_cpp:
+            if initial_currents is None:
+                initial_currents = np.zeros(3)
+            success = self.wrapper.initialize_dynamics(initial_currents, insertion_length)
+            if not success:
+                print("Warning: Dynamics initialization from FK failed")
+
+        # Set position
         if initial_position is not None:
             self.state.position = np.array(initial_position)
         else:
             self.state.position = self.wrapper.get_tip_position()
+
         self.state.velocity = np.zeros(3)
         self.history = []
 
@@ -532,15 +589,24 @@ if __name__ == "__main__":
     print(f"  Tip position: {result['tip_position']}")
     print(f"  Converged: {result['converged']}")
 
-    # Test dynamics
+    # Test dynamics with proper initialization
+    print("\nTesting dynamics with FK initialization...")
     wrapper.reset()
+    # IMPORTANT: Initialize from FK before stepping dynamics
+    init_success = wrapper.initialize_dynamics(currents, insertion_length=50.0)
+    print(f"  Dynamics initialization: {'success' if init_success else 'failed'}")
+
     for i in range(10):
         result = wrapper.step_dynamics(currents, insertion_length=50.0)
+        if not result['converged']:
+            print(f"  Step {i}: convergence failed")
+            break
     print(f"\nAfter 10 dynamics steps:")
     print(f"  Tip position: {result['tip_position']}")
     print(f"  Tip velocity: {result['tip_velocity']}")
+    print(f"  Converged: {result['converged']}")
 
-    # Test simulator
+    # Test simulator (uses automatic FK initialization in reset)
     print("\nTesting simulator...")
     sim = CRMSimulator(dt=0.02, use_cpp=True)
 
@@ -556,5 +622,9 @@ if __name__ == "__main__":
     trajectory = sim.simulate_trajectory(currents_seq)
     print(f"Simulated trajectory: {trajectory['positions'].shape}")
     print(f"Final position: {trajectory['positions'][-1]}")
+
+    # Check for NaN values (indicates unbounded integration)
+    has_nan = np.any(np.isnan(trajectory['positions']))
+    print(f"Contains NaN values: {has_nan}")
 
     print("\nCRM Wrapper testing complete!")
