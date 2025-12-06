@@ -20,6 +20,7 @@ class SimulationConfig:
     # Time parameters
     dt: float = 0.02  # 50 Hz
     episode_length: float = 10.0  # seconds
+    insertion_length: float = 94.3  # mm (matches dynamics parameter set)
 
     # Trajectory parameters
     trajectory_types: List[str] = None
@@ -81,7 +82,7 @@ class SimplifiedDynamics:
         self.equilibrium = np.array([0.0, 0.0, 80.0])
 
         # Current to force conversion (simplified)
-        self.current_to_force = np.array([50.0, 50.0, 30.0])  # N/A
+        self.current_to_force = np.array([5.0, 5.0, 3.0])  # N/A (scaled down for stability)
 
     def step(
         self,
@@ -116,6 +117,10 @@ class SimplifiedDynamics:
 
         # Acceleration (mm/s^2)
         acceleration = F_total / self.mass * 1000
+        # Clamp to avoid numerical blow-up
+        acc_norm = np.linalg.norm(acceleration)
+        if acc_norm > 5e4:  # 50 m/s^2 in mm units
+            acceleration = acceleration / acc_norm * 5e4
 
         # Semi-implicit Euler integration
         new_velocity = velocity + acceleration * self.dt
@@ -256,7 +261,8 @@ class SimDataGenerator:
     def __init__(
         self,
         config: Optional[SimulationConfig] = None,
-        use_crm: bool = False
+        use_crm: bool = False,
+        dt: Optional[float] = None
     ):
         """
         Initialize data generator.
@@ -264,23 +270,101 @@ class SimDataGenerator:
         Args:
             config: Simulation configuration
             use_crm: Use full CRM physics (requires C++ bindings)
+            dt: Optional timestep override (convenience for scripts)
         """
         self.config = config or SimulationConfig()
+        if dt is not None:
+            # Allow lightweight override without rebuilding the config
+            self.config.dt = dt
         self.use_crm = use_crm
 
         # Initialize dynamics
+        self.dynamics = SimplifiedDynamics(
+            mass=self.config.mass,
+            damping=self.config.damping,
+            stiffness=self.config.stiffness,
+            dt=self.config.dt
+        )
         if use_crm:
-            self.simulator = CRMSimulator()
-        else:
-            self.dynamics = SimplifiedDynamics(
-                mass=self.config.mass,
-                damping=self.config.damping,
-                stiffness=self.config.stiffness,
-                dt=self.config.dt
+            self.simulator = CRMSimulator(
+                dt=self.config.dt,
+                use_cpp=True,
+                damping=np.array([
+                    12.1761626666366, 12.1761626666366, 284.429938756989,
+                    0.0304776127617393, 0.0304776127617393, 0.00502712804532508
+                ])
             )
 
         # Trajectory generator
         self.traj_gen = TrajectoryGenerator(dt=self.config.dt)
+
+    def generate_trajectory(
+        self,
+        currents: np.ndarray,
+        insertion_length: Optional[float] = None,
+        initial_position: Optional[np.ndarray] = None
+    ) -> Dict:
+        """
+        Simulate a trajectory given a current sequence.
+
+        Args:
+            currents: Array of currents (T, 3) or (3, T)
+            insertion_length: Inserted length (mm) for CRM simulator
+            initial_position: Optional initial position for simplified model
+
+        Returns:
+            Dictionary with positions, velocities, times, currents, dt, num_steps
+        """
+        currents_arr = np.array(currents)
+        if currents_arr.shape[0] == 3 and currents_arr.shape[1] != 3:
+            currents_arr = currents_arr.T
+
+        if self.use_crm:
+            if insertion_length is None:
+                insertion_length = self.config.insertion_length
+            result = self.simulator.simulate_trajectory(
+                currents_arr,
+                insertion_length=insertion_length,
+                initial_position=initial_position
+            )
+            # If C++ path failed or produced NaNs, fall back to simplified rollout
+            if not np.all(np.isfinite(result["positions"])):
+                print("Warning: CRM simulation returned invalid values; using simplified dynamics fallback.")
+                result = self._simulate_simplified(currents_arr, initial_position)
+            return result
+
+        return self._simulate_simplified(currents_arr, initial_position)
+
+    def _simulate_simplified(
+        self,
+        currents_arr: np.ndarray,
+        initial_position: Optional[np.ndarray]
+    ) -> Dict:
+        """Roll out simplified dynamics given a current sequence."""
+        T = len(currents_arr)
+        positions = np.zeros((T + 1, 3))
+        velocities = np.zeros((T + 1, 3))
+        times = np.arange(T + 1) * self.config.dt
+
+        # Initialize state
+        position = initial_position.copy() if initial_position is not None else self.dynamics.equilibrium.copy()
+        velocity = np.zeros(3)
+        positions[0] = position
+        velocities[0] = velocity
+
+        for t in range(T):
+            position, velocity = self.dynamics.step(position, velocity, currents_arr[t])
+            positions[t + 1] = position
+            velocities[t + 1] = velocity
+
+        return {
+            "positions": positions,
+            "velocities": velocities,
+            "times": times,
+            "currents": currents_arr,
+            "dt": self.config.dt,
+            "num_steps": T
+        }
 
     def generate_episode(
         self,

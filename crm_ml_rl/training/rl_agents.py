@@ -183,6 +183,7 @@ class SACAgent:
                 features_dim=features_dim,
                 net_arch=[256, 256],
                 activation_fn=nn.ReLU,
+                algorithm="sac",
                 **extractor_kwargs
             )
 
@@ -452,6 +453,7 @@ class TD3Agent:
                 features_dim=features_dim,
                 net_arch=[256, 256],
                 activation_fn=nn.ReLU,
+                algorithm="td3",
                 **extractor_kwargs
             )
 

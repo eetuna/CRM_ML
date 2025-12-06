@@ -122,7 +122,8 @@ class CRMWrapper:
         param_file: Optional[str] = None,
         config_file: Optional[str] = None,
         params: Optional[CatheterParameters] = None,
-        use_cpp: bool = True
+        use_cpp: bool = True,
+        damping: Optional[np.ndarray] = None
     ):
         """
         Initialize CRM wrapper.
@@ -136,10 +137,20 @@ class CRMWrapper:
         self.params = params or CatheterParameters()
         self.use_cpp = use_cpp and HAS_CPP_BINDINGS
         self.initialized = False
+        self._initial_use_cpp = self.use_cpp
+        self._cpp_available = False
+        self._cpp_failures = 0
+        self._cpp_disabled_due_to_failure = False
+        # Default damping matches values used in CRMDYN_test.cpp
+        self._default_damping = damping if damping is not None else np.array([
+            12.1761626666366, 12.1761626666366, 284.429938756989,
+            0.0304776127617393, 0.0304776127617393, 0.00502712804532508
+        ])
 
         # Default file paths
         if param_file is None:
-            param_file = "catheterdata/CatheterParameterSet_1_new.txt"
+            # Use dynamics-tuned parameters by default for stability
+            param_file = "catheterdata/CatheterParameterSet_1_dyn.txt"
         if config_file is None:
             config_file = "catheterdata/CatheterSpatialConfiguration_1.txt"
 
@@ -150,6 +161,7 @@ class CRMWrapper:
             self._init_cpp()
         else:
             self._init_simplified()
+        self._cpp_available = self.use_cpp and self.initialized
 
     def _init_cpp(self):
         """Initialize C++ bindings."""
@@ -163,6 +175,11 @@ class CRMWrapper:
             )
             if self.initialized:
                 self._cpp_dynamics.load_parameters(self.param_file, self.config_file)
+                # Apply default damping to stabilize coil dynamics
+                self._cpp_dynamics.set_damping(self._default_damping)
+                # Slightly smaller integration step improves convergence robustness
+                self._cpp_kinematics.integration_step_size = 0.1
+                self._cpp_dynamics.integration_step_size = 0.1
         else:
             print(f"Warning: Parameter files not found, falling back to simplified model")
             self.use_cpp = False
@@ -174,7 +191,7 @@ class CRMWrapper:
         self._mass = 0.001  # kg
         self._damping = 10.0  # N·s/m
         self._stiffness = 100.0  # N/m
-        self._current_to_force = np.array([50.0, 50.0, 30.0])  # N/A
+        self._current_to_force = np.array([5.0, 5.0, 3.0])  # N/A
         self._equilibrium = np.array([0.0, 0.0, 80.0])  # mm
         self._dt = 0.02  # Default timestep
 
@@ -263,46 +280,99 @@ class CRMWrapper:
         if self.use_cpp and self.initialized:
             if dt is not None:
                 self._cpp_dynamics.set_timestep(dt)
-            return self._cpp_dynamics.step(currents, insertion_length)
+            result = self._cpp_dynamics.step(currents, insertion_length)
+            if not result.get('converged', True):
+                self._cpp_failures += 1
+                if self._cpp_failures == 1:
+                    print("Warning: CRM C++ dynamics did not converge; falling back to simplified model if this persists.")
+                # Immediately fall back after the first failure to avoid log spam
+                self._fallback_to_simplified(result)
+                # Provide a simplified-step result immediately to avoid propagating invalid values
+                return self._step_simplified(currents, dt)
+            else:
+                self._cpp_failures = 0
+            return result
         else:
-            # Simplified dynamics: damped mass-spring
-            if dt is None:
-                dt = self._dt
+            return self._step_simplified(currents, dt)
 
-            # Magnetic force
-            F_magnetic = np.zeros(3)
-            for i in range(min(len(currents), 3)):
-                F_magnetic[i] = currents[i] * self._current_to_force[i]
+    def _step_simplified(self, currents: np.ndarray, dt: Optional[float]) -> Dict:
+        """Step the simplified mass-spring dynamics."""
+        if dt is None:
+            dt = self._dt
 
-            # Spring force
-            displacement = (self._position - self._equilibrium) / 1000  # mm to m
-            F_spring = -self._stiffness * displacement
+        # Magnetic force
+        F_magnetic = np.zeros(3)
+        for i in range(min(len(currents), 3)):
+            F_magnetic[i] = currents[i] * self._current_to_force[i]
 
-            # Damping force
-            F_damping = -self._damping * self._velocity / 1000
+        # Spring force
+        displacement = (self._position - self._equilibrium) / 1000  # mm to m
+        F_spring = -self._stiffness * displacement
 
-            # Total force and acceleration
-            F_total = F_magnetic + F_spring + F_damping
-            acceleration = F_total / self._mass * 1000  # mm/s^2
+        # Damping force
+        F_damping = -self._damping * self._velocity / 1000
 
-            # Semi-implicit Euler
-            self._velocity = self._velocity + acceleration * dt
-            self._position = self._position + self._velocity * dt
+        # Total force and acceleration
+        F_total = F_magnetic + F_spring + F_damping
+        acceleration = F_total / self._mass * 1000  # mm/s^2
+        # Clamp acceleration to avoid numerical blow-up when falling back from C++
+        acc_norm = np.linalg.norm(acceleration)
+        if acc_norm > 5e4:  # 50 m/s^2 in mm units
+            acceleration = acceleration / acc_norm * 5e4
 
-            return {
-                'tip_position': self._position.copy(),
-                'tip_velocity': self._velocity.copy(),
-                'converged': True
-            }
+        # Semi-implicit Euler
+        self._velocity = self._velocity + acceleration * dt
+        self._position = self._position + self._velocity * dt
+
+        return {
+            'tip_position': self._position.copy(),
+            'tip_velocity': self._velocity.copy(),
+            'converged': True
+        }
 
     def reset(self):
         """Reset dynamics state to zeros."""
+        # Re-enable C++ path if it was available before a fallback
+        if self._cpp_available and not self._cpp_disabled_due_to_failure:
+            self.use_cpp = True
+        self._cpp_failures = 0
         if self.use_cpp and self.initialized:
             self._cpp_dynamics.reset()
         else:
             self._position = self._equilibrium.copy()
             self._velocity = np.zeros(3)
             self._rotation = np.eye(3)
+
+    def _fallback_to_simplified(self, last_result: Optional[Dict] = None):
+        """
+        Switch from C++ dynamics to simplified model after a convergence failure.
+
+        Prevents repeated C++ solver attempts (and log spam) while keeping the
+        simulation running from the latest known state.
+        """
+        # Initialize simplified model parameters/state
+        self._init_simplified()
+        if last_result is not None:
+            # If the solver reported non-convergence, discard its state entirely
+            if not last_result.get('converged', True):
+                last_result = None
+        if last_result is not None:
+            pos = np.array(last_result.get('tip_position', self._equilibrium), dtype=float).copy()
+            vel = np.array(last_result.get('tip_velocity', np.zeros(3)), dtype=float).copy()
+            # Reset to equilibrium if the failed step produced invalid or extreme values
+            if (not np.all(np.isfinite(pos))) or (np.linalg.norm(pos) > 1e3):
+                pos = self._equilibrium.copy()
+            if (not np.all(np.isfinite(vel))) or (np.linalg.norm(vel) > 1e3):
+                vel = np.zeros(3)
+            self._position = pos
+            self._velocity = vel
+        else:
+            self._position = self._equilibrium.copy()
+            self._velocity = np.zeros(3)
+        self._rotation = np.eye(3)
+        self.use_cpp = False
+        self._cpp_disabled_due_to_failure = True
+        # Keep knowledge that C++ exists so reset() can re-enable if desired
 
     def initialize_dynamics(
         self,
@@ -326,7 +396,22 @@ class CRMWrapper:
         currents = np.asarray(currents, dtype=np.float64).flatten()
 
         if self.use_cpp and self.initialized:
-            return self._cpp_dynamics.initialize_from_kinematics(currents, insertion_length)
+            # Try requested currents first
+            success = self._cpp_dynamics.initialize_from_kinematics(currents, insertion_length)
+            if not success:
+                # Retry with reduced step and zero currents for robustness
+                prev_step = self._cpp_dynamics.integration_step_size
+                self._cpp_dynamics.integration_step_size = min(prev_step, 0.05)
+                zero_curr = np.zeros_like(currents)
+                success = self._cpp_dynamics.initialize_from_kinematics(zero_curr, insertion_length)
+                # Restore step size
+                self._cpp_dynamics.integration_step_size = prev_step
+
+            if success:
+                self._cpp_disabled_due_to_failure = False
+                self.use_cpp = True
+                self._cpp_failures = 0
+            return success
         else:
             # For simplified model, just compute initial position from FK
             result = self.forward_kinematics(currents, insertion_length)
@@ -374,7 +459,8 @@ class CRMSimulator:
         param_file: Optional[str] = None,
         config_file: Optional[str] = None,
         dt: float = 0.02,
-        use_cpp: bool = True
+        use_cpp: bool = True,
+        damping: Optional[np.ndarray] = None
     ):
         """
         Initialize simulator.
@@ -385,9 +471,12 @@ class CRMSimulator:
             dt: Simulation timestep
             use_cpp: Whether to use C++ bindings
         """
-        self.wrapper = CRMWrapper(param_file, config_file, use_cpp=use_cpp)
+        self.wrapper = CRMWrapper(param_file, config_file, use_cpp=use_cpp, damping=damping)
         self.dt = dt
         self.wrapper.set_timestep(dt)
+        # Ensure damping is applied for C++ dynamics
+        if damping is not None:
+            self.wrapper.set_damping(damping)
         self.state = CatheterState()
         self.history = []
 
@@ -417,7 +506,8 @@ class CRMSimulator:
                 initial_currents = np.zeros(3)
             success = self.wrapper.initialize_dynamics(initial_currents, insertion_length)
             if not success:
-                print("Warning: Dynamics initialization from FK failed")
+                print("Warning: Dynamics initialization from FK failed; falling back to simplified dynamics.")
+                self.wrapper._fallback_to_simplified()
 
         # Set position
         if initial_position is not None:
@@ -476,7 +566,10 @@ class CRMSimulator:
         T = len(currents)
 
         # Reset
-        self.reset(initial_position)
+        self.reset(
+            initial_position=initial_position,
+            insertion_length=insertion_length
+        )
 
         # Storage
         positions = np.zeros((T + 1, 3))

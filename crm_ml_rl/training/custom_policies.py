@@ -471,6 +471,7 @@ def create_policy_kwargs(
     features_dim: int = 128,
     net_arch: List[int] = None,
     activation_fn: Type[nn.Module] = nn.ReLU,
+    algorithm: Optional[str] = None,
     **extractor_kwargs
 ) -> Dict:
     """
@@ -488,6 +489,14 @@ def create_policy_kwargs(
     """
     if net_arch is None:
         net_arch = [256, 256]
+
+    # SB3 >= 1.8 prefers dict-based net_arch; choose heads based on algorithm
+    if isinstance(net_arch, list) and all(not isinstance(n, dict) for n in net_arch):
+        algo = (algorithm or "").lower()
+        if algo in {"sac", "td3"}:
+            net_arch = {"pi": net_arch, "qf": net_arch}
+        else:
+            net_arch = {"pi": net_arch, "vf": net_arch}
 
     policy_kwargs = {
         "net_arch": net_arch,

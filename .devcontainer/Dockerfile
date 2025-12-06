@@ -31,4 +31,9 @@ ENV SHELL=/bin/bash
 ENV PYTHONPATH=/workspaces/CRM_ML
 WORKDIR /workspaces/CRM_ML
 
+# Install Python dependencies (including tensorboard for SB3 logging)
+COPY requirements.txt /tmp/requirements.txt
+RUN pip3 install --no-cache-dir --upgrade pip && \
+    pip3 install --no-cache-dir -r /tmp/requirements.txt
+
 CMD ["/bin/bash"]

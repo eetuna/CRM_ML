@@ -111,7 +111,8 @@ class CatheterEnv(gym.Env):
             param_file=self.config.param_file,
             config_file=self.config.config_file,
             dt=self.config.dt,
-            use_cpp=self.config.use_cpp
+            use_cpp=self.config.use_cpp,
+            damping=self.config.damping
         )
 
         # Configure damping for C++ dynamics

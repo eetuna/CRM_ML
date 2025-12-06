@@ -559,8 +559,7 @@ class HybridDynamicsLSTM(nn.Module):
         if insertion_length is None:
             insertion_length = self.config.insertion_length
 
-        # Get physics prediction
-        self.simulator.wrapper.initialize_dynamics(action, insertion_length)
+        # Get physics prediction using current simulator state
         result = self.simulator.wrapper.step_dynamics(action, insertion_length)
         physics_next = np.concatenate([
             result['tip_position'],
