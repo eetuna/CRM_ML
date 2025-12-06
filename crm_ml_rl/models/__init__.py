@@ -6,19 +6,30 @@ Models:
     - ResidualDynamicsModel: Learns residual corrections for dynamics
     - FullKinematicsModel: Full neural network FK model
     - FullDynamicsModel: Full neural network dynamics model
+    - HybridKinematicsModel: Integrates CRM FK with learned residuals
+    - HybridDynamicsModel: Integrates CRM dynamics with learned residuals
 """
 
 from .networks import MLP, LSTM_MLP
-from .residual_kinematics import ResidualKinematicsModel
-from .residual_dynamics import ResidualDynamicsModel
+from .residual_kinematics import ResidualKinematicsModel, ResidualKinematicsWithUncertainty
+from .residual_dynamics import ResidualDynamicsModel, EnsembleResidualDynamics
 from .full_kinematics import FullKinematicsModel
 from .full_dynamics import FullDynamicsModel
+from .hybrid_kinematics import HybridKinematicsModel, HybridKinematicsWithUncertainty
+from .hybrid_dynamics import HybridDynamicsModel, HybridDynamicsConfig, HybridDynamicsLSTM
 
 __all__ = [
     'MLP',
     'LSTM_MLP',
     'ResidualKinematicsModel',
+    'ResidualKinematicsWithUncertainty',
     'ResidualDynamicsModel',
+    'EnsembleResidualDynamics',
     'FullKinematicsModel',
     'FullDynamicsModel',
+    'HybridKinematicsModel',
+    'HybridKinematicsWithUncertainty',
+    'HybridDynamicsModel',
+    'HybridDynamicsConfig',
+    'HybridDynamicsLSTM',
 ]

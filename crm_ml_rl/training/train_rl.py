@@ -8,7 +8,7 @@ import torch
 import numpy as np
 from pathlib import Path
 from typing import Dict, Optional, List, Type
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 import json
 from datetime import datetime
 import gymnasium as gym
@@ -63,6 +63,28 @@ class RLTrainingConfig:
     # Normalization
     normalize_obs: bool = True
     normalize_reward: bool = True
+
+    # Feature extractor settings
+    feature_extractor: str = "default"  # "default", "mlp", "deep_residual", "lstm", "physics", "catheter"
+    features_dim: int = 128
+    extractor_hidden_dims: List[int] = None  # Hidden dims for MLP-based extractors
+    extractor_dropout: float = 0.1
+    extractor_num_blocks: int = 4  # For deep_residual extractor
+
+    # Physics-informed extractor settings
+    use_cpp_physics: bool = False  # Use C++ bindings for physics features
+    param_file: Optional[str] = None
+    config_file: Optional[str] = None
+
+    # Model-based RL settings
+    use_model_based: bool = False
+    dynamics_model_path: Optional[str] = None
+    imagined_data_ratio: float = 0.5
+    planning_horizon: int = 10
+
+    def __post_init__(self):
+        if self.extractor_hidden_dims is None:
+            self.extractor_hidden_dims = [256, 256]
 
 
 def make_env(
@@ -135,6 +157,31 @@ def create_agent(
     device: str = "auto"
 ):
     """Create RL agent based on config."""
+    # Build extractor kwargs based on extractor type
+    extractor_kwargs = {}
+    if config.feature_extractor == "mlp":
+        extractor_kwargs = {
+            "hidden_dims": config.extractor_hidden_dims,
+            "dropout": config.extractor_dropout
+        }
+    elif config.feature_extractor == "deep_residual":
+        extractor_kwargs = {
+            "hidden_dim": config.extractor_hidden_dims[0] if config.extractor_hidden_dims else 256,
+            "num_blocks": config.extractor_num_blocks,
+            "dropout": config.extractor_dropout
+        }
+    elif config.feature_extractor == "physics":
+        extractor_kwargs = {
+            "use_cpp": config.use_cpp_physics,
+            "param_file": config.param_file,
+            "config_file": config.config_file
+        }
+    elif config.feature_extractor == "catheter":
+        extractor_kwargs = {
+            "state_dim": 6,
+            "target_dim": 3
+        }
+
     if config.algorithm == "sac":
         return SACAgent(
             env=env,
@@ -142,7 +189,10 @@ def create_agent(
             buffer_size=config.buffer_size,
             batch_size=config.batch_size,
             gamma=config.gamma,
-            device=device
+            device=device,
+            feature_extractor=config.feature_extractor,
+            features_dim=config.features_dim,
+            extractor_kwargs=extractor_kwargs
         )
     elif config.algorithm == "ppo":
         return PPOAgent(
@@ -153,7 +203,10 @@ def create_agent(
             n_epochs=config.n_epochs,
             gamma=config.gamma,
             clip_range=config.clip_range,
-            device=device
+            device=device,
+            feature_extractor=config.feature_extractor,
+            features_dim=config.features_dim,
+            extractor_kwargs=extractor_kwargs
         )
     elif config.algorithm == "td3":
         return TD3Agent(
@@ -164,7 +217,10 @@ def create_agent(
             gamma=config.gamma,
             policy_delay=config.policy_delay,
             target_policy_noise=config.target_policy_noise,
-            device=device
+            device=device,
+            feature_extractor=config.feature_extractor,
+            features_dim=config.features_dim,
+            extractor_kwargs=extractor_kwargs
         )
     else:
         raise ValueError(f"Unknown algorithm: {config.algorithm}")

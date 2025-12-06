@@ -38,7 +38,10 @@
   "mounts": [
     "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind,consistency=cached",
     "source=${localEnv:HOME}/.config/claude,target=/root/.config/claude,type=bind,consistency=cached",
-    "source=vscode-server-${devcontainerId},target=/root/.vscode-server,type=volume"
+    "source=vscode-server-${devcontainerId},target=/root/.vscode-server,type=volume",
+     // Codex auth from host into container
+    "source=${localEnv:HOME}/.codex,target=/root/.codex,type=bind,consistency=cached"
+
   ],
 
   "postCreateCommand": "pip3 install -r requirements.txt && cd build && cmake -DBUILD_PYTHON_BINDINGS=ON .. && make -j$(nproc)",

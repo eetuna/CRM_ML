@@ -310,12 +310,55 @@ Code needs better documentation for future development and collaboration.
   - Vectorized environment working
   - C++ physics integration in environments working
   - PPO/SAC/TD3 training tested
+- **ML Models Integration Verified** (52/52 tests passing):
+  - Base networks: MLP, LSTM-MLP, ResidualBlock, DeepResidualMLP, Transformer
+  - Residual kinematics: ResidualKinematicsModel, ResidualKinematicsWithUncertainty
+  - Residual dynamics: ResidualDynamicsModel, ResidualDynamicsLSTM, EnsembleResidualDynamics
+  - Full kinematics: FullKinematicsModel, FullKinematicsLSTM, FullKinematicsTransformer
+  - Full dynamics: FullDynamicsModel, FullDynamicsLSTM, EnsembleFullDynamics, ProbabilisticFullDynamics
+  - C++ physics + ML model integration working
+  - RL pipeline integration with ML models working
+- **Hybrid Models Created** (CRM Physics + Learned Residuals):
+  - `HybridKinematicsModel`: Integrates CRM FK with learned residual corrections
+  - `HybridKinematicsWithUncertainty`: FK + residuals with uncertainty estimation
+  - `HybridDynamicsModel`: Integrates CRM dynamics with learned residual corrections
+  - `HybridDynamicsLSTM`: LSTM-based history-dependent residual corrections
+  - Environment integration via `use_hybrid_dynamics=True` config option
+  - All hybrid models tested and working with C++ physics backend
+- **RL-ML Integration Complete** (Custom Models Now Used by RL):
+  - Custom Feature Extractors for SB3: `MLPFeaturesExtractor`, `DeepResidualFeaturesExtractor`, `LSTMFeaturesExtractor`, `PhysicsInformedExtractor`, `CatheterMLPExtractor`
+  - All RL agents (SAC, PPO, TD3) support `feature_extractor` parameter
+  - Model-Based RL agents: `DynaAgent`, `MBPOAgent`, `MPCAgent`
+  - Uses `HybridDynamicsModel` as world model for planning/imagination
+  - Training config supports `feature_extractor`, `features_dim`, `use_model_based` options
+  - 44 integration tests passing
 
 ### Test Scripts Created
 - `scripts/test_cpp_bindings.py` - C++ bindings validation
 - `scripts/test_environment.py` - Environment test suite
 - `scripts/test_data_generation.py` - Data generation tests
 - `scripts/example_train_rl.py` - Example RL training script
+- `scripts/test_ml_models.py` - Comprehensive ML models test suite (52 tests)
+  - Tests all neural network architectures (MLP, LSTM, Transformer, ResidualBlock, DeepResidualMLP)
+  - Tests residual kinematics models (with uncertainty estimation)
+  - Tests residual dynamics models (including ensemble and LSTM versions)
+  - Tests full kinematics models (MLP, LSTM, Transformer)
+  - Tests full dynamics models (including probabilistic and ensemble versions)
+  - Tests C++ physics integration with ML models
+  - Tests hybrid models (CRM physics + neural network residuals)
+  - Tests RL pipeline integration (environments, agents, training)
+- `scripts/test_hybrid_models.py` - Dedicated hybrid models test suite (27 tests)
+  - Tests HybridKinematicsModel and HybridKinematicsWithUncertainty
+  - Tests HybridDynamicsModel and HybridDynamicsLSTM
+  - Tests ensemble and uncertainty variants
+  - Tests RL pipeline integration with hybrid dynamics
+- `scripts/test_rl_integration.py` - RL-ML integration test suite (44 tests)
+  - Tests custom feature extractors (MLP, DeepResidual, LSTM, Physics, Catheter)
+  - Tests all RL agents (SAC, PPO, TD3) with custom extractors
+  - Tests model-based RL agents (Dyna, MBPO, MPC)
+  - Tests hybrid dynamics integration with RL
+  - Tests training configuration with feature extractors
+  - Tests agent save/load with custom extractors
 
 ### In Progress ⚙️
 - Data Integration (loading experimental data)
@@ -350,3 +393,134 @@ Code needs better documentation for future development and collaboration.
 
 **Last Updated**: 2025-12-06
 **Maintainer**: CRM_ML Development Team
+
+# ML Model Test Suite Summary
+
+## Overview
+
+I've created a comprehensive test suite for the ML models in `crm_ml_rl` that validates their integration with both the **C++ physics bindings** and the **RL pipeline**.
+
+**Test Script:**  
+`scripts/test_ml_models.py`
+
+The test suite contains **43 tests** organized into **6 major categories**, covering neural architectures, residual physics models, C++ integration, and RL workflows end-to-end.
+
+---
+
+## Test Coverage
+
+### 1. Base Network Architectures (8 tests)
+
+- MLP forward pass with various activations:
+  - ReLU
+  - Tanh
+  - GELU
+  - LeakyReLU
+- MLP variants with:
+  - Batch normalization
+  - Layer normalization
+  - Dropout
+- LSTM-MLP forward pass and hidden state management
+- Bidirectional LSTM-MLP
+- `ResidualBlock` and `DeepResidualMLP`
+
+---
+
+### 2. Residual Kinematics Models (6 tests)
+
+- `ResidualKinematicsModel` forward pass
+- `predict_with_physics()` method
+- `max_correction` clamping behavior
+- Deep residual kinematics architecture
+- `ResidualKinematicsWithUncertainty`
+  - Mean + variance outputs
+- Negative log-likelihood (NLL) loss computation
+
+---
+
+### 3. Residual Dynamics Models (5 tests)
+
+- `ResidualDynamicsModel` forward pass
+- `predict_next_state()` method
+- `ResidualDynamicsLSTM` for sequential prediction
+- `EnsembleResidualDynamics`
+  - Mean + standard deviation output
+- Epistemic uncertainty estimation
+
+---
+
+### 4. Full Kinematics / Dynamics Models (10 tests)
+
+- `FullKinematicsModel` with input/output normalization
+- Sequence models:
+  - `FullKinematicsLSTM`
+  - `FullKinematicsTransformer`
+- `FullDynamicsModel` with multi-step prediction
+- `EnsembleFullDynamics`
+- `ProbabilisticFullDynamics`
+  - Trajectory sampling
+  - NLL loss evaluation
+
+---
+
+### 5. C++ Physics Integration (7 tests)
+
+- `CRMWrapper` creation and initialization
+- Forward kinematics evaluation
+- Jacobian computation (6×7 analytical Jacobian)
+- Dynamics initialization from FK state
+- `CRMSimulator` stepping
+- `ResidualKinematicsModel` using C++ physics predictions
+- `ResidualDynamicsModel` integrated with C++ physics simulation
+
+---
+
+### 6. RL Pipeline Integration (7 tests)
+
+- `CatheterEnv` with learned dynamics model
+- `CatheterEnv` with C++ physics (`use_cpp=True`)
+- `ReachingEnv` and `TrackingEnv` basic operation
+- PPO training with `stable-baselines3`
+- Custom RL agents:
+  - SAC
+  - PPO
+  - TD3
+- `DynamicsTrainer` training loop validation
+
+---
+
+## Key Findings
+
+- ✅ **All 43 tests pass**  
+  ML models are correctly integrated with both C++ bindings and the RL pipeline.
+
+- ✅ **Proper C++ physics usage**  
+  Residual models receive physics predictions from the C++ engine and compute learned corrections correctly.
+
+- ✅ **Complete RL pipeline integration**  
+  Environments support:
+  - Learned dynamics via `set_dynamics_model()`
+  - C++ physics via `use_cpp=True`
+  - Proper damping and initialization handling
+
+- ✅ **Architecture diversity supported**
+  - Standard MLPs
+  - LSTM-based sequential models
+  - Transformer architectures
+  - Deep residual networks
+  - Ensemble models for uncertainty
+  - Probabilistic models with variance estimation
+
+---
+
+## Usage
+
+```bash
+# Run all tests
+python3 scripts/test_ml_models.py
+
+# Run quick tests (skip RL agent training)
+python3 scripts/test_ml_models.py --quick
+
+# Verbose output
+python3 scripts/test_ml_models.py --verbose

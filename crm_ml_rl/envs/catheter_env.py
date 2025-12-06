@@ -51,6 +51,9 @@ class CatheterEnvConfig:
     # Use learned model instead of physics
     use_learned_dynamics: bool = False
 
+    # Use hybrid model (CRM physics + learned residuals)
+    use_hybrid_dynamics: bool = False
+
     # C++ physics parameters
     use_cpp: bool = False  # Whether to use C++ bindings (slower but more accurate)
     param_file: Optional[str] = None  # Path to catheter parameter file
@@ -116,6 +119,11 @@ class CatheterEnv(gym.Env):
             self.simulator.wrapper.set_damping(self.config.damping)
             self.simulator.wrapper.set_timestep(self.config.dt)
 
+        # Initialize hybrid dynamics model if requested
+        self.hybrid_model = None
+        if self.config.use_hybrid_dynamics:
+            self._init_hybrid_model()
+
         # Action space: coil currents
         self.action_space = spaces.Box(
             low=-self.config.max_current,
@@ -145,6 +153,20 @@ class CatheterEnv(gym.Env):
 
         # Learned dynamics model (optional)
         self.dynamics_model = None
+
+    def _init_hybrid_model(self):
+        """Initialize hybrid dynamics model."""
+        from ..models.hybrid_dynamics import HybridDynamicsModel, HybridDynamicsConfig
+
+        hybrid_config = HybridDynamicsConfig(
+            param_file=self.config.param_file,
+            config_file=self.config.config_file,
+            use_cpp=self.config.use_cpp,
+            dt=self.config.dt,
+            insertion_length=self.config.insertion_length,
+            damping=self.config.damping
+        )
+        self.hybrid_model = HybridDynamicsModel(hybrid_config)
 
     def _compute_observation_dim(self) -> int:
         """Compute observation dimension based on config."""
@@ -269,6 +291,13 @@ class CatheterEnv(gym.Env):
             insertion_length=self.config.insertion_length
         )
 
+        # Reset hybrid model if used
+        if self.config.use_hybrid_dynamics and self.hybrid_model is not None:
+            self.hybrid_model.reset(
+                initial_currents=initial_currents,
+                insertion_length=self.config.insertion_length
+            )
+
         # Reset state
         self.current_step = 0
         self.tip_position = self.simulator.state.position.copy()
@@ -336,7 +365,10 @@ class CatheterEnv(gym.Env):
         self.prev_tip_position = self.tip_position.copy()
 
         # Step simulation
-        if self.config.use_learned_dynamics and self.dynamics_model is not None:
+        if self.config.use_hybrid_dynamics and self.hybrid_model is not None:
+            # Use hybrid model (CRM physics + learned residuals)
+            self._step_hybrid_dynamics(action)
+        elif self.config.use_learned_dynamics and self.dynamics_model is not None:
             # Use learned model
             self._step_learned_dynamics(action)
         else:
@@ -384,6 +416,31 @@ class CatheterEnv(gym.Env):
             next_state = self.dynamics_model(state_tensor, action_tensor)
 
         self.tip_position = next_state[0, :3].numpy()
+
+    def _step_hybrid_dynamics(self, action: np.ndarray):
+        """Step using hybrid dynamics model (CRM physics + learned residuals)."""
+        import torch
+
+        # Prepare current state
+        state = np.concatenate([self.tip_position, self.tip_velocity])
+        state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0)
+        action_tensor = torch.tensor(action, dtype=torch.float32).unsqueeze(0)
+
+        # Step hybrid model (combines physics + learned residual internally)
+        with torch.no_grad():
+            next_state = self.hybrid_model.forward(
+                state_tensor, action_tensor,
+                insertion_length=self.config.insertion_length
+            )
+
+        # Update position and velocity
+        next_state_np = next_state[0].cpu().numpy()
+        self.tip_position = next_state_np[:3]
+        self.tip_velocity = next_state_np[3:]
+
+    def set_hybrid_model(self, model):
+        """Set hybrid dynamics model."""
+        self.hybrid_model = model
 
     def set_dynamics_model(self, model):
         """Set learned dynamics model."""

@@ -2,6 +2,7 @@
 RL agent implementations for catheter control.
 
 Uses stable-baselines3 with custom configurations for catheter tasks.
+Supports custom feature extractors from crm_ml_rl/models/.
 """
 
 import torch
@@ -16,6 +17,16 @@ from stable_baselines3.common.callbacks import BaseCallback, EvalCallback
 from stable_baselines3.common.vec_env import DummyVecEnv, SubprocVecEnv, VecNormalize
 from stable_baselines3.common.torch_layers import BaseFeaturesExtractor
 from stable_baselines3.common.noise import NormalActionNoise, OrnsteinUhlenbeckActionNoise
+
+from .custom_policies import (
+    FEATURE_EXTRACTORS,
+    create_policy_kwargs,
+    MLPFeaturesExtractor,
+    DeepResidualFeaturesExtractor,
+    LSTMFeaturesExtractor,
+    PhysicsInformedExtractor,
+    CatheterMLPExtractor
+)
 
 
 class CatheterFeaturesExtractor(BaseFeaturesExtractor):
@@ -122,6 +133,7 @@ class SACAgent:
     Soft Actor-Critic agent for catheter control.
 
     SAC is good for continuous control with entropy regularization.
+    Supports custom feature extractors from crm_ml_rl/models/.
     """
 
     def __init__(
@@ -135,7 +147,10 @@ class SACAgent:
         ent_coef: Union[str, float] = "auto",
         policy_kwargs: Optional[Dict] = None,
         device: str = "auto",
-        verbose: int = 1
+        verbose: int = 1,
+        feature_extractor: str = "default",
+        features_dim: int = 128,
+        extractor_kwargs: Optional[Dict] = None
     ):
         """
         Initialize SAC agent.
@@ -151,15 +166,25 @@ class SACAgent:
             policy_kwargs: Additional policy arguments
             device: Device for training
             verbose: Verbosity level
+            feature_extractor: Feature extractor type ("default", "mlp", "deep_residual", "lstm", "physics", "catheter")
+            features_dim: Output dimension of feature extractor
+            extractor_kwargs: Additional kwargs for feature extractor
         """
         self.env = env
+        self.feature_extractor_type = feature_extractor
 
-        # Default policy kwargs
+        # Create policy kwargs with custom feature extractor
         if policy_kwargs is None:
-            policy_kwargs = {
-                "net_arch": [256, 256],
-                "activation_fn": nn.ReLU
-            }
+            if extractor_kwargs is None:
+                extractor_kwargs = {}
+
+            policy_kwargs = create_policy_kwargs(
+                feature_extractor=feature_extractor,
+                features_dim=features_dim,
+                net_arch=[256, 256],
+                activation_fn=nn.ReLU,
+                **extractor_kwargs
+            )
 
         self.model = SAC(
             "MlpPolicy",
@@ -232,6 +257,7 @@ class PPOAgent:
     Proximal Policy Optimization agent.
 
     PPO is stable and works well for many tasks.
+    Supports custom feature extractors from crm_ml_rl/models/.
     """
 
     def __init__(
@@ -249,7 +275,10 @@ class PPOAgent:
         max_grad_norm: float = 0.5,
         policy_kwargs: Optional[Dict] = None,
         device: str = "auto",
-        verbose: int = 1
+        verbose: int = 1,
+        feature_extractor: str = "default",
+        features_dim: int = 128,
+        extractor_kwargs: Optional[Dict] = None
     ):
         """
         Initialize PPO agent.
@@ -269,14 +298,26 @@ class PPOAgent:
             policy_kwargs: Additional policy arguments
             device: Device for training
             verbose: Verbosity level
+            feature_extractor: Feature extractor type ("default", "mlp", "deep_residual", "lstm", "physics", "catheter")
+            features_dim: Output dimension of feature extractor
+            extractor_kwargs: Additional kwargs for feature extractor
         """
         self.env = env
+        self.feature_extractor_type = feature_extractor
 
+        # Create policy kwargs with custom feature extractor
         if policy_kwargs is None:
-            policy_kwargs = {
-                "net_arch": [dict(pi=[256, 256], vf=[256, 256])],
-                "activation_fn": nn.ReLU
-            }
+            if extractor_kwargs is None:
+                extractor_kwargs = {}
+
+            # PPO uses separate policy and value networks
+            policy_kwargs = create_policy_kwargs(
+                feature_extractor=feature_extractor,
+                features_dim=features_dim,
+                net_arch=[dict(pi=[256, 256], vf=[256, 256])],
+                activation_fn=nn.ReLU,
+                **extractor_kwargs
+            )
 
         self.model = PPO(
             "MlpPolicy",
@@ -353,6 +394,7 @@ class TD3Agent:
     Twin Delayed DDPG agent.
 
     TD3 is robust for continuous control with less hyperparameter sensitivity.
+    Supports custom feature extractors from crm_ml_rl/models/.
     """
 
     def __init__(
@@ -370,7 +412,10 @@ class TD3Agent:
         noise_std: float = 0.1,
         policy_kwargs: Optional[Dict] = None,
         device: str = "auto",
-        verbose: int = 1
+        verbose: int = 1,
+        feature_extractor: str = "default",
+        features_dim: int = 128,
+        extractor_kwargs: Optional[Dict] = None
     ):
         """
         Initialize TD3 agent.
@@ -390,14 +435,25 @@ class TD3Agent:
             policy_kwargs: Additional policy arguments
             device: Device for training
             verbose: Verbosity level
+            feature_extractor: Feature extractor type ("default", "mlp", "deep_residual", "lstm", "physics", "catheter")
+            features_dim: Output dimension of feature extractor
+            extractor_kwargs: Additional kwargs for feature extractor
         """
         self.env = env
+        self.feature_extractor_type = feature_extractor
 
+        # Create policy kwargs with custom feature extractor
         if policy_kwargs is None:
-            policy_kwargs = {
-                "net_arch": [256, 256],
-                "activation_fn": nn.ReLU
-            }
+            if extractor_kwargs is None:
+                extractor_kwargs = {}
+
+            policy_kwargs = create_policy_kwargs(
+                feature_extractor=feature_extractor,
+                features_dim=features_dim,
+                net_arch=[256, 256],
+                activation_fn=nn.ReLU,
+                **extractor_kwargs
+            )
 
         # Action noise
         n_actions = env.action_space.shape[0]
