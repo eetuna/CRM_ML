@@ -123,7 +123,9 @@ class CRMWrapper:
         config_file: Optional[str] = None,
         params: Optional[CatheterParameters] = None,
         use_cpp: bool = True,
-        damping: Optional[np.ndarray] = None
+        damping: Optional[np.ndarray] = None,
+        flip_third_current: bool = False,
+        disable_cpp_fallback: bool = False
     ):
         """
         Initialize CRM wrapper.
@@ -133,6 +135,8 @@ class CRMWrapper:
             config_file: Path to catheter configuration file
             params: Catheter parameters (for simplified model)
             use_cpp: Whether to use C++ bindings (if available)
+            damping: Optional damping coefficients
+            flip_third_current: Apply dataset-specific flip on third current channel
         """
         self.params = params or CatheterParameters()
         self.use_cpp = use_cpp and HAS_CPP_BINDINGS
@@ -141,6 +145,8 @@ class CRMWrapper:
         self._cpp_available = False
         self._cpp_failures = 0
         self._cpp_disabled_due_to_failure = False
+        self._flip_third_current = flip_third_current
+        self._disable_cpp_fallback = disable_cpp_fallback
         # Default damping matches values used in CRMDYN_test.cpp
         self._default_damping = damping if damping is not None else np.array([
             12.1761626666366, 12.1761626666366, 284.429938756989,
@@ -218,6 +224,9 @@ class CRMWrapper:
             Dictionary with tip_position, tip_rotation, delta_u0, converged
         """
         currents = np.asarray(currents, dtype=np.float64).flatten()
+        if self._flip_third_current and len(currents) >= 3:
+            currents = currents.copy()
+            currents[2] *= -1.0
 
         if self.use_cpp and self.initialized:
             return self._cpp_kinematics.forward_kinematics(currents, insertion_length)
@@ -251,6 +260,9 @@ class CRMWrapper:
             Jacobian matrix (dp/dI)
         """
         currents = np.asarray(currents, dtype=np.float64).flatten()
+        if self._flip_third_current and len(currents) >= 3:
+            currents = currents.copy()
+            currents[2] *= -1.0
 
         if self.use_cpp and self.initialized:
             return self._cpp_kinematics.compute_jacobian(currents, insertion_length)
@@ -276,6 +288,9 @@ class CRMWrapper:
             Dictionary with tip_position, tip_velocity, converged
         """
         currents = np.asarray(currents, dtype=np.float64).flatten()
+        if self._flip_third_current and len(currents) >= 3:
+            currents = currents.copy()
+            currents[2] *= -1.0
 
         if self.use_cpp and self.initialized:
             if dt is not None:
@@ -285,6 +300,9 @@ class CRMWrapper:
                 self._cpp_failures += 1
                 if self._cpp_failures == 1:
                     print("Warning: CRM C++ dynamics did not converge; falling back to simplified model if this persists.")
+                if self._disable_cpp_fallback:
+                    # Return the raw result and keep C++ enabled for diagnostics
+                    return result
                 # Immediately fall back after the first failure to avoid log spam
                 self._fallback_to_simplified(result)
                 # Provide a simplified-step result immediately to avoid propagating invalid values
@@ -394,6 +412,9 @@ class CRMWrapper:
             True if initialization succeeded, False otherwise.
         """
         currents = np.asarray(currents, dtype=np.float64).flatten()
+        if self._flip_third_current and len(currents) >= 3:
+            currents = currents.copy()
+            currents[2] *= -1.0
 
         if self.use_cpp and self.initialized:
             # Try requested currents first
@@ -419,6 +440,62 @@ class CRMWrapper:
             self._velocity = np.zeros(3)
             return True
 
+    def bvp_initialize_with_seed(
+        self,
+        currents: np.ndarray,
+        insertion_length: float,
+        p_L: np.ndarray,
+        R_L: np.ndarray,
+        xf_seed: np.ndarray,
+        mL: Optional[np.ndarray] = None,
+        nL: Optional[np.ndarray] = None,
+        damping: Optional[np.ndarray] = None,
+        dt: Optional[float] = None,
+        integration_step: Optional[float] = None
+    ) -> bool:
+        """
+        Advanced initializer that mimics CRMDYNTest: seed BVP with known coil/tip state.
+
+        Args:
+            currents: applied currents (len 3)
+            insertion_length: insertion length in mm
+            p_L: coil position seed (3,)
+            R_L: coil rotation seed (9,)
+            xf_seed: tip state seed (15,) matching CRMDYN_test.cpp order
+            mL, nL: optional moment/force seeds (3,)
+            damping: optional damping to set before init
+            dt: optional timestep to set
+            integration_step: optional integration step size to set
+        """
+        if not (self.use_cpp and self.initialized):
+            return False
+        if damping is not None:
+            self.set_damping(damping)
+        if dt is not None:
+            self._cpp_dynamics.dt = dt
+        if integration_step is not None:
+            self._cpp_dynamics.integration_step_size = integration_step
+
+        kwargs = {}
+        if mL is not None:
+            kwargs['mL_in'] = np.asarray(mL, dtype=np.float64)
+        if nL is not None:
+            kwargs['nL_in'] = np.asarray(nL, dtype=np.float64)
+        try:
+            self._cpp_dynamics.initialize_from_seed(
+                np.asarray(currents, dtype=np.float64),
+                insertion_length,
+                np.asarray(p_L, dtype=np.float64),
+                np.asarray(R_L, dtype=np.float64),
+                np.asarray(xf_seed, dtype=np.float64),
+                **kwargs,
+            )
+            self._cpp_disabled_due_to_failure = False
+            self._cpp_failures = 0
+            return True
+        except Exception:
+            return False
+
     def get_tip_position(self) -> np.ndarray:
         """Get current tip position."""
         if self.use_cpp and self.initialized:
@@ -440,6 +517,38 @@ class CRMWrapper:
         else:
             self._dt = dt
 
+    def debug_seed_dynamics(
+        self,
+        v: np.ndarray,
+        w: np.ndarray,
+        p: np.ndarray,
+        R: np.ndarray,
+        xf: np.ndarray,
+        mL: Optional[np.ndarray] = None,
+        nL: Optional[np.ndarray] = None
+    ):
+        """
+        Debug helper to manually seed C++ dynamics state.
+
+        This mirrors the hardcoded seeds used in C++ tests and should only be
+        called in diagnostics; production code should rely on normal initialization.
+        """
+        if not (self.use_cpp and self.initialized):
+            raise RuntimeError("C++ dynamics not available for debug seeding.")
+        kwargs = {}
+        if mL is not None:
+            kwargs['mL_in'] = np.asarray(mL, dtype=np.float64)
+        if nL is not None:
+            kwargs['nL_in'] = np.asarray(nL, dtype=np.float64)
+        self._cpp_dynamics.debug_seed_state(
+            np.asarray(v, dtype=np.float64),
+            np.asarray(w, dtype=np.float64),
+            np.asarray(p, dtype=np.float64),
+            np.asarray(R, dtype=np.float64),
+            np.asarray(xf, dtype=np.float64),
+            **kwargs
+        )
+
     @property
     def is_using_cpp(self) -> bool:
         """Check if using C++ bindings."""
@@ -460,7 +569,8 @@ class CRMSimulator:
         config_file: Optional[str] = None,
         dt: float = 0.02,
         use_cpp: bool = True,
-        damping: Optional[np.ndarray] = None
+        damping: Optional[np.ndarray] = None,
+        flip_third_current: bool = False
     ):
         """
         Initialize simulator.
@@ -471,7 +581,13 @@ class CRMSimulator:
             dt: Simulation timestep
             use_cpp: Whether to use C++ bindings
         """
-        self.wrapper = CRMWrapper(param_file, config_file, use_cpp=use_cpp, damping=damping)
+        self.wrapper = CRMWrapper(
+            param_file=param_file,
+            config_file=config_file,
+            use_cpp=use_cpp,
+            damping=damping,
+            flip_third_current=flip_third_current
+        )
         self.dt = dt
         self.wrapper.set_timestep(dt)
         # Ensure damping is applied for C++ dynamics

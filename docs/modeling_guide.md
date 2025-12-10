@@ -169,6 +169,8 @@ Model choice guidelines:
 - `crm_ml_rl/training/train_dynamics.py`: set `TrainingConfig.model_type` to `"transformer"` or `"diffusion"` to train the new models. Diffusion training automatically swaps in the DDPM loss.
 - `crm_ml_rl/training/model_based_rl.py`: choose `ModelBasedConfig.dynamics_model_type` ∈ {`"hybrid"`, `"full"`, `"transformer"`, `"diffusion"`}, optionally providing `transformer_kwargs` or a `DiffusionDynamicsConfig`.
 - `crm_ml_rl/training/mpc_controller.py`: accepts any `torch.nn.Module` obeying `next_state = model(state, action)`—the new models slot in without changes. For diffusion you can sample (`deterministic=False`) to create stochastic shooting objectives.
+- Experimental data: use `crm_ml_rl/data/experimental_loader.py` to load `3D_dynamic_response_data_0124` currents/trajectories. The historical dataset flips the third current channel (`u[:,2]*=-1`) to match the MATLAB greybox convention; the loader applies this by default with `flip_third_current=True`.
+- CRM validation: `crm_ml_rl/evaluation/cpp_validation.py` runs CRM FK/dynamics against the experimental trajectories and reports RMSE/MAE using `validation_metrics.py`.
 
 ### Decision Checklist
 

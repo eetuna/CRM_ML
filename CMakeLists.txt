@@ -58,6 +58,13 @@ add_executable(CRMDYNTest
 	main/CRM_KinematicsTestFunctions.cpp
 	${CRMSOURCES}
 	)
+add_executable(CRMDYNGirdSweep
+	main/CRMDYN_grid_sweep.cpp
+	main/CRMTest.h
+	main/CRM_KinematicsTestFunctions.hpp
+	main/CRM_KinematicsTestFunctions.cpp
+	${CRMSOURCES}
+	)
 
 add_executable(CRMTest
 		main/CRMTest.cpp
@@ -74,6 +81,9 @@ target_link_libraries(CRMTest PUBLIC
 target_link_libraries(CRMDYNTest PUBLIC
 		Eigen3::Eigen
 		)
+target_link_libraries(CRMDYNGirdSweep PUBLIC
+		Eigen3::Eigen
+		)
 
 target_include_directories(CRMTest PUBLIC
 	"${PROJECT_SOURCE_DIR}/src"
@@ -81,6 +91,10 @@ target_include_directories(CRMTest PUBLIC
         )
 
 target_include_directories(CRMDYNTest PUBLIC
+		"${PROJECT_SOURCE_DIR}/src"
+		"${PROJECT_SOURCE_DIR}/numerical"
+		)
+target_include_directories(CRMDYNGirdSweep PUBLIC
 		"${PROJECT_SOURCE_DIR}/src"
 		"${PROJECT_SOURCE_DIR}/numerical"
 		)
@@ -137,4 +151,3 @@ if(BUILD_PYTHON_BINDINGS)
         message(STATUS "Install pybind11: pip install pybind11")
     endif()
 endif()
-

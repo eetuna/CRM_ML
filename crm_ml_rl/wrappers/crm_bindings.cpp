@@ -366,6 +366,67 @@ public:
         return initialized;
     }
 
+    /**
+     * Debug-only: seed internal dynamics state manually.
+     *
+     * This is not used in normal initialization; useful for diagnostics.
+     */
+    void debugSeedState(
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>()
+    ) {
+        int num_curr_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+
+        auto vbuf = v_in.request(); const double* vptr = static_cast<double*>(vbuf.ptr);
+        auto wbuf = w_in.request(); const double* wptr = static_cast<double*>(wbuf.ptr);
+        auto pbuf = p_in.request(); const double* pptr = static_cast<double*>(pbuf.ptr);
+        auto Rbuf = R_in.request(); const double* Rptr = static_cast<double*>(Rbuf.ptr);
+        auto xfbuf = xf_in.request(); const double* xfptr = static_cast<double*>(xfbuf.ptr);
+
+        for (int j = 0; j < num_curr_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                ssize_t idx = j * 3 + i;
+                if (idx < vbuf.size) v_L[j][i] = vptr[idx];
+                if (idx < wbuf.size) w_L[j][i] = wptr[idx];
+                if (idx < pbuf.size) p_L[j][i] = pptr[idx];
+            }
+            for (int i = 0; i < 9; i++) {
+                ssize_t idx = j * 9 + i;
+                if (idx < Rbuf.size) R_L[j][i] = Rptr[idx];
+            }
+        }
+
+        for (int i = 0; i < NUM_STATES && i < xfbuf.size; i++) {
+            xf[i] = xfptr[i];
+        }
+
+        if (mL_in.size() > 0) {
+            auto mbuf = mL_in.request();
+            const double* mptr = static_cast<double*>(mbuf.ptr);
+            for (int j = 0; j < num_curr_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    ssize_t idx = j * 3 + i;
+                    if (idx < mbuf.size) mL_guess[j][i] = mptr[idx];
+                }
+            }
+        }
+        if (nL_in.size() > 0) {
+            auto nbuf = nL_in.request();
+            const double* nptr = static_cast<double*>(nbuf.ptr);
+            for (int j = 0; j < num_curr_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    ssize_t idx = j * 3 + i;
+                    if (idx < nbuf.size) nL_guess[j][i] = nptr[idx];
+                }
+            }
+        }
+    }
+
     void setDamping(py::array_t<double> damping_values) {
         auto buf = damping_values.request();
         double* ptr = static_cast<double*>(buf.ptr);
@@ -530,6 +591,65 @@ public:
     }
 
     /**
+     * Initialize dynamics directly from explicit seeds (mirrors CRMDYN_test.cpp).
+     */
+    bool initializeFromSeed(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>()
+    ) {
+        if (!initialized) {
+            throw std::runtime_error("Parameters not loaded.");
+        }
+        auto curr_buf = currents.request(); const double* cptr = static_cast<double*>(curr_buf.ptr);
+        auto pbuf = p_in.request(); const double* pptr = static_cast<double*>(pbuf.ptr);
+        auto Rbuf = R_in.request(); const double* Rptr = static_cast<double*>(Rbuf.ptr);
+        auto xfbuf = xf_in.request(); const double* xfptr = static_cast<double*>(xfbuf.ptr);
+
+        int num_curr_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+        for (int j = 0; j < num_curr_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                ssize_t idx = j * 3 + i;
+                if (idx < pbuf.size) p_L[j][i] = pptr[idx];
+            }
+            for (int i = 0; i < 9; i++) {
+                ssize_t idx = j * 9 + i;
+                if (idx < Rbuf.size) R_L[j][i] = Rptr[idx];
+            }
+        }
+        for (int i = 0; i < NUM_STATES && i < xfbuf.size; i++) {
+            xf[i] = xfptr[i];
+        }
+        if (mL_in.size() > 0) {
+            auto mbuf = mL_in.request(); const double* mptr = static_cast<double*>(mbuf.ptr);
+            for (int j = 0; j < num_curr_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    ssize_t idx = j * 3 + i;
+                    if (idx < mbuf.size) mL_guess[j][i] = mptr[idx];
+                }
+            }
+        }
+        if (nL_in.size() > 0) {
+            auto nbuf = nL_in.request(); const double* nptr = static_cast<double*>(nbuf.ptr);
+            for (int j = 0; j < num_curr_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    ssize_t idx = j * 3 + i;
+                    if (idx < nbuf.size) nL_guess[j][i] = nptr[idx];
+                }
+            }
+        }
+
+        // No direct C API for seed-only init; we seed internal buffers here and report success.
+        // A following stepDynamics() call will pick up these seeds.
+        (void)cptr;  // currents are consumed in stepDynamics
+        return true;
+    }
+
+    /**
      * Step dynamics forward in time.
      *
      * Args:
@@ -622,6 +742,7 @@ public:
         result["tip_position"] = tip_pos;
         result["tip_velocity"] = tip_vel;
         result["converged"] = (localmin == 0);
+        result["localmin"] = localmin;
 
         return result;
     }
@@ -697,6 +818,18 @@ PYBIND11_MODULE(crm_python, m) {
         .def("initialize_from_kinematics", &CRMDynamicsWrapper::initializeFromKinematics,
              py::arg("currents"), py::arg("insertion_length"),
              "Initialize dynamics from FK solution (MUST call before step)")
+        .def("initialize_from_seed", &CRMDynamicsWrapper::initializeFromSeed,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("p_in"), py::arg("R_in"), py::arg("xf_in"),
+             py::arg("mL_in") = py::array_t<double>(),
+             py::arg("nL_in") = py::array_t<double>(),
+             "Initialize dynamics directly from explicit seeds (p_L, R_L, xf, optional mL/nL)")
+        .def("debug_seed_state", &CRMDynamicsWrapper::debugSeedState,
+             py::arg("v_in"), py::arg("w_in"), py::arg("p_in"),
+             py::arg("R_in"), py::arg("xf_in"),
+             py::arg("mL_in") = py::array_t<double>(),
+             py::arg("nL_in") = py::array_t<double>(),
+             "Debug: manually seed dynamics state (not for production use)")
         .def("step", &CRMDynamicsWrapper::stepDynamics,
              py::arg("currents"), py::arg("insertion_length"),
              "Step dynamics forward")
