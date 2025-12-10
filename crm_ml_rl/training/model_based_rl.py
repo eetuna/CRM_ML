@@ -25,6 +25,11 @@ from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 
 from ..models.hybrid_dynamics import HybridDynamicsModel, HybridDynamicsConfig
 from ..models.full_dynamics import FullDynamicsModel
+from ..models.sequence_models import (
+    TransformerDynamicsModel,
+    DiffusionDynamicsModel,
+    DiffusionDynamicsConfig
+)
 from .rl_agents import SACAgent, PPOAgent, TD3Agent, create_policy_kwargs
 
 
@@ -32,11 +37,13 @@ from .rl_agents import SACAgent, PPOAgent, TD3Agent, create_policy_kwargs
 class ModelBasedConfig:
     """Configuration for model-based RL."""
     # World model settings
-    dynamics_model_type: str = "hybrid"  # "hybrid", "full", "ensemble"
+    dynamics_model_type: str = "hybrid"  # "hybrid", "full", "transformer", "diffusion"
     dynamics_hidden_dims: List[int] = None
     use_cpp_physics: bool = True
     param_file: Optional[str] = None
     config_file: Optional[str] = None
+    transformer_kwargs: Optional[Dict[str, Any]] = None
+    diffusion_config: Optional[DiffusionDynamicsConfig] = None
 
     # Model-based training settings
     imagined_rollout_horizon: int = 10
@@ -180,6 +187,28 @@ class DynaAgent:
                 hidden_dims=self.config.dynamics_hidden_dims
             )
             self.dynamics_model = HybridDynamicsModel(dynamics_config, device=str(self.device))
+        elif self.config.dynamics_model_type == "transformer":
+            obs_dim = self.env.observation_space.shape[0]
+            action_dim = self.env.action_space.shape[0]
+            transformer_kwargs = self.config.transformer_kwargs or {}
+            self.dynamics_model = TransformerDynamicsModel(
+                state_dim=obs_dim,
+                action_dim=action_dim,
+                **transformer_kwargs
+            ).to(self.device)
+        elif self.config.dynamics_model_type == "diffusion":
+            obs_dim = self.env.observation_space.shape[0]
+            action_dim = self.env.action_space.shape[0]
+            if self.config.diffusion_config is None:
+                diffusion_config = DiffusionDynamicsConfig(
+                    state_dim=obs_dim,
+                    action_dim=action_dim
+                )
+            else:
+                diffusion_config = self.config.diffusion_config
+                diffusion_config.state_dim = obs_dim
+                diffusion_config.action_dim = action_dim
+            self.dynamics_model = DiffusionDynamicsModel(diffusion_config).to(self.device)
         else:
             # Full neural network dynamics
             obs_dim = self.env.observation_space.shape[0]
@@ -525,6 +554,28 @@ class MBPOAgent:
                 hidden_dims=self.config.dynamics_hidden_dims
             )
             self.dynamics_model = HybridDynamicsModel(dynamics_config, device=str(self.device))
+        elif self.config.dynamics_model_type == "transformer":
+            obs_dim = self.env.observation_space.shape[0]
+            action_dim = self.env.action_space.shape[0]
+            transformer_kwargs = self.config.transformer_kwargs or {}
+            self.dynamics_model = TransformerDynamicsModel(
+                state_dim=obs_dim,
+                action_dim=action_dim,
+                **transformer_kwargs
+            ).to(self.device)
+        elif self.config.dynamics_model_type == "diffusion":
+            obs_dim = self.env.observation_space.shape[0]
+            action_dim = self.env.action_space.shape[0]
+            if self.config.diffusion_config is None:
+                diffusion_config = DiffusionDynamicsConfig(
+                    state_dim=obs_dim,
+                    action_dim=action_dim
+                )
+            else:
+                diffusion_config = self.config.diffusion_config
+                diffusion_config.state_dim = obs_dim
+                diffusion_config.action_dim = action_dim
+            self.dynamics_model = DiffusionDynamicsModel(diffusion_config).to(self.device)
         else:
             obs_dim = self.env.observation_space.shape[0]
             action_dim = self.env.action_space.shape[0]
@@ -546,10 +597,11 @@ class MBPOAgent:
             next_states = data.next_observations
 
             # Forward pass
-            pred_next_states = self.dynamics_model.forward(states, actions)
-
-            # Loss
-            loss = nn.functional.mse_loss(pred_next_states, next_states)
+            if isinstance(self.dynamics_model, DiffusionDynamicsModel):
+                loss = self.dynamics_model.diffusion_loss(states, actions, next_states)
+            else:
+                pred_next_states = self.dynamics_model.forward(states, actions)
+                loss = nn.functional.mse_loss(pred_next_states, next_states)
 
             # Backward pass
             self.dynamics_optimizer.zero_grad()

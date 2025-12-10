@@ -17,6 +17,11 @@ from .full_kinematics import FullKinematicsModel
 from .full_dynamics import FullDynamicsModel
 from .hybrid_kinematics import HybridKinematicsModel, HybridKinematicsWithUncertainty
 from .hybrid_dynamics import HybridDynamicsModel, HybridDynamicsConfig, HybridDynamicsLSTM
+from .sequence_models import (
+    TransformerDynamicsModel,
+    DiffusionDynamicsModel,
+    DiffusionDynamicsConfig
+)
 
 __all__ = [
     'MLP',
@@ -32,4 +37,7 @@ __all__ = [
     'HybridDynamicsModel',
     'HybridDynamicsConfig',
     'HybridDynamicsLSTM',
+    'TransformerDynamicsModel',
+    'DiffusionDynamicsModel',
+    'DiffusionDynamicsConfig',
 ]

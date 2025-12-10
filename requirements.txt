@@ -23,6 +23,9 @@ matplotlib>=3.5.0
 # Logging/monitoring
 tensorboard>=2.13.0
 
+# Testing
+pytest>=7.0.0
+
 # Optional: MPC (uncomment if needed)
 # casadi>=3.6.0
 # cvxpy>=1.3.0

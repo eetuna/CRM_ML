@@ -17,6 +17,11 @@ from datetime import datetime
 
 from crm_ml_rl.models.residual_dynamics import ResidualDynamicsModel, EnsembleResidualDynamics
 from crm_ml_rl.models.full_dynamics import FullDynamicsModel, EnsembleFullDynamics, ProbabilisticFullDynamics
+from crm_ml_rl.models.sequence_models import (
+    TransformerDynamicsModel,
+    DiffusionDynamicsModel,
+    DiffusionDynamicsConfig
+)
 from crm_ml_rl.data.data_loader import CRMDataLoader
 
 
@@ -24,12 +29,14 @@ from crm_ml_rl.data.data_loader import CRMDataLoader
 class TrainingConfig:
     """Training configuration."""
     # Model
-    model_type: str = "residual"  # "residual" or "full"
+    model_type: str = "residual"  # "residual", "full", "transformer", "diffusion"
     state_dim: int = 6
     action_dim: int = 3
     hidden_dims: List[int] = None
     use_ensemble: bool = False
     num_ensemble: int = 5
+    transformer_kwargs: Optional[Dict] = None
+    diffusion_config: Optional[DiffusionDynamicsConfig] = None
 
     # Training
     batch_size: int = 64
@@ -172,6 +179,24 @@ class DynamicsTrainer:
                     action_dim=self.config.action_dim,
                     hidden_dims=self.config.hidden_dims
                 )
+        elif self.config.model_type == "transformer":
+            kwargs = self.config.transformer_kwargs or {}
+            return TransformerDynamicsModel(
+                state_dim=self.config.state_dim,
+                action_dim=self.config.action_dim,
+                **kwargs
+            )
+        elif self.config.model_type == "diffusion":
+            if self.config.diffusion_config is None:
+                config = DiffusionDynamicsConfig(
+                    state_dim=self.config.state_dim,
+                    action_dim=self.config.action_dim
+                )
+            else:
+                config = self.config.diffusion_config
+                config.state_dim = self.config.state_dim
+                config.action_dim = self.config.action_dim
+            return DiffusionDynamicsModel(config)
         else:
             raise ValueError(f"Unknown model type: {self.config.model_type}")
 
@@ -295,28 +320,30 @@ class DynamicsTrainer:
 
             self.optimizer.zero_grad()
 
-            # Forward pass
-            if self.config.use_ensemble:
-                pred_mean, pred_std = self.model(states, actions)
-                predicted = pred_mean
+            if self.config.model_type == "diffusion":
+                loss = self.model.diffusion_loss(states, actions, next_states)
             else:
-                if self.config.model_type == "residual":
-                    # For residual, we need physics prediction
-                    if self.physics_model is not None:
-                        with torch.no_grad():
-                            physics_pred = self.physics_model(states, actions)
-                        predicted = self.model(states, actions, physics_pred)
-                    else:
-                        # Simple physics: next = current + dt * action
-                        physics_pred = states.clone()
-                        physics_pred[:, :3] += 0.02 * states[:, 3:6]  # position update
-                        physics_pred[:, 3:6] += 0.02 * actions * 100  # velocity update
-                        predicted = self.model(states, actions, physics_pred)
+                # Forward pass
+                if self.config.use_ensemble:
+                    pred_mean, pred_std = self.model(states, actions)
+                    predicted = pred_mean
                 else:
-                    predicted = self.model(states, actions)
+                    if self.config.model_type == "residual":
+                        # For residual, we need physics prediction
+                        if self.physics_model is not None:
+                            with torch.no_grad():
+                                physics_pred = self.physics_model(states, actions)
+                            predicted = self.model(states, actions, physics_pred)
+                        else:
+                            # Simple physics: next = current + dt * action
+                            physics_pred = states.clone()
+                            physics_pred[:, :3] += 0.02 * states[:, 3:6]  # position update
+                            physics_pred[:, 3:6] += 0.02 * actions * 100  # velocity update
+                            predicted = self.model(states, actions, physics_pred)
+                    else:
+                        predicted = self.model(states, actions)
 
-            # Loss
-            loss = self.criterion(predicted, next_states)
+                loss = self.criterion(predicted, next_states)
 
             # Backward pass
             loss.backward()
@@ -340,17 +367,20 @@ class DynamicsTrainer:
                 actions = actions.to(self.device)
                 next_states = next_states.to(self.device)
 
-                if self.config.use_ensemble:
-                    pred_mean, _ = self.model(states, actions)
-                    predicted = pred_mean
+                if self.config.model_type == "diffusion":
+                    predicted = self.model(states, actions, deterministic=True)
                 else:
-                    if self.config.model_type == "residual":
-                        physics_pred = states.clone()
-                        physics_pred[:, :3] += 0.02 * states[:, 3:6]
-                        physics_pred[:, 3:6] += 0.02 * actions * 100
-                        predicted = self.model(states, actions, physics_pred)
+                    if self.config.use_ensemble:
+                        pred_mean, _ = self.model(states, actions)
+                        predicted = pred_mean
                     else:
-                        predicted = self.model(states, actions)
+                        if self.config.model_type == "residual":
+                            physics_pred = states.clone()
+                            physics_pred[:, :3] += 0.02 * states[:, 3:6]
+                            physics_pred[:, 3:6] += 0.02 * actions * 100
+                            predicted = self.model(states, actions, physics_pred)
+                        else:
+                            predicted = self.model(states, actions)
 
                 loss = self.criterion(predicted, next_states)
                 total_loss += loss.item()
