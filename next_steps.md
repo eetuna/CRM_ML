@@ -5,6 +5,12 @@ This document outlines the roadmap for completing the CRM_ML reinforcement learn
 
 ---
 
+## Update: Dynamics Sweep Status (May 2025)
+- Added seed-based initialization in bindings (`initialize_from_seed` + `bvp_initialize_with_seed`) and a `disable_cpp_fallback` flag to keep C++ active during diagnostics.
+- Python/C++ sweeps now align when using CRMDYNTest seeds, insertion 94.3 mm, step sizes [0.01, 0.05, 0.1, 0.2]; both report 50 failing current triples (mixed-sign/high-magnitude). Failure sets saved to `sweep_failures_py.json` and `sweep_failures_cpp.json`.
+- Failures still emit “Coil integration Unbounded!!” and `localmin != 0`; sample py-only case (0, 0.1, -0.1) returns `localmin=3`.
+- Next actions for reviewer: (1) investigate solver tolerances/step control for failing currents; (2) consider exposing direct BVP/IVP entry in bindings to bypass wrapper checks; (3) decide on production fallback vs. diagnostic mode; (4) document/clamp non-convergent regions if needed.
+
 ## 1. Fix Dynamics Solver Initialization (High Priority)
 
 ### Problem
