@@ -21,8 +21,12 @@ except ImportError:
 @dataclass
 class CatheterParameters:
     """Catheter physical parameters."""
-    # Damping coefficients [rigid_linear, rigid_angular, flex_linear, flex_angular]
-    damping: np.ndarray = field(default_factory=lambda: np.array([100.0, 200.0, 0.1, 0.01]))
+    # Damping coefficients (6 elements): [linear_x, linear_y, linear_z, angular_x, angular_y, angular_z]
+    # Values from CRMDYN_test.cpp for consistency with C++ dynamics
+    damping: np.ndarray = field(default_factory=lambda: np.array([
+        12.1761626666366, 12.1761626666366, 284.429938756989,
+        0.0304776127617393, 0.0304776127617393, 0.00502712804532508
+    ]))
 
     # Tube radii [outer, inner] in mm
     radii: np.ndarray = field(default_factory=lambda: np.array([1.5875, 0.9906]))
@@ -51,8 +55,12 @@ class CatheterParameters:
     @classmethod
     def from_dict(cls, params: Dict) -> 'CatheterParameters':
         """Create parameters from dictionary."""
+        default_damping = [
+            12.1761626666366, 12.1761626666366, 284.429938756989,
+            0.0304776127617393, 0.0304776127617393, 0.00502712804532508
+        ]
         return cls(
-            damping=np.array(params.get('damping', [100.0, 200.0, 0.1, 0.01])),
+            damping=np.array(params.get('damping', default_damping)),
             radii=np.array(params.get('radii', [1.5875, 0.9906])),
             E=np.array(params.get('E', [5.3948, 2.3881])),
             coil_align=np.array(params.get('coil_align', [3.1631, -3.0989])),
@@ -299,7 +307,12 @@ class CRMWrapper:
             if not result.get('converged', True):
                 self._cpp_failures += 1
                 if self._cpp_failures == 1:
-                    print("Warning: CRM C++ dynamics did not converge; falling back to simplified model if this persists.")
+                    localmin = result.get('localmin', 'N/A')
+                    step_size = self._cpp_dynamics.integration_step_size if hasattr(self._cpp_dynamics, 'integration_step_size') else 'N/A'
+                    print(f"Warning: CRM C++ dynamics did not converge. "
+                          f"currents={currents}, insertion_length={insertion_length}, "
+                          f"dt={dt}, step_size={step_size}, localmin={localmin}. "
+                          f"Falling back to simplified model.")
                 if self._disable_cpp_fallback:
                     # Return the raw result and keep C++ enabled for diagnostics
                     return result
@@ -340,6 +353,10 @@ class CRMWrapper:
 
         # Semi-implicit Euler
         self._velocity = self._velocity + acceleration * dt
+        # Clamp velocity to avoid numerical blow-up (max 500 mm/s)
+        vel_norm = np.linalg.norm(self._velocity)
+        if vel_norm > 500.0:
+            self._velocity = self._velocity / vel_norm * 500.0
         self._position = self._position + self._velocity * dt
 
         return {

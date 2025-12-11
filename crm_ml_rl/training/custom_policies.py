@@ -278,7 +278,11 @@ class PhysicsInformedExtractor(BaseFeaturesExtractor):
         )
 
     def _get_physics_features(self, observations: torch.Tensor) -> torch.Tensor:
-        """Extract physics features using CRM FK."""
+        """Extract physics features using CRM FK.
+
+        Note: This loops over samples since C++ bindings don't support batch operations.
+        For large batches, consider caching or using the non-physics extractor.
+        """
         batch_size = observations.shape[0]
         device = observations.device
 

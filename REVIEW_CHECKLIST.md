@@ -22,3 +22,23 @@
 ## 5) Experimental Data and Validation
 - Inspect: `crm_ml_rl/data/experimental_loader.py`, `crm_ml_rl/evaluation/validation_metrics.py`, `crm_ml_rl/evaluation/cpp_validation.py`
 - Goals: Ensure experimental loading/validation aligns with model inputs; check assumptions and metrics.
+
+## 6) End-to-End ML/RL Pipelines
+- Run/inspect: `crm_ml_rl/training/train_rl.py`, `crm_ml_rl/training/train_dynamics.py`, `scripts/test_rl_integration.py`, `scripts/test_ml_models.py`
+- MPC/model-based: `crm_ml_rl/training/mpc_controller.py`, `crm_ml_rl/training/model_based_rl.py`
+- Policies/networks: `crm_ml_rl/training/custom_policies.py`, `crm_ml_rl/models/networks.py`
+- Envs: `crm_ml_rl/envs/*` (reset/step, obs shapes, reward/termination)
+- Requirements/examples: `requirements.txt`, `crm_ml_rl/requirements.txt`, `examples/ml_examples.py`, `examples/rl_examples.py`
+- Goals: Verify end-to-end execution with CRM wrapper enabled, consistency of observation/action spaces, and that examples/training scripts run to completion.
+
+## 7) Tests to Run
+- Pytest targets: `tests/test_crmdyn_binding_vs_cpp.py`, `tests/test_ml_models.py`, `tests/test_rl_models.py`, `tests/test_experimental_loader.py`
+- Optional scripts: `scripts/test_rl_integration.py`, `scripts/test_ml_models.py` (already listed above), to sanity-check pipelines.
+- Goals: Catch regressions in bindings, ML/RL models, and data loading.
+
+## 8) Additional Checks
+- Numeric stability: review clamping/tolerances in solvers/wrappers to guard against NaNs/huge velocities.
+- Logging: ensure non-convergence logs include currents, insertion length, step size, and `localmin` for troubleshooting.
+- Performance: look for avoidable Python↔C++ crossings in training loops; profile CRM calls if needed.
+- Parameters/units: verify radii/mass/damping units and dataset-specific current flips (`flip_third_current`) are consistent.
+- Docs accuracy: confirm `USAGE_GUIDE.md` and `docs/modeling_guide.md` reflect current APIs/defaults.

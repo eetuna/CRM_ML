@@ -792,7 +792,7 @@ tensorboard --logdir trained_models/
 2. **Hybrid Models**: Combine CRM C++ physics with learned residuals for best accuracy
 3. **RL Integration**: All agents support custom feature extractors from your models
 4. **Model-Based RL**: Use Dyna, MBPO, or MPC with learned dynamics
-5. **Testing**: Comprehensive test suites verify all integrations (93 tests passing)
+5. **Testing**: Comprehensive test suites verify all integrations (104 tests passing)
 
 ### File Locations
 
@@ -812,4 +812,4 @@ tensorboard --logdir trained_models/
 
 ---
 
-**Last Updated**: 2025-12-06
+**Last Updated**: 2025-12-11

@@ -52,7 +52,9 @@ def run_debug_seed_step():
         nL=np.zeros((1, 3)),
     )
 
-    res = crm.step_dynamics(np.array([0.05, 0.05, 0.05]), insertion_length=50.0, dt=dt)
+    # Use insertion_length=94.3 to match the seed values from CRMDYN_test.cpp
+    # Use currents [0.0, 0.0, 0.1] which is a known-good configuration
+    res = crm.step_dynamics(np.array([0.0, 0.0, 0.1]), insertion_length=94.3, dt=dt)
     return {
         "using_cpp": crm.is_using_cpp,
         "converged": res.get("converged", False),
