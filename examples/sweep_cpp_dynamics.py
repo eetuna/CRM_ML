@@ -44,46 +44,11 @@ def make_wrapper(dt: float, step_size: float):
 def try_case(curr, ins, dt, step_sizes):
     """Try a single current/insert pair with progressively smaller step sizes."""
     curr_arr = np.array(curr, dtype=float)
-    # CRMDYN_test seeds for robust init
-    xf_seed = np.array(
-        [
-            -0.458414144062750,
-            34.411241976876518,
-            70.457561147732264,
-            0.999932718178103,
-            0.009921777042635,
-            -0.006009780134551,
-            -0.004651734390922,
-            0.817579117734723,
-            0.575797488368325,
-            0.010626405041486,
-            -0.575730791763330,
-            0.817570262993625,
-            -0.015378744286498,
-            0.000001280646594,
-            -0.000349413951059,
-        ]
-    )
-    pL_seed = np.array([-0.248418562587657, 17.707660318406560, 46.752162601547091])
-    RL_seed = np.array(
-        [
-            0.999919687839427,
-            0.009924211584043,
-            -0.007882125064742,
-            -0.003571217614502,
-            0.817374079004311,
-            0.576096225796181,
-            0.012159945552960,
-            -0.576021809479719,
-            0.817343875445250,
-        ]
-    )
-    zero3 = np.zeros(3)
 
     for step_size in step_sizes:
         w = make_wrapper(dt, step_size)
-        init_ok = w.bvp_initialize_with_seed(
-            curr_arr, ins, pL_seed, RL_seed, xf_seed, mL=zero3, nL=zero3, integration_step=step_size, dt=dt
+        init_ok = w.initialize_dynamics(
+            curr_arr, ins
         )
         if not init_ok:
             continue

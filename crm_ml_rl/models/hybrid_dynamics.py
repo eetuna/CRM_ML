@@ -192,6 +192,15 @@ class HybridDynamicsModel(nn.Module):
         if insertion_length is None:
             insertion_length = self.config.insertion_length
 
+        # Set simulator state to current state
+        self.simulator.state.position = state[:3].copy()
+        self.simulator.state.velocity = state[3:].copy()
+
+        # Reinitialize dynamics from current state
+        self.simulator.wrapper.initialize_dynamics(
+            action, insertion_length
+        )
+
         # Step physics simulation
         result = self.simulator.wrapper.step_dynamics(action, insertion_length)
 

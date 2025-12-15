@@ -50,27 +50,6 @@ int main() {
         ActInertia[i][8] = I_zz;
     }
 
-    // Initial guesses
-    double deltau0_initialguess[3] = {0.0, 0.0, 0.0};
-    double ftip_initialguess[3] = {0.0, 0.0, 0.0};
-    double nL_initialguess[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
-    double mL_initialguess[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
-    double v_L_pre[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
-    double w_L_pre[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
-
-    // Seed tip state from CRMDYN_test.cpp
-    double xf_pre[NUM_STATES] = {
-        -0.458414144062750, 34.411241976876518, 70.457561147732264,
-        0.999932718178103, 0.009921777042635, -0.006009780134551,
-        -0.004651734390922, 0.817579117734723, 0.575797488368325,
-        0.010626405041486, -0.575730791763330, 0.817570262993625,
-        -0.015378744286498, 0.000001280646594, -0.000349413951059};
-    double pL[NUM_ACT_SET][3] = {{-0.248418562587657, 17.707660318406560, 46.752162601547091}};
-    double RL[NUM_ACT_SET][9] = {{
-        0.999919687839427, 0.009924211584043, -0.007882125064742,
-        -0.003571217614502, 0.817374079004311, 0.576096225796181,
-        0.012159945552960, -0.576021809479719, 0.817343875445250}};
-
     // Grids to test
     std::vector<double> current_vals = {-0.2, -0.1, 0.0, 0.1, 0.2};
     // Use the insertion length from CRMDYNTest only
@@ -86,6 +65,69 @@ int main() {
                         continue;
                     }
                     double ActuationCurrents[NUM_ACT_SET][3] = {{c1, c2, c3}};
+
+                    // --- FIX: Initialize dynamics from forward kinematics ---
+                    // Setup FK parameters
+                    CRMForwardKinematicsData FKParams;
+                    FKParams.CathParams = &CathParams;
+                    FKParams.CathConfig = &CathConfig;
+                    FKParams.ContactMode = ContactModeType::FREE_TIP;
+                    FKParams.TipForce[0] = FKParams.TipForce[1] = FKParams.TipForce[2] = 0.0;
+                    FKParams.TipConstraintPoint[0] = FKParams.TipConstraintPoint[1] = FKParams.TipConstraintPoint[2] = 0.0;
+                    FKParams.deltau0_initialguess[0] = FKParams.deltau0_initialguess[1] = FKParams.deltau0_initialguess[2] = 0.0;
+                    FKParams.ftip_initialguess[0] = FKParams.ftip_initialguess[1] = FKParams.ftip_initialguess[2] = 0.0;
+                    FKParams.IntegrationStepSize = IntegrationStepSize;
+                    FKParams.FinalValueOnly = false; // We need intermediate coil states
+
+                    // Allocate storage for FK results
+                    double markerPosData[CathParams.no_locmarkers * 3];
+                    FKParams.ReportedMarkerPos = reinterpret_cast<double(*)[3]>(markerPosData);
+                    double coilOrientData[CathParams.no_act_set * 9];
+                    FKParams.ReportedCoilOrient = reinterpret_cast<double(*)[9]>(coilOrientData);
+                    double coilPosData[CathParams.no_act_set * 3];
+                    FKParams.ReportedCoilPos = reinterpret_cast<double(*)[3]>(coilPosData);
+                    
+                    // Build FK input vector
+                    int x_dim = NUM_ACT_SET * 3 + 1;
+                    double in_x[x_dim];
+                    for (int i = 0; i < NUM_ACT_SET * 3; ++i) {
+                        in_x[i] = ActuationCurrents[0][i];
+                    }
+                    in_x[NUM_ACT_SET * 3] = ins;
+
+                    // Output vector
+                    int y_dim = 3 + 9 + 3;
+                    double out_y[y_dim];
+                    double potentialEnergy;
+
+                    // Call FK to get a good initial state
+                    int fk_localmin = CRM_ForwardKinematics(in_x, out_y, potentialEnergy, FKParams);
+
+                    if (fk_localmin != 0) {
+                         SweepResult sr = {{c1, c2, c3}, ins, false};
+                         results.push_back(sr);
+                         std::cout << "  curr=(" << c1 << "," << c2 << "," << c3 << "), ins=" << ins
+                                   << " failed to initialize from FK." << std::endl;
+                         continue;
+                    }
+
+                    // --- Use FK results to seed the dynamics ---
+                    double xf_pre[NUM_STATES];
+                    for(int i = 0; i < 15; ++i) xf_pre[i] = out_y[i];
+
+                    double pL[NUM_ACT_SET][3];
+                    double RL[NUM_ACT_SET][9];
+                     for (int j = 0; j < NUM_ACT_SET; j++) {
+                        for (int i = 0; i < 3; i++) pL[j][i] = FKParams.ReportedCoilPos[j][i];
+                        for (int i = 0; i < 9; i++) RL[j][i] = FKParams.ReportedCoilOrient[j][i];
+                    }
+
+                    // Initial guesses for dynamics (zero velocity)
+                    double v_L_pre[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
+                    double w_L_pre[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
+                    double nL_initialguess[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
+                    double mL_initialguess[NUM_ACT_SET][3] = {{0.0, 0.0, 0.0}};
+                    double ftip_initialguess[3] = {0.0, 0.0, 0.0};
 
                     CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
                         CathParams, CathConfig, ins, ActuationCurrents, ContactMode,
@@ -109,7 +151,7 @@ int main() {
 
                     SweepResult sr = {{c1, c2, c3}, ins, converged && localmin == 0};
                     results.push_back(sr);
-                    if (!converged && results.size() < 10) {
+                    if (!converged) {
                         std::cout << "  curr=(" << c1 << "," << c2 << "," << c3 << "), ins=" << ins
                                   << " failed with localmin=" << localmin << std::endl;
                     }

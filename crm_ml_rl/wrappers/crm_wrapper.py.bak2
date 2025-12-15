@@ -309,38 +309,25 @@ class CRMWrapper:
         if self.use_cpp and self.initialized:
             if dt is not None:
                 self._cpp_dynamics.set_timestep(dt)
-            
-            # First attempt
             result = self._cpp_dynamics.step(currents, insertion_length)
-
-            # If the first attempt fails, try to recover by re-initializing from FK
-            if not result.get('converged', True):
-                # print("Dynamics failed. Attempting recovery with FK re-initialization...")
-                init_success = self.initialize_dynamics(currents, insertion_length)
-
-                if init_success:
-                    # Second attempt after re-initialization
-                    result = self._cpp_dynamics.step(currents, insertion_length)
-
-            # If still not converged after recovery attempt, handle failure
             if not result.get('converged', True):
                 self._cpp_failures += 1
-                if self._cpp_failures == 1: # Only print warning once to avoid spam
+                if self._cpp_failures == 1:
                     localmin = result.get('localmin', 'N/A')
                     step_size = self._cpp_dynamics.integration_step_size if hasattr(self._cpp_dynamics, 'integration_step_size') else 'N/A'
                     print(f"Warning: CRM C++ dynamics did not converge. "
                           f"currents={currents}, insertion_length={insertion_length}, "
                           f"dt={dt}, step_size={step_size}, localmin={localmin}. "
                           f"Falling back to simplified model.")
-                
                 if self._disable_cpp_fallback:
+                    # Return the raw result and keep C++ enabled for diagnostics
                     return result
-                
+                # Immediately fall back after the first failure to avoid log spam
                 self._fallback_to_simplified(result)
+                # Provide a simplified-step result immediately to avoid propagating invalid values
                 return self._step_simplified(currents, dt)
-            
-            # If converged, reset failure count
-            self._cpp_failures = 0
+            else:
+                self._cpp_failures = 0
             return result
         else:
             if self._strict_cpp:

@@ -42,3 +42,7 @@
 - Performance: look for avoidable Python↔C++ crossings in training loops; profile CRM calls if needed.
 - Parameters/units: verify radii/mass/damping units and dataset-specific current flips (`flip_third_current`) are consistent.
 - Docs accuracy: confirm `USAGE_GUIDE.md` and `docs/modeling_guide.md` reflect current APIs/defaults.
+
+## 9) FK Parity Check
+- Script: `scripts/compare_fk_cpp_vs_wrapper.py`
+- Goal: Verify the C++ FK and wrapper FK outputs match (when both use C++) across a few currents.

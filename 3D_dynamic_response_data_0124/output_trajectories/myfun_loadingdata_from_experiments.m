@@ -10,6 +10,10 @@
 %%% This file is based on results obtained from experiment conducted on
 %%% 05/19/2016.
 %%%%%%%%%%%%%%%%%%%%%%
+if ~exist('filePath', 'var')
+    error('Variable filePath is not defined. Please specify the input file path.');
+end
+
 fileID = fopen(filePath);
 C = textscan(fileID,'%f %n %c %f %f %f %c %c %f %f %f %c %c %f %f %f %c %c %f %f %f %c', 'Delimiter', ',','HeaderLines',2);
 fclose(fileID);
@@ -155,6 +159,3 @@ for m = 2:1:length(change_tick_set)-2
 
     
 end
-
-
-

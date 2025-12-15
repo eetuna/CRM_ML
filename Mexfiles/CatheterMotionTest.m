@@ -37,6 +37,11 @@ ActuationCurrents = [ 0.00, 0.00, 0.00 ];  % [ 0.00, 0.00, 0.00, 0.00, 0.00, 0.0
 % pack them together into a single array
 control_inputs = [ ActuationCurrents InsertedLength ];
 
+if ~exist('currentsets', 'var')
+    % Define a default set of currents for testing if not provided
+    currentsets = [0.1 0.1 0.1 0.1 0.1 0.1; 0.2 0.2 0.2 0.2 0.2 0.2];
+end
+
 for (idx=1:size(currentsets,1))
     control_inputs= [ currentsets(idx,:) InsertedLength ];
     % Render the Catheter (this function also performs the forward kinematics for rendering)

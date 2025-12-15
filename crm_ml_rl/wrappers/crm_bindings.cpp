@@ -706,21 +706,23 @@ public:
         DYNSolverIVP(BVPParams, out_u0, out_mL, out_nL, out_tau, ftip_calc,
                      true, xf_new, x_coil, ReportedMarkerPos);
 
-        // Update state
-        for (int j = 0; j < NUM_ACT_SET; j++) {
-            for (int i = 0; i < 3; i++) {
-                v_L[j][i] = x_coil[j][i];
-                w_L[j][i] = x_coil[j][i + 3];
-                p_L[j][i] = x_coil[j][i + 6];
-                mL_guess[j][i] = out_mL[j][i];
-                nL_guess[j][i] = out_nL[j][i];
+        // Update state only if converged to avoid corrupting internal state with garbage
+        if (localmin == 0) {
+            for (int j = 0; j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    v_L[j][i] = x_coil[j][i];
+                    w_L[j][i] = x_coil[j][i + 3];
+                    p_L[j][i] = x_coil[j][i + 6];
+                    mL_guess[j][i] = out_mL[j][i];
+                    nL_guess[j][i] = out_nL[j][i];
+                }
+                for (int i = 0; i < 9; i++) {
+                    R_L[j][i] = x_coil[j][i + 9];
+                }
             }
-            for (int i = 0; i < 9; i++) {
-                R_L[j][i] = x_coil[j][i + 9];
+            for (int i = 0; i < NUM_STATES; i++) {
+                xf[i] = xf_new[i];
             }
-        }
-        for (int i = 0; i < NUM_STATES; i++) {
-            xf[i] = xf_new[i];
         }
 
         // Extract tip position from xf (indices 0-2 are position)

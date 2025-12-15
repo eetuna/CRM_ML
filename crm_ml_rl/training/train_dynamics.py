@@ -91,6 +91,72 @@ class DynamicsDataset(Dataset):
         )
 
 
+class SequenceDynamicsDataset(Dataset):
+    """Dataset for sequence-based dynamics models (Transformer)."""
+
+    def __init__(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        next_states: np.ndarray,
+        context_len: int
+    ):
+        self.states = torch.tensor(states, dtype=torch.float32)
+        self.actions = torch.tensor(actions, dtype=torch.float32)
+        self.next_states = torch.tensor(next_states, dtype=torch.float32)
+        self.context_len = context_len
+        
+        # Pre-calculate valid indices (must have enough history)
+        # We assume data is one continuous trajectory or handled externally.
+        # For simplicity here, we assume continuous. In production, handle trajectory boundaries.
+        self.valid_indices = list(range(context_len, len(self.states)))
+
+    def __len__(self):
+        return len(self.valid_indices)
+
+    def __getitem__(self, idx):
+        real_idx = self.valid_indices[idx]
+        # History: previous context_len steps of (state, action)
+        # Shape: (context_len, state_dim + action_dim)
+        hist_states = self.states[real_idx-self.context_len : real_idx]
+        hist_actions = self.actions[real_idx-self.context_len : real_idx]
+        history = torch.cat([hist_states, hist_actions], dim=-1)
+        
+        return (
+            self.states[real_idx],
+            self.actions[real_idx],
+            self.next_states[real_idx],
+            history
+        )
+
+
+class ResidualDynamicsDataset(Dataset):
+    """Dataset for residual dynamics models (includes physics predictions)."""
+
+    def __init__(
+        self,
+        states: np.ndarray,
+        actions: np.ndarray,
+        next_states: np.ndarray,
+        physics_preds: np.ndarray
+    ):
+        self.states = torch.tensor(states, dtype=torch.float32)
+        self.actions = torch.tensor(actions, dtype=torch.float32)
+        self.next_states = torch.tensor(next_states, dtype=torch.float32)
+        self.physics_preds = torch.tensor(physics_preds, dtype=torch.float32)
+
+    def __len__(self):
+        return len(self.states)
+
+    def __getitem__(self, idx):
+        return (
+            self.states[idx],
+            self.actions[idx],
+            self.next_states[idx],
+            self.physics_preds[idx]
+        )
+
+
 class DynamicsTrainer:
     """Trainer for dynamics models."""
 
@@ -239,6 +305,11 @@ class DynamicsTrainer:
         all_actions = []
         all_next_states = []
 
+        # Pre-compute physics residuals if using residual model to avoid C++ batching issues
+        use_physics_residual = (self.config.model_type == "residual" and self.physics_model is not None)
+        all_physics_preds = []
+
+        print("Loading trajectories...")
         # Load trajectories
         for traj_type in trajectory_types:
             trajectories = data_loader.load_trajectories(traj_type)
@@ -264,15 +335,42 @@ class DynamicsTrainer:
                 # Actions are currents
                 actions = currents.T  # (T, 3)
 
+                # Pre-compute physics predictions for this trajectory
+                if use_physics_residual:
+                    phys_preds = []
+                    # Initialize dynamics at the start of the trajectory
+                    init_success = self.physics_model.initialize_dynamics(
+                        actions[0],
+                        insertion_length=50.0, # Default or from traj if available
+                    )
+                    if not init_success:
+                        print(f"Warning: Failed to initialize physics model for trajectory, skipping.")
+                        continue
+
+                    for i in range(len(states)):
+                        # Call C++ wrapper on single item
+                        # Note: This assumes physics_model is the CRMWrapper instance
+                        res = self.physics_model.step_dynamics(
+                            actions[i],
+                            insertion_length=50.0, # Default or from traj if available
+                            dt=dt
+                        )
+                        phys_preds.append(np.hstack([res['tip_position'], res['tip_velocity']]))
+                    phys_preds = np.array(phys_preds)
+
                 # Create transitions
                 for t in range(len(states) - 1):
                     all_states.append(states[t])
                     all_actions.append(actions[t])
                     all_next_states.append(states[t + 1])
+                    if use_physics_residual:
+                        all_physics_preds.append(phys_preds[t+1]) # Target is t+1
 
         all_states = np.array(all_states)
         all_actions = np.array(all_actions)
         all_next_states = np.array(all_next_states)
+        if use_physics_residual:
+            all_physics_preds = np.array(all_physics_preds)
 
         print(f"Total transitions: {len(all_states)}")
 
@@ -282,9 +380,18 @@ class DynamicsTrainer:
             all_states = self.normalize_state(all_states)
             all_actions = self.normalize_action(all_actions)
             all_next_states = self.normalize_state(all_next_states)
+            if use_physics_residual:
+                # Physics preds are in state space, so normalize them too
+                all_physics_preds = self.normalize_state(all_physics_preds)
 
-        # Create dataset
-        dataset = DynamicsDataset(all_states, all_actions, all_next_states)
+        # Create dataset based on model type
+        if self.config.model_type == "transformer":
+            context_len = self.config.transformer_kwargs.get('context_len', 5)
+            dataset = SequenceDynamicsDataset(all_states, all_actions, all_next_states, context_len)
+        elif use_physics_residual:
+            dataset = ResidualDynamicsDataset(all_states, all_actions, all_next_states, all_physics_preds)
+        else:
+            dataset = DynamicsDataset(all_states, all_actions, all_next_states)
 
         # Split
         train_size = int(len(dataset) * self.config.train_split)
@@ -313,7 +420,20 @@ class DynamicsTrainer:
         total_loss = 0.0
         num_batches = 0
 
-        for states, actions, next_states in train_loader:
+        for batch in train_loader:
+            history = None
+            physics_pred = None
+
+            if len(batch) == 4: # Sequence dataset
+                if self.config.model_type == "transformer":
+                    states, actions, next_states, history = batch
+                    history = history.to(self.device)
+                elif self.config.model_type == "residual":
+                    states, actions, next_states, physics_pred = batch
+                    physics_pred = physics_pred.to(self.device)
+            else:
+                states, actions, next_states = batch
+
             states = states.to(self.device)
             actions = actions.to(self.device)
             next_states = next_states.to(self.device)
@@ -330,16 +450,13 @@ class DynamicsTrainer:
                 else:
                     if self.config.model_type == "residual":
                         # For residual, we need physics prediction
-                        if self.physics_model is not None:
-                            with torch.no_grad():
-                                physics_pred = self.physics_model(states, actions)
-                            predicted = self.model(states, actions, physics_pred)
-                        else:
-                            # Simple physics: next = current + dt * action
-                            physics_pred = states.clone()
-                            physics_pred[:, :3] += 0.02 * states[:, 3:6]  # position update
-                            physics_pred[:, 3:6] += 0.02 * actions * 100  # velocity update
-                            predicted = self.model(states, actions, physics_pred)
+                        if physics_pred is None:
+                            # Fallback if dataset didn't provide it (shouldn't happen with ResidualDynamicsDataset)
+                            physics_pred = states.clone() 
+                        predicted = self.model(states, actions, physics_pred)
+                    elif self.config.model_type == "transformer":
+                        # Pass history to transformer
+                        predicted = self.model(states, actions, history)
                     else:
                         predicted = self.model(states, actions)
 

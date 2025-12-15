@@ -71,17 +71,18 @@ The CRM_ML project integrates C++ Cosserat Rod Model physics with Python ML/RL p
 
 ### BVP Solver Non-Convergence
 
-**Issue**: 50 out of 625 current configurations (8%) fail to converge in the C++ BVP solver.
+**Issue**: With CRMDYNTest seeds and constrained sweep (101 current combos, ch3 ∈ [-0.2,0.2], ch1/ch2=0 if ch3=0, insertion 94.3 mm, step sizes down to 0.01), 50 cases fail to converge in both C++ and Python bindings (dt=0.05). Reducing dt to 0.02 mm/s cuts failures to 33/101 (see `sweep_failures_dt002.json`).
 
-**Pattern**: Failures cluster around `c2 ≥ 0.1` or `c2 ≤ -0.2` combined with non-zero `c1`.
+**Pattern**: Failures cluster around mixed-sign/high-magnitude currents (e.g., c2 ≥ 0.1 or c2 ≤ -0.2 with non-zero c1/c3).
 
 **Error Messages**:
 - "Coil integration Unbounded!!"
 - `localmin != 0` (e.g., localmin=3)
 
 **Artifacts**:
-- `sweep_failures_py.json` - 50 failing cases from Python sweep
-- `sweep_failures_cpp.json` - 50 failing cases from C++ sweep (identical)
+- `sweep_failures_py.json`, `sweep_failures_cpp.json` - identical failing cases at dt=0.05
+- `sweep_failures_dt002.json` - failing cases at dt=0.02 (33/101)
+- `REVIEW_CHECKLIST.md` - guidance for reviewing solver/parity
 
 **Mitigation**:
 - Fallback to simplified Python dynamics model when C++ fails
@@ -105,6 +106,8 @@ The CRM_ML project integrates C++ Cosserat Rod Model physics with Python ML/RL p
 | Velocity clamping | Added max 500 mm/s clamp in simplified dynamics | `crm_wrapper.py:344-346` |
 | Enhanced logging | Non-convergence warnings now include currents, insertion_length, dt, step_size, localmin | `crm_wrapper.py:302-307` |
 | Damping defaults | CatheterParameters now uses 6-element CRMDYN_test.cpp values | `crm_wrapper.py:26-29` |
+| Seed init exposed | `initialize_from_seed` / `bvp_initialize_with_seed` for CRMDYNTest-style seeding | `crm_bindings.cpp`, `crm_wrapper.py` |
+| localmin surfaced | Binding `step` now returns `localmin` for diagnostics | `crm_bindings.cpp` |
 | Test fix | debug_seed_dynamics.py now uses insertion_length=94.3 to match seeds | `debug_seed_dynamics.py:57` |
 | Docs update | USAGE_GUIDE.md updated to 104 tests, date 2025-12-11 | `USAGE_GUIDE.md:795,815` |
 
@@ -152,7 +155,8 @@ tests/test_rl_models.py::test_mpc_transformer_action_is_finite PASSED
 
 1. **Investigate BVP Solver Failures**
    - Profile failing current configurations
-   - Consider tighter tolerances or step control
+   - Consider tighter tolerances or step control (dt=0.02 reduced failures to 33/101)
+   - Evaluate exposing a direct BVP/IVP binding path for diagnostics
    - Evaluate direct BVP/IVP binding exposure for diagnostics
 
 2. **Production Fallback Strategy**

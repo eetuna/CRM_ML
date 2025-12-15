@@ -21,7 +21,11 @@
         "ms-vscode.cmake-tools",
         "ms-python.python",
         "ms-python.vscode-pylance",
-        "anthropic.claude-code"
+        //"ms-vscode.cpptools-extension-pack",
+        "openai.chatgpt",
+        "anthropic.claude-code",
+        "google.geminicodeassist",
+        "Google.gemini-cli-vscode-ide-companion"
       ],
       "settings": {
         "python.defaultInterpreterPath": "/usr/bin/python3",
@@ -36,12 +40,19 @@
   },
 
   "mounts": [
-    "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind,consistency=cached",
-    "source=${localEnv:HOME}/.config/claude,target=/root/.config/claude,type=bind,consistency=cached",
-    "source=vscode-server-${devcontainerId},target=/root/.vscode-server,type=volume",
-     // Codex auth from host into container
-    "source=${localEnv:HOME}/.codex,target=/root/.codex,type=bind,consistency=cached"
+  // "source=vscode-server-${devcontainerId},target=/root/.vscode-server,type=volume",
 
+  "source=${localEnv:HOME}/.claude,target=/root/.claude,type=bind,consistency=cached",
+  "source=${localEnv:HOME}/.config/claude,target=/root/.config/claude,type=bind,consistency=cached",
+
+  // Use the host VS Code server as the container's server
+  "source=${localEnv:HOME}/.vscode-server,target=/root/.vscode-server,type=bind,consistency=cached",
+
+  "source=${localEnv:HOME}/.codex,target=/root/.codex,type=bind,consistency=cached",
+  "source=${localEnv:HOME}/.gemini,target=/root/.gemini,type=bind,consistency=cached",
+
+  "source=${localEnv:HOME}/.cache/cloud-code,target=/root/.cache/cloud-code,type=bind,consistency=cached",
+  "source=${localEnv:HOME}/.cache/google-vscode-extension,target=/root/.cache/google-vscode-extension,type=bind,consistency=cached"
   ],
 
   "postCreateCommand": "pip3 install -r requirements.txt && cd build && cmake -DBUILD_PYTHON_BINDINGS=ON .. && make -j$(nproc)",

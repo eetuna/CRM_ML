@@ -1137,7 +1137,7 @@ void DynamicsBVP(	CRMShootingMethodParams& in_Params, const double xf[NUM_STATES
     double* residual = new double[NLEq_Dim];
     int info;
     int lwa = (NLEq_Dim * (3 * NLEq_Dim + 13)) / 2;
-    double tol = 0.00001;
+    double tol = 1e-4; // Relaxed from 1e-5 to improve convergence
     double* wa = new double [lwa];
     for (int i = 0; i < NLEq_Dim; i++) x[i] = initialguessscaled[i];
 

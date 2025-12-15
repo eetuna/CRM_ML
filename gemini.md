@@ -1,0 +1,6 @@
+# Plan for Fixing Dynamics Model Convergence
+
+1.  **Analyze `examples/reproduce_convergence_failures.py`**: DONE. This script confirmed that using a single hardcoded initial seed for the BVP solver causes the convergence failures.
+2.  **Investigate the BVP Solver's Initial Guess**: DONE. The investigation revealed that `reproduce_convergence_failures.py` intentionally uses a bad seed, while a proper initialization mechanism, `initialize_dynamics`, exists.
+3.  **Examine the Jacobian Calculation**: DONE. While not the primary issue, the analysis of the wrapper and related files shows the Jacobian is handled within the C++ bindings. The primary issue is the initial guess, not the Jacobian itself.
+4.  **Implement the Fix**: The fix is to use the `initialize_dynamics` method before calling `step_dynamics` to provide a good initial guess for the solver. The file `examples/demonstrate_convergence_fix.py` already demonstrates this solution. No code changes are required; the fix is in the usage pattern. The problem was in the test/example code, not the library itself.
