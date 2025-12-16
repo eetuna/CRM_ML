@@ -100,8 +100,11 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
         seed_p: torch.Tensor,
         seed_R: torch.Tensor,
         seed_xf: torch.Tensor,
+        seed_mL: torch.Tensor,
+        seed_nL: torch.Tensor,
         dyn: "crm_python.CRMDynamics",
-        eps: float = 1e-4,
+        eps_u: float = 1e-4,
+        eps_seed: float = 1e-4,
     ):
         if not HAS_CPP_BINDINGS:
             raise RuntimeError("C++ bindings unavailable (crm_python import failed).")
@@ -111,6 +114,7 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
 
         device = currents.device
         batch = currents.shape[0]
+        num_sets = int(seed_v.shape[1]) if seed_v.ndim == 3 else None
 
         currents_np = currents.detach().cpu().double().numpy()
         ins_np = insertion_length.detach().cpu().double().view(-1).numpy()
@@ -124,40 +128,139 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
         p_np = seed_p.detach().cpu().double().numpy()
         R_np = seed_R.detach().cpu().double().numpy()
         xf_np = seed_xf.detach().cpu().double().numpy()
+        mL_np = seed_mL.detach().cpu().double().numpy()
+        nL_np = seed_nL.detach().cpu().double().numpy()
 
         next_states = np.zeros((batch, 6), dtype=np.float64)
         B_all = np.zeros((batch, 6, 3), dtype=np.float64)
+        A_all = None
+
+        need_seed_jac = any(
+            t.requires_grad
+            for t in (
+                seed_v,
+                seed_w,
+                seed_p,
+                seed_R,
+                seed_xf,
+                seed_mL,
+                seed_nL,
+            )
+        )
+        if need_seed_jac:
+            if num_sets is None:
+                raise ValueError("seed_v must have shape (batch, num_act_set, 3)")
+            seed_dim = int(num_sets * 3 + num_sets * 3 + num_sets * 3 + num_sets * 9 + 15 + num_sets * 3 + num_sets * 3)
+            A_all = np.zeros((batch, 6, seed_dim), dtype=np.float64)
 
         for i in range(batch):
-            out = dyn.linearize_action_from_seed(
-                currents_np[i],
-                float(ins_np[i]),
-                v_np[i],
-                w_np[i],
-                p_np[i],
-                R_np[i],
-                xf_np[i],
-                np.array([], dtype=np.float64),
-                np.array([], dtype=np.float64),
-                float(eps),
-            )
-            next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
-            B_all[i] = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
+            if need_seed_jac:
+                out = dyn.linearize_full_seed_action_from_seed(
+                    currents_np[i],
+                    float(ins_np[i]),
+                    v_np[i],
+                    w_np[i],
+                    p_np[i],
+                    R_np[i],
+                    xf_np[i],
+                    mL_np[i],
+                    nL_np[i],
+                    float(eps_u),
+                    float(eps_seed),
+                )
+                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
+                B_all[i] = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
+                A_all[i] = np.asarray(out["A"], dtype=np.float64).reshape(6, -1)
+            else:
+                out = dyn.linearize_action_from_seed(
+                    currents_np[i],
+                    float(ins_np[i]),
+                    v_np[i],
+                    w_np[i],
+                    p_np[i],
+                    R_np[i],
+                    xf_np[i],
+                    mL_np[i],
+                    nL_np[i],
+                    float(eps_u),
+                )
+                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
+                B_all[i] = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
 
-        ctx.save_for_backward(torch.from_numpy(B_all).to(device=device, dtype=torch.float32))
+        ctx.num_sets = num_sets
+        ctx.has_seed_jac = need_seed_jac
+        B_tensor = torch.from_numpy(B_all).to(device=device, dtype=torch.float32)
+        if need_seed_jac:
+            A_tensor = torch.from_numpy(A_all).to(device=device, dtype=torch.float32)
+            ctx.save_for_backward(B_tensor, A_tensor)
+        else:
+            ctx.save_for_backward(B_tensor)
         return torch.from_numpy(next_states).to(device=device, dtype=torch.float32)
 
     @staticmethod
     def backward(ctx, grad_next_state: torch.Tensor):
-        (B,) = ctx.saved_tensors  # (B, 6, 3)
+        saved = ctx.saved_tensors
+        B = saved[0]  # (B, 6, 3)
+        A = saved[1] if (getattr(ctx, "has_seed_jac", False) and len(saved) > 1) else None
         if grad_next_state is None:
-            return (None,) * 9
+            return (None,) * 12
 
         # grad_currents = B^T * grad_next_state
         grad_currents = torch.einsum("bik,bk->bi", B.transpose(1, 2), grad_next_state)
         grad_insertion = None
-        # No gradients through seed tensors yet (we treat them as constants).
-        return grad_currents, grad_insertion, None, None, None, None, None, None, None
+
+        grad_seed_v = None
+        grad_seed_w = None
+        grad_seed_p = None
+        grad_seed_R = None
+        grad_seed_xf = None
+        grad_seed_mL = None
+        grad_seed_nL = None
+
+        if A is not None:
+            num_sets = int(getattr(ctx, "num_sets", 0))
+            if num_sets <= 0:
+                raise RuntimeError("Missing num_sets for seed gradient unflattening")
+            grad_seed_flat = torch.einsum("bik,bk->bi", A.transpose(1, 2), grad_next_state)  # (B, seed_dim)
+
+            dim_v = num_sets * 3
+            dim_w = num_sets * 3
+            dim_p = num_sets * 3
+            dim_R = num_sets * 9
+            dim_xf = 15
+            dim_mL = num_sets * 3
+            dim_nL = num_sets * 3
+
+            i_v0 = 0
+            i_w0 = i_v0 + dim_v
+            i_p0 = i_w0 + dim_w
+            i_R0 = i_p0 + dim_p
+            i_xf0 = i_R0 + dim_R
+            i_mL0 = i_xf0 + dim_xf
+            i_nL0 = i_mL0 + dim_mL
+
+            grad_seed_v = grad_seed_flat[:, i_v0:i_w0].reshape(-1, num_sets, 3)
+            grad_seed_w = grad_seed_flat[:, i_w0:i_p0].reshape(-1, num_sets, 3)
+            grad_seed_p = grad_seed_flat[:, i_p0:i_R0].reshape(-1, num_sets, 3)
+            grad_seed_R = grad_seed_flat[:, i_R0:i_xf0].reshape(-1, num_sets, 9)
+            grad_seed_xf = grad_seed_flat[:, i_xf0:i_mL0].reshape(-1, 15)
+            grad_seed_mL = grad_seed_flat[:, i_mL0:i_nL0].reshape(-1, num_sets, 3)
+            grad_seed_nL = grad_seed_flat[:, i_nL0:].reshape(-1, num_sets, 3)
+
+        return (
+            grad_currents,
+            grad_insertion,
+            grad_seed_v,
+            grad_seed_w,
+            grad_seed_p,
+            grad_seed_R,
+            grad_seed_xf,
+            grad_seed_mL,
+            grad_seed_nL,
+            None,
+            None,
+            None,
+        )
 
 
 class TorchCRMPhysics:
@@ -188,8 +291,26 @@ class TorchCRMPhysics:
         seed_p: torch.Tensor,
         seed_R: torch.Tensor,
         seed_xf: torch.Tensor,
-        eps: float = 1e-4,
+        seed_mL: Optional[torch.Tensor] = None,
+        seed_nL: Optional[torch.Tensor] = None,
+        eps_u: float = 1e-4,
+        eps_seed: float = 1e-4,
     ) -> torch.Tensor:
+        if seed_mL is None:
+            seed_mL = torch.zeros_like(seed_v)
+        if seed_nL is None:
+            seed_nL = torch.zeros_like(seed_v)
         return CRMDynamicsStepFunction.apply(
-            currents, insertion_length, seed_v, seed_w, seed_p, seed_R, seed_xf, self.dyn, eps
+            currents,
+            insertion_length,
+            seed_v,
+            seed_w,
+            seed_p,
+            seed_R,
+            seed_xf,
+            seed_mL,
+            seed_nL,
+            self.dyn,
+            eps_u,
+            eps_seed,
         )

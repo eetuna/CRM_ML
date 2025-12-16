@@ -295,7 +295,9 @@ class HybridDynamicsModel(nn.Module):
 
         batch = currents.shape[0]
         ins = torch.full((batch,), float(insertion_length), dtype=currents.dtype, device=currents.device)
-        return self._torch_physics.dyn_step(currents, ins, seed_v, seed_w, seed_p, seed_R, seed_xf, eps=float(eps))
+        return self._torch_physics.dyn_step(
+            currents, ins, seed_v, seed_w, seed_p, seed_R, seed_xf, eps_u=float(eps)
+        )
 
     def forward(
         self,
@@ -349,7 +351,7 @@ class HybridDynamicsModel(nn.Module):
                     seed_p,
                     seed_R,
                     seed_xf,
-                    eps=1e-4,
+                    eps_u=1e-4,
                 )
                 next_states.append(nxt)
 

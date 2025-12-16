@@ -1300,6 +1300,241 @@ public:
         return result;
     }
 
+    py::dict linearize_full_seed_action_from_seed(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>(),
+        double eps_u = 1e-4,
+        double eps_seed = 1e-4
+    ) {
+        auto get_state6 = [](const py::dict& out) {
+            auto tip_pos = out["tip_position"].cast<py::array_t<double>>().request();
+            auto tip_vel = out["tip_velocity"].cast<py::array_t<double>>().request();
+            const double* pos_ptr = static_cast<double*>(tip_pos.ptr);
+            const double* vel_ptr = static_cast<double*>(tip_vel.ptr);
+            Eigen::Matrix<double, 6, 1> y;
+            for (int i = 0; i < 3; i++) y(i) = pos_ptr[i];
+            for (int i = 0; i < 3; i++) y(3 + i) = vel_ptr[i];
+            return y;
+        };
+
+        // Determine num_act_set from v_in, and validate shapes.
+        auto vbuf = v_in.request();
+        if (vbuf.ndim != 2 || vbuf.shape[1] != 3) {
+            throw std::runtime_error("v_in must have shape (num_act_set, 3)");
+        }
+        const int num_sets = static_cast<int>(vbuf.shape[0]);
+
+        auto wbuf = w_in.request();
+        if (wbuf.ndim != 2 || wbuf.shape[0] != num_sets || wbuf.shape[1] != 3) {
+            throw std::runtime_error("w_in must have shape (num_act_set, 3)");
+        }
+        auto pbuf = p_in.request();
+        if (pbuf.ndim != 2 || pbuf.shape[0] != num_sets || pbuf.shape[1] != 3) {
+            throw std::runtime_error("p_in must have shape (num_act_set, 3)");
+        }
+        auto Rbuf = R_in.request();
+        if (Rbuf.ndim != 2 || Rbuf.shape[0] != num_sets || Rbuf.shape[1] != 9) {
+            throw std::runtime_error("R_in must have shape (num_act_set, 9)");
+        }
+        auto xfbuf = xf_in.request();
+        if (xfbuf.ndim != 1 || xfbuf.shape[0] != NUM_STATES) {
+            throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
+        }
+
+        auto ensure_mn = [&](const py::array_t<double>& arr) {
+            if (arr.size() != 0) {
+                auto abuf = arr.request();
+                if (abuf.ndim != 2 || abuf.shape[0] != num_sets || abuf.shape[1] != 3) {
+                    throw std::runtime_error("mL/nL must have shape (num_act_set, 3) when provided");
+                }
+                return arr;
+            }
+            py::array_t<double> out({num_sets, 3});
+            auto o = out.mutable_unchecked<2>();
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) o(j, i) = 0.0;
+            return out;
+        };
+
+        py::array_t<double> mL_use = ensure_mn(mL_in);
+        py::array_t<double> nL_use = ensure_mn(nL_in);
+
+        py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
+        const bool ok = base["converged"].cast<bool>();
+        const Eigen::Matrix<double, 6, 1> y0 = get_state6(base);
+
+        Eigen::Matrix<double, 6, 3> B;
+        B.setZero();
+
+        const int dim_v = num_sets * 3;
+        const int dim_w = num_sets * 3;
+        const int dim_p = num_sets * 3;
+        const int dim_R = num_sets * 9;
+        const int dim_xf = NUM_STATES;
+        const int dim_mL = num_sets * 3;
+        const int dim_nL = num_sets * 3;
+        const int seed_dim = dim_v + dim_w + dim_p + dim_R + dim_xf + dim_mL + dim_nL;
+
+        Eigen::MatrixXd A(6, seed_dim);
+        A.setZero();
+
+        if (ok) {
+            // B: central differences w.r.t currents.
+            auto curr_buf = currents.request();
+            const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+            std::array<double, 3> u0{};
+            for (int i = 0; i < 3; i++) u0[i] = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+
+            for (int k = 0; k < 3; k++) {
+                std::array<double, 3> u_plus = u0;
+                std::array<double, 3> u_minus = u0;
+                u_plus[k] += eps_u;
+                u_minus[k] -= eps_u;
+
+                py::array_t<double> u_plus_arr(3);
+                py::array_t<double> u_minus_arr(3);
+                auto up = u_plus_arr.mutable_unchecked<1>();
+                auto um = u_minus_arr.mutable_unchecked<1>();
+                for (int i = 0; i < 3; i++) {
+                    up(i) = u_plus[i];
+                    um(i) = u_minus[i];
+                }
+
+                py::dict out_plus = step_from_seed(u_plus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
+                py::dict out_minus = step_from_seed(u_minus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
+
+                const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
+                const Eigen::Matrix<double, 6, 1> ym = get_state6(out_minus);
+                B.col(k) = (yp - ym) * (0.5 / eps_u);
+            }
+
+            auto copy2 = [](py::array_t<double> dst, const py::array_t<double>& src) {
+                auto d = dst.mutable_unchecked<2>();
+                auto s = src.unchecked<2>();
+                for (ssize_t i = 0; i < s.shape(0); i++) for (ssize_t j = 0; j < s.shape(1); j++) d(i, j) = s(i, j);
+            };
+            auto copy1 = [](py::array_t<double> dst, const py::array_t<double>& src) {
+                auto d = dst.mutable_unchecked<1>();
+                auto s = src.unchecked<1>();
+                for (ssize_t i = 0; i < s.shape(0); i++) d(i) = s(i);
+            };
+
+            const int i_v0 = 0;
+            const int i_w0 = i_v0 + dim_v;
+            const int i_p0 = i_w0 + dim_w;
+            const int i_R0 = i_p0 + dim_p;
+            const int i_xf0 = i_R0 + dim_R;
+            const int i_mL0 = i_xf0 + dim_xf;
+            const int i_nL0 = i_mL0 + dim_mL;
+
+            auto bump2 = [&](const py::array_t<double>& src, py::array_t<double>& plus, py::array_t<double>& minus, int flat_idx, int stride) {
+                plus = py::array_t<double>({num_sets, stride});
+                minus = py::array_t<double>({num_sets, stride});
+                copy2(plus, src);
+                copy2(minus, src);
+                const int row = flat_idx / stride;
+                const int col2 = flat_idx % stride;
+                auto p = plus.mutable_unchecked<2>();
+                auto m = minus.mutable_unchecked<2>();
+                p(row, col2) += eps_seed;
+                m(row, col2) -= eps_seed;
+            };
+
+            // A: central differences w.r.t seed components.
+            for (int col = 0; col < seed_dim; col++) {
+                py::array_t<double> v_plus, v_minus, w_plus, w_minus, p_plus, p_minus, R_plus, R_minus, xf_plus, xf_minus, mL_plus, mL_minus, nL_plus, nL_minus;
+
+                const py::array_t<double>* vP = &v_in;
+                const py::array_t<double>* vM = &v_in;
+                const py::array_t<double>* wP = &w_in;
+                const py::array_t<double>* wM = &w_in;
+                const py::array_t<double>* pP = &p_in;
+                const py::array_t<double>* pM = &p_in;
+                const py::array_t<double>* RP = &R_in;
+                const py::array_t<double>* RM = &R_in;
+                const py::array_t<double>* xfP = &xf_in;
+                const py::array_t<double>* xfM = &xf_in;
+                const py::array_t<double>* mLP = &mL_use;
+                const py::array_t<double>* mLM = &mL_use;
+                const py::array_t<double>* nLP = &nL_use;
+                const py::array_t<double>* nLM = &nL_use;
+
+                if (col >= i_v0 && col < i_w0) {
+                    bump2(v_in, v_plus, v_minus, col - i_v0, 3);
+                    vP = &v_plus;
+                    vM = &v_minus;
+                } else if (col >= i_w0 && col < i_p0) {
+                    bump2(w_in, w_plus, w_minus, col - i_w0, 3);
+                    wP = &w_plus;
+                    wM = &w_minus;
+                } else if (col >= i_p0 && col < i_R0) {
+                    bump2(p_in, p_plus, p_minus, col - i_p0, 3);
+                    pP = &p_plus;
+                    pM = &p_minus;
+                } else if (col >= i_R0 && col < i_xf0) {
+                    bump2(R_in, R_plus, R_minus, col - i_R0, 9);
+                    RP = &R_plus;
+                    RM = &R_minus;
+                } else if (col >= i_xf0 && col < i_mL0) {
+                    const int idx = col - i_xf0;
+                    xf_plus = py::array_t<double>({NUM_STATES});
+                    xf_minus = py::array_t<double>({NUM_STATES});
+                    copy1(xf_plus, xf_in);
+                    copy1(xf_minus, xf_in);
+                    auto xp = xf_plus.mutable_unchecked<1>();
+                    auto xm = xf_minus.mutable_unchecked<1>();
+                    xp(idx) += eps_seed;
+                    xm(idx) -= eps_seed;
+                    xfP = &xf_plus;
+                    xfM = &xf_minus;
+                } else if (col >= i_mL0 && col < i_nL0) {
+                    bump2(mL_use, mL_plus, mL_minus, col - i_mL0, 3);
+                    mLP = &mL_plus;
+                    mLM = &mL_minus;
+                } else if (col >= i_nL0 && col < seed_dim) {
+                    bump2(nL_use, nL_plus, nL_minus, col - i_nL0, 3);
+                    nLP = &nL_plus;
+                    nLM = &nL_minus;
+                } else {
+                    throw std::runtime_error("seed index out of range");
+                }
+
+                py::dict out_plus = step_from_seed(currents, insertion_length, *vP, *wP, *pP, *RP, *xfP, *mLP, *nLP, std::nullopt);
+                py::dict out_minus = step_from_seed(currents, insertion_length, *vM, *wM, *pM, *RM, *xfM, *mLM, *nLM, std::nullopt);
+
+                const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
+                const Eigen::Matrix<double, 6, 1> ym = get_state6(out_minus);
+                A.col(col) = (yp - ym) * (0.5 / eps_seed);
+            }
+        }
+
+        py::array_t<double> next_state({6});
+        auto ns = next_state.mutable_unchecked<1>();
+        for (int i = 0; i < 6; i++) ns(i) = y0(i);
+
+        py::array_t<double> B_out({6, 3});
+        auto Bout = B_out.mutable_unchecked<2>();
+        for (int i = 0; i < 6; i++) for (int j = 0; j < 3; j++) Bout(i, j) = B(i, j);
+
+        py::array_t<double> A_out({6, seed_dim});
+        auto Aout = A_out.mutable_unchecked<2>();
+        for (int i = 0; i < 6; i++) for (int j = 0; j < seed_dim; j++) Aout(i, j) = A(i, j);
+
+        py::dict result;
+        result["next_state"] = next_state;
+        result["B"] = B_out;
+        result["A"] = A_out;
+        result["seed_dim"] = seed_dim;
+        result["base"] = base;
+        return result;
+    }
+
     /**
      * Get current tip position.
      */
@@ -1414,6 +1649,14 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("nL") = py::array_t<double>(),
              py::arg("eps") = 1e-4,
              "Finite-difference B = d(next_state)/d(currents) around explicit seed")
+        .def("linearize_full_seed_action_from_seed", &CRMDynamicsWrapper::linearize_full_seed_action_from_seed,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),
+             py::arg("mL") = py::array_t<double>(),
+             py::arg("nL") = py::array_t<double>(),
+             py::arg("eps_u") = 1e-4,
+             py::arg("eps_seed") = 1e-4,
+             "Finite-difference A,B where A=d(next_state)/d(full_seed) around explicit seed")
         .def("get_tip_position", &CRMDynamicsWrapper::getTipPosition,
              "Get current tip position")
         .def_readwrite("dt", &CRMDynamicsWrapper::dt)
