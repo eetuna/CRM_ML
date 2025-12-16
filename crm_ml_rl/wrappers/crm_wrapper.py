@@ -221,7 +221,8 @@ class CRMWrapper:
     def forward_kinematics(
         self,
         currents: np.ndarray,
-        insertion_length: float = 50.0
+        insertion_length: float = 50.0,
+        deltau0_initialguess: Optional[np.ndarray] = None,
     ) -> Dict:
         """
         Compute forward kinematics.
@@ -239,6 +240,10 @@ class CRMWrapper:
             currents[2] *= -1.0
 
         if self.use_cpp and self.initialized:
+            if deltau0_initialguess is not None and hasattr(self._cpp_kinematics, "forward_kinematics_with_guess"):
+                return self._cpp_kinematics.forward_kinematics_with_guess(
+                    currents, insertion_length, np.asarray(deltau0_initialguess, dtype=np.float64).reshape(3)
+                )
             return self._cpp_kinematics.forward_kinematics(currents, insertion_length)
         else:
             if self._strict_cpp:
@@ -283,6 +288,37 @@ class CRMWrapper:
                 raise RuntimeError("C++ Jacobian requested (strict_cpp=True) but C++ path is unavailable.")
             # Simplified Jacobian: constant diagonal mapping
             return np.diag(self._current_to_force)
+
+    def fk_and_jacobian(
+        self,
+        currents: np.ndarray,
+        insertion_length: float = 50.0,
+        deltau0_initialguess: Optional[np.ndarray] = None,
+    ) -> Dict:
+        """
+        Fast path: compute FK and analytical Jacobian in one call (no second FK solve).
+
+        Returns a dict with at least: tip_position, tip_rotation, delta_u0, converged, jacobian.
+        """
+        currents = np.asarray(currents, dtype=np.float64).flatten()
+        if self._flip_third_current and len(currents) >= 3:
+            currents = currents.copy()
+            currents[2] *= -1.0
+
+        if not (self.use_cpp and self.initialized):
+            raise RuntimeError("fk_and_jacobian requires C++ bindings (use_cpp=True).")
+
+        guess = np.array([], dtype=np.float64)
+        if deltau0_initialguess is not None:
+            guess = np.asarray(deltau0_initialguess, dtype=np.float64).reshape(3)
+        if not hasattr(self._cpp_kinematics, "fk_and_jacobian"):
+            # Backward-compatible fallback (slower).
+            fk = self.forward_kinematics(currents, insertion_length, deltau0_initialguess=deltau0_initialguess)
+            J = self.compute_jacobian(currents, insertion_length)
+            fk["jacobian"] = J
+            return fk
+
+        return self._cpp_kinematics.fk_and_jacobian(currents, insertion_length, guess)
 
     def step_dynamics(
         self,

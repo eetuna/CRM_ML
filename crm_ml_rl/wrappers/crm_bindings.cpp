@@ -18,6 +18,8 @@
 #include <pybind11/eigen.h>
 
 #include <Eigen/Dense>
+#include <array>
+#include <optional>
 #include <vector>
 #include <string>
 #include <stdexcept>
@@ -115,6 +117,28 @@ public:
         return initialized;
     }
 
+private:
+    void fillFKParams(CRMForwardKinematicsData& FKParams, CRMCatheterModelParams* cparams, bool finalValueOnly) {
+        FKParams.CathParams = cparams;
+        FKParams.CathConfig = &catheter.config;
+        FKParams.ContactMode = ContactModeType::FREE_TIP;
+        FKParams.TipForce[0] = FKParams.TipForce[1] = FKParams.TipForce[2] = 0.0;
+        FKParams.TipConstraintPoint[0] = FKParams.TipConstraintPoint[1] = FKParams.TipConstraintPoint[2] = 0.0;
+        FKParams.deltau0_initialguess[0] = FKParams.deltau0_initialguess[1] = FKParams.deltau0_initialguess[2] = 0.0;
+        FKParams.ftip_initialguess[0] = FKParams.ftip_initialguess[1] = FKParams.ftip_initialguess[2] = 0.0;
+        FKParams.IntegrationStepSize = integrationStepSize;
+        FKParams.FinalValueOnly = finalValueOnly;
+    }
+
+    void applyDeltaU0Guess(CRMForwardKinematicsData& FKParams, const py::array_t<double>& deltau0_guess) {
+        if (deltau0_guess.size() <= 0) return;
+        auto buf = deltau0_guess.request();
+        if (buf.size < 3) return;
+        const double* ptr = static_cast<double*>(buf.ptr);
+        for (int i = 0; i < 3; ++i) FKParams.deltau0_initialguess[i] = ptr[i];
+    }
+
+public:
     /**
      * Forward kinematics: compute tip position from currents and insertion length.
      *
@@ -155,15 +179,7 @@ public:
         // Setup FK parameters
         CRMForwardKinematicsData FKParams;
         CRMCatheterModelParams* cparams = catheter.getParams();
-        FKParams.CathParams = cparams;
-        FKParams.CathConfig = &catheter.config;
-        FKParams.ContactMode = ContactModeType::FREE_TIP;
-        FKParams.TipForce[0] = FKParams.TipForce[1] = FKParams.TipForce[2] = 0.0;
-        FKParams.TipConstraintPoint[0] = FKParams.TipConstraintPoint[1] = FKParams.TipConstraintPoint[2] = 0.0;
-        FKParams.deltau0_initialguess[0] = FKParams.deltau0_initialguess[1] = FKParams.deltau0_initialguess[2] = 0.0;
-        FKParams.ftip_initialguess[0] = FKParams.ftip_initialguess[1] = FKParams.ftip_initialguess[2] = 0.0;
-        FKParams.IntegrationStepSize = integrationStepSize;
-        FKParams.FinalValueOnly = true;
+        fillFKParams(FKParams, cparams, /*finalValueOnly=*/true);
 
         // Allocate marker storage
         std::vector<double> markerPosData(cparams->no_locmarkers * 3);
@@ -220,6 +236,152 @@ public:
     }
 
     /**
+     * Forward kinematics with an explicit delta_u0 initial guess (warm-start).
+     *
+     * Matches the MATLAB usage pattern:
+     *   FKParams.deltau0_initialguess = previous_FKsolution(13:15);
+     */
+    py::dict forwardKinematicsWithGuess(py::array_t<double> currents, double insertion_length, py::array_t<double> deltau0_initialguess) {
+        if (!initialized) {
+            throw std::runtime_error("Parameters not loaded. Call load_parameters first.");
+        }
+
+        auto curr_buf = currents.request();
+        int num_currents = catheter.getParams()->no_act_set * 3;
+        if (curr_buf.size != num_currents) {
+            throw std::runtime_error("currents must have " + std::to_string(num_currents) + " elements");
+        }
+        double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+
+        // Build input vector: currents + insertion_length
+        int x_dim = num_currents + 1;
+        std::vector<double> in_x(x_dim);
+        for (int i = 0; i < num_currents; i++) in_x[i] = curr_ptr[i];
+        in_x[num_currents] = insertion_length;
+
+        CRMForwardKinematicsData FKParams;
+        CRMCatheterModelParams* cparams = catheter.getParams();
+        fillFKParams(FKParams, cparams, /*finalValueOnly=*/true);
+        applyDeltaU0Guess(FKParams, deltau0_initialguess);
+
+        std::vector<double> markerPosData(cparams->no_locmarkers * 3);
+        FKParams.ReportedMarkerPos = reinterpret_cast<double(*)[3]>(markerPosData.data());
+        std::vector<double> coilOrientData(cparams->no_act_set * 9);
+        FKParams.ReportedCoilOrient = reinterpret_cast<double(*)[9]>(coilOrientData.data());
+        std::vector<double> coilPosData(cparams->no_act_set * 3);
+        FKParams.ReportedCoilPos = reinterpret_cast<double(*)[3]>(coilPosData.data());
+
+        int y_dim = 3 + 9 + 3;
+        std::vector<double> out_y(y_dim);
+        double potentialEnergy;
+        int localmin = CRM_ForwardKinematics(in_x.data(), out_y.data(), potentialEnergy, FKParams);
+
+        std::vector<ssize_t> shape3 = {3};
+        std::vector<ssize_t> shape9 = {9};
+        auto tip_pos = py::array_t<double>(shape3);
+        auto tip_rot = py::array_t<double>(shape9);
+        auto delta_u0 = py::array_t<double>(shape3);
+        auto pos_acc = tip_pos.mutable_unchecked<1>();
+        auto rot_acc = tip_rot.mutable_unchecked<1>();
+        auto u0_acc = delta_u0.mutable_unchecked<1>();
+        pos_acc(0) = out_y[0];
+        pos_acc(1) = out_y[1];
+        pos_acc(2) = out_y[2];
+        for (int i = 0; i < 9; i++) rot_acc(i) = out_y[3 + i];
+        u0_acc(0) = out_y[12];
+        u0_acc(1) = out_y[13];
+        u0_acc(2) = out_y[14];
+
+        py::dict result;
+        result["tip_position"] = tip_pos;
+        result["tip_rotation"] = tip_rot;
+        result["delta_u0"] = delta_u0;
+        result["potential_energy"] = potentialEnergy;
+        result["converged"] = (localmin == 0);
+        return result;
+    }
+
+    /**
+     * Fast path: compute FK and analytical Jacobian in one call (no second FK solve).
+     *
+     * Returns dict:
+     *   tip_position, tip_rotation, delta_u0, potential_energy, converged, jacobian
+     */
+    py::dict fkAndJacobian(py::array_t<double> currents, double insertion_length, py::array_t<double> deltau0_initialguess) {
+        if (!initialized) {
+            throw std::runtime_error("Parameters not loaded.");
+        }
+
+        auto curr_buf = currents.request();
+        CRMCatheterModelParams* cparams = catheter.getParams();
+        int num_currents = cparams->no_act_set * 3;
+        if (curr_buf.size != num_currents) {
+            throw std::runtime_error("currents must have " + std::to_string(num_currents) + " elements");
+        }
+        double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+
+        int x_dim = num_currents + 1;
+        VectorXd in_x(x_dim);
+        for (int i = 0; i < num_currents; ++i) in_x(i) = curr_ptr[i];
+        in_x(num_currents) = insertion_length;
+
+        CRMForwardKinematicsData FKParams;
+        fillFKParams(FKParams, cparams, /*finalValueOnly=*/true);
+        applyDeltaU0Guess(FKParams, deltau0_initialguess);
+
+        std::vector<double> markerPosData(cparams->no_locmarkers * 3);
+        FKParams.ReportedMarkerPos = reinterpret_cast<double(*)[3]>(markerPosData.data());
+        std::vector<double> coilOrientData(cparams->no_act_set * 9);
+        FKParams.ReportedCoilOrient = reinterpret_cast<double(*)[9]>(coilOrientData.data());
+        std::vector<double> coilPosData(cparams->no_act_set * 3);
+        FKParams.ReportedCoilPos = reinterpret_cast<double(*)[3]>(coilPosData.data());
+
+        const int y_dim = 3 + 9 + 3;
+        std::vector<double> out_y(y_dim);
+        double potentialEnergy;
+        int localmin = CRM_ForwardKinematics(in_x.data(), out_y.data(), potentialEnergy, FKParams);
+
+        VectorXd in_FKouty(y_dim);
+        for (int i = 0; i < y_dim; ++i) in_FKouty(i) = out_y[i];
+
+        MatrixXd J = CRM_FKJacobian_Analytical(in_x, in_FKouty, FKParams);
+
+        std::vector<ssize_t> shape3 = {3};
+        std::vector<ssize_t> shape9 = {9};
+        auto tip_pos = py::array_t<double>(shape3);
+        auto tip_rot = py::array_t<double>(shape9);
+        auto delta_u0 = py::array_t<double>(shape3);
+        auto pos_acc = tip_pos.mutable_unchecked<1>();
+        auto rot_acc = tip_rot.mutable_unchecked<1>();
+        auto u0_acc = delta_u0.mutable_unchecked<1>();
+        pos_acc(0) = out_y[0];
+        pos_acc(1) = out_y[1];
+        pos_acc(2) = out_y[2];
+        for (int i = 0; i < 9; i++) rot_acc(i) = out_y[3 + i];
+        u0_acc(0) = out_y[12];
+        u0_acc(1) = out_y[13];
+        u0_acc(2) = out_y[14];
+
+        py::array_t<double> jacobian({J.rows(), J.cols()});
+        auto jac_buf = jacobian.request();
+        double* jac_ptr = static_cast<double*>(jac_buf.ptr);
+        for (int r = 0; r < J.rows(); ++r) {
+            for (int c = 0; c < J.cols(); ++c) {
+                jac_ptr[r * J.cols() + c] = J(r, c);
+            }
+        }
+
+        py::dict result;
+        result["tip_position"] = tip_pos;
+        result["tip_rotation"] = tip_rot;
+        result["delta_u0"] = delta_u0;
+        result["potential_energy"] = potentialEnergy;
+        result["converged"] = (localmin == 0);
+        result["jacobian"] = jacobian;
+        return result;
+    }
+
+    /**
      * Compute analytical Jacobian at current configuration.
      */
     py::array_t<double> computeJacobian(py::array_t<double> currents, double insertion_length) {
@@ -228,6 +390,7 @@ public:
         }
 
         // First compute FK to get output
+        // If you need FK+J efficiently, prefer `fk_and_jacobian` to avoid a second FK solve.
         auto fk_result = forwardKinematics(currents, insertion_length);
 
         CRMCatheterModelParams* cparams = catheter.getParams();
@@ -341,6 +504,107 @@ public:
         }
         for (int i = 0; i < NUM_STATES; i++) {
             xf[i] = 0.0;
+        }
+    }
+
+    py::dict get_seed_state() const {
+        const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+
+        py::array_t<double> v_out({num_sets, 3});
+        py::array_t<double> w_out({num_sets, 3});
+        py::array_t<double> p_out({num_sets, 3});
+        py::array_t<double> R_out({num_sets, 9});
+        py::array_t<double> xf_out({NUM_STATES});
+        py::array_t<double> mL_out({num_sets, 3});
+        py::array_t<double> nL_out({num_sets, 3});
+
+        auto v = v_out.mutable_unchecked<2>();
+        auto w = w_out.mutable_unchecked<2>();
+        auto p = p_out.mutable_unchecked<2>();
+        auto R = R_out.mutable_unchecked<2>();
+        auto xfacc = xf_out.mutable_unchecked<1>();
+        auto mL = mL_out.mutable_unchecked<2>();
+        auto nL = nL_out.mutable_unchecked<2>();
+
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                v(j, i) = v_L[j][i];
+                w(j, i) = w_L[j][i];
+                p(j, i) = p_L[j][i];
+                mL(j, i) = mL_guess[j][i];
+                nL(j, i) = nL_guess[j][i];
+            }
+            for (int i = 0; i < 9; i++) {
+                R(j, i) = R_L[j][i];
+            }
+        }
+        for (int i = 0; i < NUM_STATES; i++) xfacc(i) = xf[i];
+
+        py::dict out;
+        out["v"] = v_out;
+        out["w"] = w_out;
+        out["p"] = p_out;
+        out["R"] = R_out;
+        out["xf"] = xf_out;
+        out["mL"] = mL_out;
+        out["nL"] = nL_out;
+        return out;
+    }
+
+    void set_seed_state(
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>()
+    ) {
+        if (!initialized) {
+            throw std::runtime_error("Parameters not loaded.");
+        }
+
+        const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+
+        auto vbuf = v_in.request(); const double* vptr = static_cast<double*>(vbuf.ptr);
+        auto wbuf = w_in.request(); const double* wptr = static_cast<double*>(wbuf.ptr);
+        auto pbuf = p_in.request(); const double* pptr = static_cast<double*>(pbuf.ptr);
+        auto Rbuf = R_in.request(); const double* Rptr = static_cast<double*>(Rbuf.ptr);
+        auto xfbuf = xf_in.request(); const double* xfptr = static_cast<double*>(xfbuf.ptr);
+
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                const ssize_t idx3 = j * 3 + i;
+                if (idx3 < vbuf.size) v_L[j][i] = vptr[idx3];
+                if (idx3 < wbuf.size) w_L[j][i] = wptr[idx3];
+                if (idx3 < pbuf.size) p_L[j][i] = pptr[idx3];
+            }
+            for (int i = 0; i < 9; i++) {
+                const ssize_t idx9 = j * 9 + i;
+                if (idx9 < Rbuf.size) R_L[j][i] = Rptr[idx9];
+            }
+        }
+
+        for (int i = 0; i < NUM_STATES && i < xfbuf.size; i++) xf[i] = xfptr[i];
+
+        if (mL_in.size() > 0) {
+            auto mbuf = mL_in.request(); const double* mptr = static_cast<double*>(mbuf.ptr);
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    const ssize_t idx = j * 3 + i;
+                    if (idx < mbuf.size) mL_guess[j][i] = mptr[idx];
+                }
+            }
+        }
+
+        if (nL_in.size() > 0) {
+            auto nbuf = nL_in.request(); const double* nptr = static_cast<double*>(nbuf.ptr);
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    const ssize_t idx = j * 3 + i;
+                    if (idx < nbuf.size) nL_guess[j][i] = nptr[idx];
+                }
+            }
         }
     }
 
@@ -749,6 +1013,293 @@ public:
         return result;
     }
 
+    py::dict step_from_seed(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>(),
+        std::optional<double> dt_override = std::nullopt
+    ) {
+        if (!initialized) {
+            throw std::runtime_error("Parameters not loaded.");
+        }
+
+        const double dt_local = dt_override.has_value() ? *dt_override : dt;
+
+        const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+        auto curr_buf = currents.request();
+        const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+
+        auto vbuf = v_in.request(); const double* vptr = static_cast<double*>(vbuf.ptr);
+        auto wbuf = w_in.request(); const double* wptr = static_cast<double*>(wbuf.ptr);
+        auto pbuf = p_in.request(); const double* pptr = static_cast<double*>(pbuf.ptr);
+        auto Rbuf = R_in.request(); const double* Rptr = static_cast<double*>(Rbuf.ptr);
+        auto xfbuf = xf_in.request(); const double* xfptr = static_cast<double*>(xfbuf.ptr);
+
+        double v_L_local[NUM_ACT_SET][3]{};
+        double w_L_local[NUM_ACT_SET][3]{};
+        double p_L_local[NUM_ACT_SET][3]{};
+        double R_L_local[NUM_ACT_SET][9]{};
+        double xf_local[NUM_STATES]{};
+        double mL_guess_local[NUM_ACT_SET][3]{};
+        double nL_guess_local[NUM_ACT_SET][3]{};
+
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                const ssize_t idx3 = j * 3 + i;
+                v_L_local[j][i] = (idx3 < vbuf.size) ? vptr[idx3] : 0.0;
+                w_L_local[j][i] = (idx3 < wbuf.size) ? wptr[idx3] : 0.0;
+                p_L_local[j][i] = (idx3 < pbuf.size) ? pptr[idx3] : 0.0;
+            }
+            for (int i = 0; i < 9; i++) {
+                const ssize_t idx9 = j * 9 + i;
+                R_L_local[j][i] = (idx9 < Rbuf.size) ? Rptr[idx9] : ((i == 0 || i == 4 || i == 8) ? 1.0 : 0.0);
+            }
+        }
+
+        for (int i = 0; i < NUM_STATES; i++) {
+            xf_local[i] = (i < xfbuf.size) ? xfptr[i] : 0.0;
+        }
+
+        if (mL_in.size() > 0) {
+            auto mbuf = mL_in.request(); const double* mptr = static_cast<double*>(mbuf.ptr);
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    const ssize_t idx = j * 3 + i;
+                    if (idx < mbuf.size) mL_guess_local[j][i] = mptr[idx];
+                }
+            }
+        }
+
+        if (nL_in.size() > 0) {
+            auto nbuf = nL_in.request(); const double* nptr = static_cast<double*>(nbuf.ptr);
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    const ssize_t idx = j * 3 + i;
+                    if (idx < nbuf.size) nL_guess_local[j][i] = nptr[idx];
+                }
+            }
+        }
+
+        // Build actuation currents array
+        double ActuationCurrents[NUM_ACT_SET][3];
+        for (int i = 0; i < NUM_ACT_SET; i++) {
+            for (int j = 0; j < 3; j++) {
+                const int idx = i * 3 + j;
+                ActuationCurrents[i][j] = (idx < curr_buf.size) ? curr_ptr[idx] : 0.0;
+            }
+        }
+
+        // Copy constant parameters to locals to avoid any accidental mutation.
+        double actInertia_local[NUM_ACT_SET][9];
+        double damping_local[NUM_ACT_SET][6];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 9; i++) actInertia_local[j][i] = actInertia[j][i];
+            for (int i = 0; i < 6; i++) damping_local[j][i] = damping[j][i];
+        }
+
+        // Setup shooting method parameters
+        ContactModeType ContactMode = ContactModeType::FREE_TIP;
+        double TipForce[3] = {0.0, 0.0, 0.0};
+        double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
+
+        CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
+            *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+            ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+            actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+        );
+
+        // Solve BVP
+        double out_u0[3];
+        double out_mL[NUM_ACT_SET][3], out_nL[NUM_ACT_SET][3];
+        double out_tau[NUM_ACT_SET][3];
+        double ftip_calc[3];
+        double ftip_guess[3] = {0.0, 0.0, 0.0};
+        int localmin;
+
+        DynamicsBVP(BVPParams, xf_local, mL_guess_local, nL_guess_local, ftip_guess,
+                    out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin);
+
+        // Solve IVP
+        double xf_new[NUM_STATES];
+        double x_coil[NUM_ACT_SET][NUM_COIL_STATES];
+        double ReportedMarkerPos[5][3];
+
+        DYNSolverIVP(BVPParams, out_u0, out_mL, out_nL, out_tau, ftip_calc,
+                     true, xf_new, x_coil, ReportedMarkerPos);
+
+        // Tip position from xf (indices 0-2 are position)
+        py::array_t<double> tip_pos({3});
+        auto pos = tip_pos.mutable_unchecked<1>();
+        // Tip velocity from v (coil velocity proxy)
+        py::array_t<double> tip_vel({3});
+        auto vel = tip_vel.mutable_unchecked<1>();
+
+        if (localmin == 0) {
+            pos(0) = xf_new[0];
+            pos(1) = xf_new[1];
+            pos(2) = xf_new[2];
+            vel(0) = x_coil[0][0];
+            vel(1) = x_coil[0][1];
+            vel(2) = x_coil[0][2];
+        } else {
+            pos(0) = xf_local[0];
+            pos(1) = xf_local[1];
+            pos(2) = xf_local[2];
+            vel(0) = v_L_local[0][0];
+            vel(1) = v_L_local[0][1];
+            vel(2) = v_L_local[0][2];
+        }
+
+        // Return next seed (or the original seed on failure)
+        py::array_t<double> v_next({num_sets, 3});
+        py::array_t<double> w_next({num_sets, 3});
+        py::array_t<double> p_next({num_sets, 3});
+        py::array_t<double> R_next({num_sets, 9});
+        py::array_t<double> xf_next({NUM_STATES});
+        py::array_t<double> mL_next({num_sets, 3});
+        py::array_t<double> nL_next({num_sets, 3});
+
+        auto vout = v_next.mutable_unchecked<2>();
+        auto wout = w_next.mutable_unchecked<2>();
+        auto pout = p_next.mutable_unchecked<2>();
+        auto Rout = R_next.mutable_unchecked<2>();
+        auto xfout = xf_next.mutable_unchecked<1>();
+        auto mLout = mL_next.mutable_unchecked<2>();
+        auto nLout = nL_next.mutable_unchecked<2>();
+
+        for (int i = 0; i < NUM_STATES; i++) xfout(i) = (localmin == 0) ? xf_new[i] : xf_local[i];
+
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                if (localmin == 0) {
+                    vout(j, i) = x_coil[j][i];
+                    wout(j, i) = x_coil[j][i + 3];
+                    pout(j, i) = x_coil[j][i + 6];
+                    mLout(j, i) = out_mL[j][i];
+                    nLout(j, i) = out_nL[j][i];
+                } else {
+                    vout(j, i) = v_L_local[j][i];
+                    wout(j, i) = w_L_local[j][i];
+                    pout(j, i) = p_L_local[j][i];
+                    mLout(j, i) = mL_guess_local[j][i];
+                    nLout(j, i) = nL_guess_local[j][i];
+                }
+            }
+            for (int i = 0; i < 9; i++) {
+                if (localmin == 0) {
+                    Rout(j, i) = x_coil[j][i + 9];
+                } else {
+                    Rout(j, i) = R_L_local[j][i];
+                }
+            }
+        }
+
+        py::dict result;
+        result["tip_position"] = tip_pos;
+        result["tip_velocity"] = tip_vel;
+        result["converged"] = (localmin == 0);
+        result["localmin"] = localmin;
+        result["next_v"] = v_next;
+        result["next_w"] = w_next;
+        result["next_p"] = p_next;
+        result["next_R"] = R_next;
+        result["next_xf"] = xf_next;
+        result["next_mL"] = mL_next;
+        result["next_nL"] = nL_next;
+        return result;
+    }
+
+    py::dict linearize_action_from_seed(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>(),
+        double eps = 1e-4
+    ) {
+        py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
+        auto tip_pos_base = base["tip_position"].cast<py::array_t<double>>().request();
+        auto tip_vel_base = base["tip_velocity"].cast<py::array_t<double>>().request();
+        const double* pos_ptr = static_cast<double*>(tip_pos_base.ptr);
+        const double* vel_ptr = static_cast<double*>(tip_vel_base.ptr);
+
+        Eigen::Matrix<double, 6, 1> y0;
+        for (int i = 0; i < 3; i++) y0(i) = pos_ptr[i];
+        for (int i = 0; i < 3; i++) y0(3 + i) = vel_ptr[i];
+
+        Eigen::Matrix<double, 6, 3> B;
+        B.setZero();
+
+        auto curr_buf = currents.request();
+        const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+        std::array<double, 3> u0{};
+        for (int i = 0; i < 3; i++) u0[i] = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+
+        for (int k = 0; k < 3; k++) {
+            std::array<double, 3> u_plus = u0;
+            std::array<double, 3> u_minus = u0;
+            u_plus[k] += eps;
+            u_minus[k] -= eps;
+
+            py::array_t<double> u_plus_arr(3);
+            py::array_t<double> u_minus_arr(3);
+            auto up = u_plus_arr.mutable_unchecked<1>();
+            auto um = u_minus_arr.mutable_unchecked<1>();
+            for (int i = 0; i < 3; i++) {
+                up(i) = u_plus[i];
+                um(i) = u_minus[i];
+            }
+
+            py::dict out_plus = step_from_seed(u_plus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
+            py::dict out_minus = step_from_seed(u_minus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
+
+            auto pos_p = out_plus["tip_position"].cast<py::array_t<double>>().request();
+            auto vel_p = out_plus["tip_velocity"].cast<py::array_t<double>>().request();
+            auto pos_m = out_minus["tip_position"].cast<py::array_t<double>>().request();
+            auto vel_m = out_minus["tip_velocity"].cast<py::array_t<double>>().request();
+            const double* pos_p_ptr = static_cast<double*>(pos_p.ptr);
+            const double* vel_p_ptr = static_cast<double*>(vel_p.ptr);
+            const double* pos_m_ptr = static_cast<double*>(pos_m.ptr);
+            const double* vel_m_ptr = static_cast<double*>(vel_m.ptr);
+
+            Eigen::Matrix<double, 6, 1> yp, ym;
+            for (int i = 0; i < 3; i++) yp(i) = pos_p_ptr[i];
+            for (int i = 0; i < 3; i++) yp(3 + i) = vel_p_ptr[i];
+            for (int i = 0; i < 3; i++) ym(i) = pos_m_ptr[i];
+            for (int i = 0; i < 3; i++) ym(3 + i) = vel_m_ptr[i];
+
+            B.col(k) = (yp - ym) * (0.5 / eps);
+        }
+
+        py::array_t<double> next_state({6});
+        auto ns = next_state.mutable_unchecked<1>();
+        for (int i = 0; i < 6; i++) ns(i) = y0(i);
+
+        py::array_t<double> B_out({6, 3});
+        auto Bout = B_out.mutable_unchecked<2>();
+        for (int i = 0; i < 6; i++) {
+            for (int j = 0; j < 3; j++) {
+                Bout(i, j) = B(i, j);
+            }
+        }
+
+        py::dict result;
+        result["next_state"] = next_state;
+        result["B"] = B_out;
+        result["base"] = base;
+        return result;
+    }
+
     /**
      * Get current tip position.
      */
@@ -797,6 +1348,13 @@ PYBIND11_MODULE(crm_python, m) {
         .def("forward_kinematics", &CRMKinematicsWrapper::forwardKinematics,
              py::arg("currents"), py::arg("insertion_length"),
              "Compute forward kinematics")
+        .def("forward_kinematics_with_guess", &CRMKinematicsWrapper::forwardKinematicsWithGuess,
+             py::arg("currents"), py::arg("insertion_length"), py::arg("deltau0_initialguess"),
+             "Compute FK with delta_u0 warm-start")
+        .def("fk_and_jacobian", &CRMKinematicsWrapper::fkAndJacobian,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("deltau0_initialguess") = py::array_t<double>(),
+             "Compute FK and analytical Jacobian in one call (fast path)")
         .def("compute_jacobian", &CRMKinematicsWrapper::computeJacobian,
              py::arg("currents"), py::arg("insertion_length"),
              "Compute analytical Jacobian")
@@ -832,9 +1390,30 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("mL_in") = py::array_t<double>(),
              py::arg("nL_in") = py::array_t<double>(),
              "Debug: manually seed dynamics state (not for production use)")
+        .def("get_seed_state", &CRMDynamicsWrapper::get_seed_state,
+             "Get current internal seed state (v,w,p,R,xf,mL,nL)")
+        .def("set_seed_state", &CRMDynamicsWrapper::set_seed_state,
+             py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),
+             py::arg("mL") = py::array_t<double>(),
+             py::arg("nL") = py::array_t<double>(),
+             "Set internal seed state (v,w,p,R,xf,mL,nL)")
         .def("step", &CRMDynamicsWrapper::stepDynamics,
              py::arg("currents"), py::arg("insertion_length"),
              "Step dynamics forward")
+        .def("step_from_seed", &CRMDynamicsWrapper::step_from_seed,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),
+             py::arg("mL") = py::array_t<double>(),
+             py::arg("nL") = py::array_t<double>(),
+             py::arg("dt") = std::nullopt,
+             "Pure dynamics step from explicit seed (does not mutate internal state)")
+        .def("linearize_action_from_seed", &CRMDynamicsWrapper::linearize_action_from_seed,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),
+             py::arg("mL") = py::array_t<double>(),
+             py::arg("nL") = py::array_t<double>(),
+             py::arg("eps") = 1e-4,
+             "Finite-difference B = d(next_state)/d(currents) around explicit seed")
         .def("get_tip_position", &CRMDynamicsWrapper::getTipPosition,
              "Get current tip position")
         .def_readwrite("dt", &CRMDynamicsWrapper::dt)

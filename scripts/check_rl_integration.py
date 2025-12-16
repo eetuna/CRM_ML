@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-Comprehensive test suite for RL-ML model integration.
+Comprehensive check suite for RL-ML model integration.
 
-Tests:
+Checks:
 1. Custom feature extractors with all agent types
 2. Model-based RL training with HybridDynamicsModel
 3. Physics-informed policies

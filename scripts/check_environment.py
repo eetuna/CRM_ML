@@ -6,7 +6,7 @@ This script validates that the catheter control environments work correctly
 with the C++ physics bindings.
 
 Usage:
-    python scripts/test_environment.py
+    python scripts/check_environment.py
 """
 
 import sys

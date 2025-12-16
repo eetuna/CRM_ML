@@ -746,16 +746,16 @@ optimizer = torch.optim.Adam(model_B.parameters(), lr=1e-4)
 
 ```bash
 # Test all ML models
-python3 scripts/test_ml_models.py
+python3 scripts/check_ml_models.py
 
 # Quick test
-python3 scripts/test_ml_models.py --quick
+python3 scripts/check_ml_models.py --quick
 
 # Test RL integration
-python3 scripts/test_rl_integration.py
+python3 scripts/check_rl_integration.py
 
 # Test hybrid models
-python3 scripts/test_hybrid_models.py
+python3 scripts/check_hybrid_models.py
 ```
 
 ### Command-Line Training
@@ -805,7 +805,7 @@ tensorboard --logdir trained_models/
 
 ### Getting Help
 
-- Check test files for more examples: `scripts/test_ml_models.py`, `scripts/test_rl_integration.py`
+- Check test files for more examples: `scripts/check_ml_models.py`, `scripts/check_rl_integration.py`
 - Review source code docstrings for detailed API documentation
 - See `CLAUDE.md` for project architecture overview
 - See `next_steps.md` for recent updates and completed features

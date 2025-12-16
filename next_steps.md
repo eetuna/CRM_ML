@@ -340,11 +340,11 @@ Code needs better documentation for future development and collaboration.
   - 44 integration tests passing
 
 ### Test Scripts Created
-- `scripts/test_cpp_bindings.py` - C++ bindings validation
-- `scripts/test_environment.py` - Environment test suite
-- `scripts/test_data_generation.py` - Data generation tests
+- `scripts/check_cpp_bindings.py` - C++ bindings validation
+- `scripts/check_environment.py` - Environment check suite
+- `scripts/check_data_generation.py` - Data generation checks
 - `scripts/example_train_rl.py` - Example RL training script
-- `scripts/test_ml_models.py` - Comprehensive ML models test suite (52 tests)
+- `scripts/check_ml_models.py` - Comprehensive ML models check suite
   - Tests all neural network architectures (MLP, LSTM, Transformer, ResidualBlock, DeepResidualMLP)
   - Tests residual kinematics models (with uncertainty estimation)
   - Tests residual dynamics models (including ensemble and LSTM versions)
@@ -353,12 +353,12 @@ Code needs better documentation for future development and collaboration.
   - Tests C++ physics integration with ML models
   - Tests hybrid models (CRM physics + neural network residuals)
   - Tests RL pipeline integration (environments, agents, training)
-- `scripts/test_hybrid_models.py` - Dedicated hybrid models test suite (27 tests)
+- `scripts/check_hybrid_models.py` - Dedicated hybrid models check suite
   - Tests HybridKinematicsModel and HybridKinematicsWithUncertainty
   - Tests HybridDynamicsModel and HybridDynamicsLSTM
   - Tests ensemble and uncertainty variants
   - Tests RL pipeline integration with hybrid dynamics
-- `scripts/test_rl_integration.py` - RL-ML integration test suite (44 tests)
+- `scripts/check_rl_integration.py` - RL-ML integration check suite
   - Tests custom feature extractors (MLP, DeepResidual, LSTM, Physics, Catheter)
   - Tests all RL agents (SAC, PPO, TD3) with custom extractors
   - Tests model-based RL agents (Dyna, MBPO, MPC)
@@ -407,7 +407,7 @@ Code needs better documentation for future development and collaboration.
 I've created a comprehensive test suite for the ML models in `crm_ml_rl` that validates their integration with both the **C++ physics bindings** and the **RL pipeline**.
 
 **Test Script:**  
-`scripts/test_ml_models.py`
+`scripts/check_ml_models.py`
 
 The test suite contains **43 tests** organized into **6 major categories**, covering neural architectures, residual physics models, C++ integration, and RL workflows end-to-end.
 
@@ -523,10 +523,10 @@ The test suite contains **43 tests** organized into **6 major categories**, cove
 
 ```bash
 # Run all tests
-python3 scripts/test_ml_models.py
+python3 scripts/check_ml_models.py
 
 # Run quick tests (skip RL agent training)
-python3 scripts/test_ml_models.py --quick
+python3 scripts/check_ml_models.py --quick
 
 # Verbose output
-python3 scripts/test_ml_models.py --verbose
+python3 scripts/check_ml_models.py --verbose

@@ -198,10 +198,10 @@ tests/test_rl_models.py::test_mpc_transformer_action_is_finite PASSED
 python3 -m pytest tests/ -v
 
 # ML models tests
-python3 scripts/test_ml_models.py
+python3 scripts/check_ml_models.py
 
 # RL integration tests
-python3 scripts/test_rl_integration.py
+python3 scripts/check_rl_integration.py
 ```
 
 ### Train RL Agent

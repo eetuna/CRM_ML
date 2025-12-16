@@ -12,6 +12,7 @@ sys.path.insert(0, str(project_root))
 from crm_ml_rl.envs.catheter_env import CatheterEnv, CatheterEnvConfig
 from crm_ml_rl.models.networks import MLP, LSTM_MLP, DeepResidualMLP
 from crm_ml_rl.training.mpc_controller import MPCController, MPCConfig, LinearMPC
+import crm_ml_rl.training.mpc_controller as mpc_mod
 
 @pytest.fixture
 def default_env():
@@ -112,6 +113,8 @@ def mpc_controller():
 @pytest.fixture
 def linear_mpc_controller():
     """Fixture for a LinearMPC controller."""
+    if not getattr(mpc_mod, "HAS_CVXPY", False):
+        pytest.skip("CVXPY not available")
     config = MPCConfig(horizon=5)
     mpc = LinearMPC(config)
     
@@ -162,4 +165,3 @@ def test_linear_mpc_solve(linear_mpc_controller):
         assert 'cost' in info
     except ImportError:
         pytest.skip("CVXPY not available")
-

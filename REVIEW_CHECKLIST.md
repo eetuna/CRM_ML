@@ -16,7 +16,7 @@
 ## 4) ML/RL Implementations
 - Inspect code: `crm_ml_rl/models`, `crm_ml_rl/envs`, `crm_ml_rl/training`
 - Docs: `USAGE_GUIDE.md`, `docs/modeling_guide.md`
-- Examples/tests: `examples/ml_examples.py`, `examples/rl_examples.py`, `scripts/test_ml_models.py`, `scripts/test_rl_integration.py`
+- Examples/tests: `examples/ml_examples.py`, `examples/rl_examples.py`, `scripts/check_ml_models.py`, `scripts/check_rl_integration.py`
 - Goals: Verify interfaces, training loops, and integration with the CRM wrapper.
 
 ## 5) Experimental Data and Validation
@@ -24,7 +24,7 @@
 - Goals: Ensure experimental loading/validation aligns with model inputs; check assumptions and metrics.
 
 ## 6) End-to-End ML/RL Pipelines
-- Run/inspect: `crm_ml_rl/training/train_rl.py`, `crm_ml_rl/training/train_dynamics.py`, `scripts/test_rl_integration.py`, `scripts/test_ml_models.py`
+- Run/inspect: `crm_ml_rl/training/train_rl.py`, `crm_ml_rl/training/train_dynamics.py`, `scripts/check_rl_integration.py`, `scripts/check_ml_models.py`
 - MPC/model-based: `crm_ml_rl/training/mpc_controller.py`, `crm_ml_rl/training/model_based_rl.py`
 - Policies/networks: `crm_ml_rl/training/custom_policies.py`, `crm_ml_rl/models/networks.py`
 - Envs: `crm_ml_rl/envs/*` (reset/step, obs shapes, reward/termination)
@@ -33,7 +33,7 @@
 
 ## 7) Tests to Run
 - Pytest targets: `tests/test_crmdyn_binding_vs_cpp.py`, `tests/test_ml_models.py`, `tests/test_rl_models.py`, `tests/test_experimental_loader.py`
-- Optional scripts: `scripts/test_rl_integration.py`, `scripts/test_ml_models.py` (already listed above), to sanity-check pipelines.
+- Optional scripts: `scripts/check_rl_integration.py`, `scripts/check_ml_models.py` (already listed above), to sanity-check pipelines.
 - Goals: Catch regressions in bindings, ML/RL models, and data loading.
 
 ## 8) Additional Checks

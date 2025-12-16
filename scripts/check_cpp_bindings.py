@@ -6,7 +6,7 @@ This script validates that the C++ bindings for forward kinematics
 and dynamics are working correctly.
 
 Usage:
-    python scripts/test_cpp_bindings.py
+    python scripts/check_cpp_bindings.py
 """
 
 import sys

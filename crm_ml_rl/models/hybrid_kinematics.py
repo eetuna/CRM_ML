@@ -45,6 +45,7 @@ class HybridKinematicsModel(nn.Module):
         use_deep_residual: bool = False,
         include_physics_in_input: bool = True,
         learnable_physics_weight: bool = False,
+        use_torch_physics: bool = False,
         device: str = "cpu"
     ):
         """
@@ -67,6 +68,21 @@ class HybridKinematicsModel(nn.Module):
         self.device = torch.device(device)
         self.use_cpp = use_cpp
         self.include_physics_in_input = include_physics_in_input
+        self.use_torch_physics = use_torch_physics and use_cpp
+
+        self._torch_physics = None
+        if self.use_torch_physics:
+            try:
+                from ..wrappers.torch_physics import TorchCRMPhysics
+                if TorchCRMPhysics is not None:
+                    self._torch_physics = TorchCRMPhysics(
+                        param_file=param_file or "catheterdata/CatheterParameterSet_1_dyn.txt",
+                        config_file=config_file or "catheterdata/CatheterSpatialConfiguration_1.txt",
+                        device=str(self.device),
+                    )
+            except Exception:
+                self._torch_physics = None
+                self.use_torch_physics = False
 
         # Initialize CRM physics wrapper
         self.physics = CRMWrapper(
@@ -156,24 +172,34 @@ class HybridKinematicsModel(nn.Module):
         """
         batch_size = currents.shape[0]
 
-        # Convert to numpy for physics computation
-        currents_np = currents.detach().cpu().numpy()
-        if isinstance(insertion_length, torch.Tensor):
-            insertion_np = insertion_length.detach().cpu().numpy()
+        if self.use_torch_physics and self._torch_physics is not None:
+            if isinstance(insertion_length, (int, float)):
+                ins_tensor = torch.full((batch_size,), float(insertion_length), dtype=currents.dtype, device=currents.device)
+            else:
+                ins_tensor = insertion_length.to(currents.device).view(-1)
+            physics_pred = self._torch_physics.fk(currents.to(currents.device), ins_tensor).to(self.device)
         else:
-            insertion_np = np.full(batch_size, insertion_length)
+            # Convert to numpy for physics computation
+            currents_np = currents.detach().cpu().numpy()
+            if isinstance(insertion_length, torch.Tensor):
+                insertion_np = insertion_length.detach().cpu().numpy()
+            else:
+                insertion_np = np.full(batch_size, insertion_length)
 
-        # Get physics predictions
-        physics_predictions = []
-        for i in range(batch_size):
-            pred = self.get_physics_prediction(currents_np[i], float(insertion_np[i] if np.ndim(insertion_np) > 0 else insertion_np))
-            physics_predictions.append(pred)
+            # Get physics predictions
+            physics_predictions = []
+            for i in range(batch_size):
+                pred = self.get_physics_prediction(
+                    currents_np[i],
+                    float(insertion_np[i] if np.ndim(insertion_np) > 0 else insertion_np),
+                )
+                physics_predictions.append(pred)
 
-        physics_pred = torch.tensor(
-            np.array(physics_predictions),
-            dtype=torch.float32,
-            device=self.device
-        )
+            physics_pred = torch.tensor(
+                np.array(physics_predictions),
+                dtype=torch.float32,
+                device=self.device
+            )
 
         # Prepare input for residual network
         # Input: [currents, insertion_length]

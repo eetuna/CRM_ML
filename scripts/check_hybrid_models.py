@@ -11,9 +11,9 @@ Tests:
 6. Training and loss computation
 
 Usage:
-    python scripts/test_hybrid_models.py              # Run all tests
-    python scripts/test_hybrid_models.py --verbose    # Verbose output
-    python scripts/test_hybrid_models.py --quick      # Quick tests only
+    python scripts/check_hybrid_models.py              # Run all checks
+    python scripts/check_hybrid_models.py --verbose    # Verbose output
+    python scripts/check_hybrid_models.py --quick      # Quick checks only
 """
 
 import sys

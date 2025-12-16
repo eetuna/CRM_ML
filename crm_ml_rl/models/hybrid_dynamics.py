@@ -47,6 +47,7 @@ class HybridDynamicsConfig:
     use_ensemble: bool = False
     num_ensemble: int = 5
     learnable_blend: bool = False
+    use_torch_physics: bool = False
 
     def __post_init__(self):
         if self.hidden_dims is None:
@@ -104,6 +105,33 @@ class HybridDynamicsModel(nn.Module):
         # Set damping if using C++
         if self.simulator.is_using_cpp:
             self.simulator.wrapper.set_damping(self.config.damping)
+
+        # Optional: differentiable (torch) physics helpers for planning/MPC.
+        self._torch_physics = None
+        self._cpp_dyn = None
+        if self.simulator.is_using_cpp:
+            try:
+                # Private member, but stable within this repo.
+                self._cpp_dyn = self.simulator.wrapper._cpp_dynamics
+            except Exception:
+                self._cpp_dyn = None
+
+            try:
+                from ..wrappers.torch_physics import TorchCRMPhysics
+                if TorchCRMPhysics is not None:
+                    self._torch_physics = TorchCRMPhysics(
+                        param_file=self.config.param_file or "catheterdata/CatheterParameterSet_1_dyn.txt",
+                        config_file=self.config.config_file or "catheterdata/CatheterSpatialConfiguration_1.txt",
+                        device=str(self.device),
+                    )
+            except Exception:
+                self._torch_physics = None
+
+        self.use_torch_physics = (
+            bool(self.config.use_torch_physics)
+            and (self._cpp_dyn is not None)
+            and (self._torch_physics is not None)
+        )
 
         # Create residual network
         if self.config.use_ensemble:
@@ -210,6 +238,65 @@ class HybridDynamicsModel(nn.Module):
 
         return np.concatenate([next_position, next_velocity])
 
+    def get_physics_action_jacobian(
+        self,
+        currents: np.ndarray,
+        insertion_length: Optional[float] = None,
+        eps: float = 1e-4,
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        Return (next_state, B) where B = d(next_state)/d(currents) around the *current*
+        internal C++ dynamics seed.
+
+        This is useful for MPC/iLQR-style controllers that need local linearizations.
+        """
+        if insertion_length is None:
+            insertion_length = self.config.insertion_length
+
+        if self._cpp_dyn is None:
+            raise RuntimeError("C++ dynamics not available for linearization.")
+
+        seed = self._cpp_dyn.get_seed_state()
+        out = self._cpp_dyn.linearize_action_from_seed(
+            np.asarray(currents, dtype=np.float64).reshape(-1),
+            float(insertion_length),
+            seed["v"], seed["w"], seed["p"], seed["R"], seed["xf"],
+            seed.get("mL"), seed.get("nL"),
+            float(eps),
+        )
+        next_state = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
+        B = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
+        return next_state, B
+
+    def torch_physics_step(
+        self,
+        currents: torch.Tensor,
+        insertion_length: Optional[float] = None,
+        eps: float = 1e-4,
+    ) -> torch.Tensor:
+        """
+        Differentiable physics step w.r.t. currents, linearized around the current
+        internal C++ dynamics seed.
+
+        Returns next_state (batch, 6). Gradients are provided for `currents` only.
+        """
+        if insertion_length is None:
+            insertion_length = self.config.insertion_length
+
+        if self._cpp_dyn is None or self._torch_physics is None:
+            raise RuntimeError("Torch physics requires C++ bindings and TorchCRMPhysics.")
+
+        seed = self._cpp_dyn.get_seed_state()
+        seed_v = torch.tensor(seed["v"], dtype=currents.dtype, device=currents.device).unsqueeze(0)
+        seed_w = torch.tensor(seed["w"], dtype=currents.dtype, device=currents.device).unsqueeze(0)
+        seed_p = torch.tensor(seed["p"], dtype=currents.dtype, device=currents.device).unsqueeze(0)
+        seed_R = torch.tensor(seed["R"], dtype=currents.dtype, device=currents.device).unsqueeze(0)
+        seed_xf = torch.tensor(seed["xf"], dtype=currents.dtype, device=currents.device).unsqueeze(0)
+
+        batch = currents.shape[0]
+        ins = torch.full((batch,), float(insertion_length), dtype=currents.dtype, device=currents.device)
+        return self._torch_physics.dyn_step(currents, ins, seed_v, seed_w, seed_p, seed_R, seed_xf, eps=float(eps))
+
     def forward(
         self,
         state: torch.Tensor,
@@ -236,31 +323,56 @@ class HybridDynamicsModel(nn.Module):
         state_np = state.detach().cpu().numpy()
         action_np = action.detach().cpu().numpy()
 
-        # Get physics predictions for each sample
-        # Note: This requires resetting simulator state for each sample
-        # In practice, for training we'd use pre-collected physics predictions
-        physics_predictions = []
-        for i in range(batch_size):
-            # Set simulator state to current state
-            self.simulator.state.position = state_np[i, :3].copy()
-            self.simulator.state.velocity = state_np[i, 3:].copy()
+        if self.use_torch_physics:
+            # Differentiable w.r.t. `action` only. Seeds are prepared via the C++ wrapper.
+            action_device = action.to(self.device)
+            next_states = []
+            for i in range(batch_size):
+                # Seed the internal C++ dynamics from the provided (state, action) values.
+                self.simulator.state.position = state_np[i, :3].copy()
+                self.simulator.state.velocity = state_np[i, 3:].copy()
+                self.simulator.wrapper.initialize_dynamics(action_np[i], float(insertion_length))
 
-            # Reinitialize dynamics from current position
-            self.simulator.wrapper.initialize_dynamics(
-                action_np[i], insertion_length
-            )
+                seed = self._cpp_dyn.get_seed_state()
+                seed_v = torch.tensor(seed["v"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                seed_w = torch.tensor(seed["w"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                seed_p = torch.tensor(seed["p"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                seed_R = torch.tensor(seed["R"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                seed_xf = torch.tensor(seed["xf"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
 
-            # Step physics
-            result = self.simulator.wrapper.step_dynamics(action_np[i], insertion_length)
-            next_pos = result['tip_position']
-            next_vel = result.get('tip_velocity', np.zeros(3))
-            physics_predictions.append(np.concatenate([next_pos, next_vel]))
+                ins = torch.full((1,), float(insertion_length), dtype=action_device.dtype, device=self.device)
+                nxt = self._torch_physics.dyn_step(
+                    action_device[i : i + 1],
+                    ins,
+                    seed_v,
+                    seed_w,
+                    seed_p,
+                    seed_R,
+                    seed_xf,
+                    eps=1e-4,
+                )
+                next_states.append(nxt)
 
-        physics_pred = torch.tensor(
-            np.array(physics_predictions),
-            dtype=torch.float32,
-            device=self.device
-        )
+            physics_pred = torch.cat(next_states, dim=0).to(dtype=torch.float32, device=self.device)
+        else:
+            # Get physics predictions for each sample (nondifferentiable).
+            # Note: This requires resetting simulator state for each sample.
+            physics_predictions = []
+            for i in range(batch_size):
+                # Set simulator state to current state
+                self.simulator.state.position = state_np[i, :3].copy()
+                self.simulator.state.velocity = state_np[i, 3:].copy()
+
+                # Reinitialize dynamics from current position
+                self.simulator.wrapper.initialize_dynamics(action_np[i], insertion_length)
+
+                # Step physics
+                result = self.simulator.wrapper.step_dynamics(action_np[i], insertion_length)
+                next_pos = result["tip_position"]
+                next_vel = result.get("tip_velocity", np.zeros(3))
+                physics_predictions.append(np.concatenate([next_pos, next_vel]))
+
+            physics_pred = torch.tensor(np.array(physics_predictions), dtype=torch.float32, device=self.device)
 
         # Get residual correction
         state_device = state.to(self.device)

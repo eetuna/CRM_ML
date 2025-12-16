@@ -10,9 +10,9 @@ Tests:
 5. Integration within RL pipeline
 
 Usage:
-    python scripts/test_ml_models.py              # Run all tests
-    python scripts/test_ml_models.py --verbose    # Verbose output
-    python scripts/test_ml_models.py --quick      # Quick tests only
+    python scripts/check_ml_models.py              # Run all checks
+    python scripts/check_ml_models.py --verbose    # Verbose output
+    python scripts/check_ml_models.py --quick      # Quick checks only
 """
 
 import sys

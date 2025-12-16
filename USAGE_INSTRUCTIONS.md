@@ -1,7 +1,7 @@
 # Usage Overview
 
 - **Data generation sanity check**  
-  `python3 scripts/test_data_generation.py`  
+  `python3 scripts/check_data_generation.py`  
   Uses CRM C++ if available, otherwise falls back to simplified dynamics; warnings about CasADi/CVXPY are OK.
 
 - **Basic simulator**  
@@ -36,7 +36,7 @@
 - The control tasks are reaching a static target or tracking a moving trajectory with a magnetic catheter. Actions are coil currents (3D), observations include tip position/velocity (plus target/history), and rewards penalize distance and large/jerky actions with a success bonus on target.
 
 ## Suggested workflow
-- Generate data (if needed): `python3 scripts/test_data_generation.py` or a custom `SimDataGenerator` script to produce/save trajectories.
+- Generate data (if needed): `python3 scripts/check_data_generation.py` or a custom `SimDataGenerator` script to produce/save trajectories.
 - Train models on your data: choose full/residual/hybrid kinematics/dynamics depending on how much physics prior you want.
 - Validate models: run the provided test scripts under `scripts/` to sanity-check forward passes (e.g., `test_ml_models.py`, `test_hybrid_models.py`).
 - Integrate into control: use the chosen dynamics model in MPC rollouts, or configure the RL env/policies to use CRM or learned dynamics; train SAC/TD3/etc.

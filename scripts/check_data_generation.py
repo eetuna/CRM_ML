@@ -6,7 +6,7 @@ This script tests the SimDataGenerator and validates that it can
 generate trajectory data using the C++ physics bindings.
 
 Usage:
-    python scripts/test_data_generation.py
+    python scripts/check_data_generation.py
 """
 
 import sys
