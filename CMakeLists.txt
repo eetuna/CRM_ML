@@ -134,6 +134,7 @@ if(BUILD_PYTHON_BINDINGS)
         target_include_directories(crm_python PUBLIC
             "${PROJECT_SOURCE_DIR}/src"
             "${PROJECT_SOURCE_DIR}/numerical"
+            "${PROJECT_SOURCE_DIR}/third_party/autodiff"
         )
 
         target_link_libraries(crm_python PUBLIC

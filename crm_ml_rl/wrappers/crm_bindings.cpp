@@ -29,6 +29,7 @@
 // Include CRM headers
 #include "CRM.hpp"
 #include "CRMDYN.hpp"
+#include "CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp"
 
 namespace py = pybind11;
 using namespace CRMCatheterModel;
@@ -1549,10 +1550,11 @@ public:
         double eps_residual_x = 1e-5,
         double eps_residual_theta = 1e-5,
         double eps_g_x = 1e-5,
-        double eps_g_theta = 1e-5
+        double eps_g_theta = 1e-5,
+        bool return_debug = false
     ) {
-        // Phase-1 scaffold: implicit differentiation with *finite-difference* residual Jacobians.
-        // Residual autodiff requires templating the DYNNLEquation math path (not yet done).
+        // Implicit differentiation with residual Jacobians.
+        // Jxx = dF/dx uses autodiff (Eigen+dual numbers) when available; otherwise falls back to finite differences.
 
         auto get_state6 = [](const py::dict& out) {
             auto tip_pos = out["tip_position"].cast<py::array_t<double>>().request();
@@ -1908,17 +1910,88 @@ public:
 
         // Residual Jacobians: Jxx and Jxθ (θ = currents3 + seed_flat).
         Eigen::MatrixXd Jxx(x_dim, x_dim);
-        Jxx.setZero();
-        for (int j = 0; j < x_dim; j++) {
-            Eigen::VectorXd xp = x_star_scaled;
-            Eigen::VectorXd xm = x_star_scaled;
-            xp(j) += eps_residual_x;
-            xm(j) -= eps_residual_x;
-            Eigen::VectorXd tau_p, tau_m;
-            Eigen::Vector3d u0_p, u0_m;
-            const Eigen::VectorXd Fp = eval_residual(xp, curr0, seed0, tau_p, u0_p);
-            const Eigen::VectorXd Fm = eval_residual(xm, curr0, seed0, tau_m, u0_m);
-            Jxx.col(j) = (Fp - Fm) * (0.5 / eps_residual_x);
+        bool have_ad_jxx = false;
+        if (x_dim == NUM_DYN_RESIDUAL && num_sets == 1) {
+            try {
+                // Build DYNNLEParams once at (curr0, seed0) and compute Jxx = dF/dx at x* via autodiff.
+                py::array_t<double> vA, wA, pA, RA, xfA, mLA, nLA;
+                unpack_seed(seed0, vA, wA, pA, RA, xfA, mLA, nLA);
+                const double dt_local = dt;
+                CRMShootingMethodParams BVPParams = build_BVPParams(curr0, vA, wA, pA, RA, dt_local);
+
+                const bool FinalValueOnly = true;
+                DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
+
+                double x_0[NUM_STATES];
+                for (int i = 0; i < NUM_STATES; i++) {
+                    if (i < 3) x_0[i] = BVPParams.p0[i];
+                    else if (i < 12) x_0[i] = BVPParams.R0[i - 3];
+                    else x_0[i] = 0.0;
+                }
+
+                double mL_guess_local[NUM_ACT_SET][3]{};
+                double nL_guess_local[NUM_ACT_SET][3]{};
+                auto mLseed = mLA.unchecked<2>();
+                auto nLseed = nLA.unchecked<2>();
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) for (int i = 0; i < 3; i++) {
+                    mL_guess_local[j][i] = mLseed(j, i);
+                    nL_guess_local[j][i] = nLseed(j, i);
+                }
+
+                CRMDYNSolverIVP_Prep(
+                    BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+                    x_0, BVPParams.IntegrationStepSize,
+                    BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+                    BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+                    BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+                    BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+                    BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
+                    BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+                    mL_guess_local, nL_guess_local,
+                    FinalValueOnly, DYNNLEParams
+                );
+
+                DYNNLEParams.ContactMode = ContactModeType::FREE_TIP;
+                for (int i = 0; i < 3; i++) {
+                    DYNNLEParams.TipForce[i] = 0.0;
+                    DYNNLEParams.TipConstraintPoint[i] = 0.0;
+                    DYNNLEParams.ftip_initialguess[i] = 0.0;
+                }
+
+                auto xfseed = xfA.unchecked<1>();
+                for (int i = 0; i < NUM_STATES; i++) {
+                    DYNNLEParams.xf[i] = xfseed(i);
+                }
+
+                Eigen::VectorXd Fad;
+                Eigen::MatrixXd Jad = DYNNLEquationJacobianEigenAD(x_star_scaled, DYNNLEParams, &Fad);
+                if (Jad.rows() == x_dim && Jad.cols() == x_dim && Jad.allFinite()) {
+                    Jxx = Jad;
+                    have_ad_jxx = true;
+                }
+            } catch (...) {
+                have_ad_jxx = false;
+            }
+        }
+
+        Eigen::MatrixXd Jxx_fd;
+        if (!have_ad_jxx || return_debug) {
+            Jxx_fd.resize(x_dim, x_dim);
+            Jxx_fd.setZero();
+            for (int j = 0; j < x_dim; j++) {
+                Eigen::VectorXd xp = x_star_scaled;
+                Eigen::VectorXd xm = x_star_scaled;
+                xp(j) += eps_residual_x;
+                xm(j) -= eps_residual_x;
+                Eigen::VectorXd tau_p, tau_m;
+                Eigen::Vector3d u0_p, u0_m;
+                const Eigen::VectorXd Fp = eval_residual(xp, curr0, seed0, tau_p, u0_p);
+                const Eigen::VectorXd Fm = eval_residual(xm, curr0, seed0, tau_m, u0_m);
+                Jxx_fd.col(j) = (Fp - Fm) * (0.5 / eps_residual_x);
+            }
+        }
+        if (!have_ad_jxx) {
+            Jxx = Jxx_fd;
         }
 
         const int theta_dim = 3 + seed_dim;
@@ -2007,6 +2080,18 @@ public:
         result["seed_dim"] = seed_dim;
         result["base"] = base;
         result["residual_norm"] = residual_norm;
+        if (return_debug) {
+            result["have_ad_jxx"] = have_ad_jxx;
+            py::array_t<double> Jxx_out({x_dim, x_dim});
+            auto Ju = Jxx_out.mutable_unchecked<2>();
+            for (int r = 0; r < x_dim; r++) for (int c = 0; c < x_dim; c++) Ju(r, c) = Jxx(r, c);
+            result["Jxx"] = Jxx_out;
+
+            py::array_t<double> Jxx_fd_out({x_dim, x_dim});
+            auto Jf = Jxx_fd_out.mutable_unchecked<2>();
+            for (int r = 0; r < x_dim; r++) for (int c = 0; c < x_dim; c++) Jf(r, c) = Jxx_fd(r, c);
+            result["Jxx_fd"] = Jxx_fd_out;
+        }
         return result;
     }
 
@@ -2141,6 +2226,7 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("eps_residual_theta") = 1e-5,
              py::arg("eps_g_x") = 1e-5,
              py::arg("eps_g_theta") = 1e-5,
+             py::arg("return_debug") = false,
              "Implicit linearization scaffold: FD residual Jacobians + implicit sensitivity to compute A,B")
         .def("get_tip_position", &CRMDynamicsWrapper::getTipPosition,
              "Get current tip position")
