@@ -24,6 +24,7 @@
 #include <string>
 #include <stdexcept>
 #include <memory>
+#include <limits>
 
 // Include CRM headers
 #include "CRM.hpp"
@@ -1535,6 +1536,480 @@ public:
         return result;
     }
 
+    py::dict linearize_full_seed_action_from_seed_implicit(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>(),
+        double eps_residual_x = 1e-5,
+        double eps_residual_theta = 1e-5,
+        double eps_g_x = 1e-5,
+        double eps_g_theta = 1e-5
+    ) {
+        // Phase-1 scaffold: implicit differentiation with *finite-difference* residual Jacobians.
+        // Residual autodiff requires templating the DYNNLEquation math path (not yet done).
+
+        auto get_state6 = [](const py::dict& out) {
+            auto tip_pos = out["tip_position"].cast<py::array_t<double>>().request();
+            auto tip_vel = out["tip_velocity"].cast<py::array_t<double>>().request();
+            const double* pos_ptr = static_cast<double*>(tip_pos.ptr);
+            const double* vel_ptr = static_cast<double*>(tip_vel.ptr);
+            Eigen::Matrix<double, 6, 1> y;
+            for (int i = 0; i < 3; i++) y(i) = pos_ptr[i];
+            for (int i = 0; i < 3; i++) y(3 + i) = vel_ptr[i];
+            return y;
+        };
+
+        // Determine num_act_set and validate seed shapes.
+        auto vbuf = v_in.request();
+        if (vbuf.ndim != 2 || vbuf.shape[1] != 3) {
+            throw std::runtime_error("v_in must have shape (num_act_set, 3)");
+        }
+        const int num_sets = static_cast<int>(vbuf.shape[0]);
+
+        auto wbuf = w_in.request();
+        auto pbuf = p_in.request();
+        auto Rbuf = R_in.request();
+        auto xfbuf = xf_in.request();
+        if (wbuf.ndim != 2 || wbuf.shape[0] != num_sets || wbuf.shape[1] != 3) {
+            throw std::runtime_error("w_in must have shape (num_act_set, 3)");
+        }
+        if (pbuf.ndim != 2 || pbuf.shape[0] != num_sets || pbuf.shape[1] != 3) {
+            throw std::runtime_error("p_in must have shape (num_act_set, 3)");
+        }
+        if (Rbuf.ndim != 2 || Rbuf.shape[0] != num_sets || Rbuf.shape[1] != 9) {
+            throw std::runtime_error("R_in must have shape (num_act_set, 9)");
+        }
+        if (xfbuf.ndim != 1 || xfbuf.shape[0] != NUM_STATES) {
+            throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
+        }
+
+        auto ensure_mn = [&](const py::array_t<double>& arr) {
+            if (arr.size() != 0) {
+                auto abuf = arr.request();
+                if (abuf.ndim != 2 || abuf.shape[0] != num_sets || abuf.shape[1] != 3) {
+                    throw std::runtime_error("mL/nL must have shape (num_act_set, 3) when provided");
+                }
+                return arr;
+            }
+            py::array_t<double> out({num_sets, 3});
+            auto o = out.mutable_unchecked<2>();
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) o(j, i) = 0.0;
+            return out;
+        };
+
+        py::array_t<double> mL_use = ensure_mn(mL_in);
+        py::array_t<double> nL_use = ensure_mn(nL_in);
+
+        // Base solve: get y0 and x* (as next_mL/next_nL) by running the full step once.
+        py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
+        const bool ok = base["converged"].cast<bool>();
+
+        const Eigen::Matrix<double, 6, 1> y0 = get_state6(base);
+
+        // x* is the solved internal variables (mL,nL) from DynamicsBVP output (returned as next_mL/next_nL).
+        auto mL_star_arr = base["next_mL"].cast<py::array_t<double>>();
+        auto nL_star_arr = base["next_nL"].cast<py::array_t<double>>();
+        auto mL_star = mL_star_arr.request();
+        auto nL_star = nL_star_arr.request();
+        const double* mL_star_ptr = static_cast<double*>(mL_star.ptr);
+        const double* nL_star_ptr = static_cast<double*>(nL_star.ptr);
+
+        const int x_dim = num_sets * 6;
+        Eigen::VectorXd x_star_scaled(x_dim);
+        for (int j = 0; j < num_sets; j++) {
+            for (int i = 0; i < 3; i++) {
+                x_star_scaled(j * 6 + i) = mL_star_ptr[j * 3 + i] / IVALUE_SCALE_M;
+                x_star_scaled(j * 6 + 3 + i) = nL_star_ptr[j * 3 + i] / IVALUE_SCALE_N;
+            }
+        }
+
+        // Seed flattening order must match torch_physics.py unflattening.
+        const int dim_v = num_sets * 3;
+        const int dim_w = num_sets * 3;
+        const int dim_p = num_sets * 3;
+        const int dim_R = num_sets * 9;
+        const int dim_xf = NUM_STATES;
+        const int dim_mL = num_sets * 3;
+        const int dim_nL = num_sets * 3;
+        const int seed_dim = dim_v + dim_w + dim_p + dim_R + dim_xf + dim_mL + dim_nL;
+
+        // If the base solve failed, return zeros (consistent with FD linearizers).
+        if (!ok) {
+            py::array_t<double> next_state({6});
+            auto ns = next_state.mutable_unchecked<1>();
+            for (int i = 0; i < 6; i++) ns(i) = y0(i);
+
+            py::array_t<double> B_out({6, 3});
+            py::array_t<double> A_out({6, seed_dim});
+            auto Bout = B_out.mutable_unchecked<2>();
+            auto Aout = A_out.mutable_unchecked<2>();
+            for (int i = 0; i < 6; i++) {
+                for (int j = 0; j < 3; j++) Bout(i, j) = 0.0;
+                for (int j = 0; j < seed_dim; j++) Aout(i, j) = 0.0;
+            }
+            py::dict result;
+            result["next_state"] = next_state;
+            result["B"] = B_out;
+            result["A"] = A_out;
+            result["seed_dim"] = seed_dim;
+            result["base"] = base;
+            result["residual_norm"] = std::numeric_limits<double>::infinity();
+            return result;
+        }
+
+        auto unpack_seed = [&](const Eigen::VectorXd& seed_flat,
+                               py::array_t<double>& v_out,
+                               py::array_t<double>& w_out,
+                               py::array_t<double>& p_out,
+                               py::array_t<double>& R_out,
+                               py::array_t<double>& xf_out,
+                               py::array_t<double>& mL_out,
+                               py::array_t<double>& nL_out) {
+            v_out = py::array_t<double>({num_sets, 3});
+            w_out = py::array_t<double>({num_sets, 3});
+            p_out = py::array_t<double>({num_sets, 3});
+            R_out = py::array_t<double>({num_sets, 9});
+            xf_out = py::array_t<double>({NUM_STATES});
+            mL_out = py::array_t<double>({num_sets, 3});
+            nL_out = py::array_t<double>({num_sets, 3});
+
+            auto v = v_out.mutable_unchecked<2>();
+            auto w = w_out.mutable_unchecked<2>();
+            auto p = p_out.mutable_unchecked<2>();
+            auto R = R_out.mutable_unchecked<2>();
+            auto xf = xf_out.mutable_unchecked<1>();
+            auto mL = mL_out.mutable_unchecked<2>();
+            auto nL = nL_out.mutable_unchecked<2>();
+
+            int idx = 0;
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) v(j, i) = seed_flat(idx++);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) w(j, i) = seed_flat(idx++);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) p(j, i) = seed_flat(idx++);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 9; i++) R(j, i) = seed_flat(idx++);
+            for (int i = 0; i < NUM_STATES; i++) xf(i) = seed_flat(idx++);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) mL(j, i) = seed_flat(idx++);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) nL(j, i) = seed_flat(idx++);
+        };
+
+        auto flatten_seed_from_arrays = [&]() {
+            Eigen::VectorXd seed_flat(seed_dim);
+            auto v = v_in.unchecked<2>();
+            auto w = w_in.unchecked<2>();
+            auto p = p_in.unchecked<2>();
+            auto R = R_in.unchecked<2>();
+            auto xf = xf_in.unchecked<1>();
+            auto mL = mL_use.unchecked<2>();
+            auto nL = nL_use.unchecked<2>();
+
+            int idx = 0;
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = v(j, i);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = w(j, i);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = p(j, i);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 9; i++) seed_flat(idx++) = R(j, i);
+            for (int i = 0; i < NUM_STATES; i++) seed_flat(idx++) = xf(i);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = mL(j, i);
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = nL(j, i);
+            return seed_flat;
+        };
+
+        const Eigen::VectorXd seed0 = flatten_seed_from_arrays();
+
+        auto build_BVPParams = [&](const Eigen::Vector3d& curr3,
+                                   const py::array_t<double>& vA,
+                                   const py::array_t<double>& wA,
+                                   const py::array_t<double>& pA,
+                                   const py::array_t<double>& RA,
+                                   double dt_local) {
+            // Build actuation currents array (NUM_ACT_SET is compile-time; we fill the first set).
+            double ActuationCurrents[NUM_ACT_SET][3];
+            for (int i = 0; i < NUM_ACT_SET; i++) for (int j = 0; j < 3; j++) ActuationCurrents[i][j] = 0.0;
+            for (int j = 0; j < 3; j++) ActuationCurrents[0][j] = curr3(j);
+
+            // Copy seed arrays to local fixed-size buffers for the C++ API.
+            double v_L_local[NUM_ACT_SET][3]{};
+            double w_L_local[NUM_ACT_SET][3]{};
+            double p_L_local[NUM_ACT_SET][3]{};
+            double R_L_local[NUM_ACT_SET][9]{};
+
+            auto vv = vA.unchecked<2>();
+            auto ww = wA.unchecked<2>();
+            auto pp = pA.unchecked<2>();
+            auto RR = RA.unchecked<2>();
+
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    v_L_local[j][i] = vv(j, i);
+                    w_L_local[j][i] = ww(j, i);
+                    p_L_local[j][i] = pp(j, i);
+                }
+                for (int i = 0; i < 9; i++) R_L_local[j][i] = RR(j, i);
+            }
+
+            // Copy constant parameters to locals to avoid accidental mutation.
+            double actInertia_local[NUM_ACT_SET][9];
+            double damping_local[NUM_ACT_SET][6];
+            for (int j = 0; j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 9; i++) actInertia_local[j][i] = actInertia[j][i];
+                for (int i = 0; i < 6; i++) damping_local[j][i] = damping[j][i];
+            }
+
+            ContactModeType ContactMode = ContactModeType::FREE_TIP;
+            double TipForce[3] = {0.0, 0.0, 0.0};
+            double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
+
+            CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
+                *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+                ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+                actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+            );
+            return BVPParams;
+        };
+
+        auto eval_residual = [&](const Eigen::VectorXd& x_scaled,
+                                 const Eigen::Vector3d& curr3,
+                                 const Eigen::VectorXd& seed_flat,
+                                 Eigen::VectorXd& out_tau_flat,
+                                 Eigen::Vector3d& out_u0) {
+            // Rebuild DYNNLEParams (includes preprocessed IVP parameters).
+            py::array_t<double> vA, wA, pA, RA, xfA, mLA, nLA;
+            unpack_seed(seed_flat, vA, wA, pA, RA, xfA, mLA, nLA);
+            const double dt_local = dt;
+            CRMShootingMethodParams BVPParams = build_BVPParams(curr3, vA, wA, pA, RA, dt_local);
+
+            // Prepare DYNNLE parameters.
+            const bool FinalValueOnly = true;
+            DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
+
+            // Provide a placeholder x_0 (p0,R0) and pass mL/nL "initial guess" from seed (not used by residual, only stored in params).
+            double x_0[NUM_STATES];
+            for (int i = 0; i < NUM_STATES; i++) {
+                if (i < 3) x_0[i] = BVPParams.p0[i];
+                else if (i < 12) x_0[i] = BVPParams.R0[i - 3];
+                else x_0[i] = 0.0;
+            }
+
+            // Seed-provided guesses (unscaled) for prep.
+            double mL_guess_local[NUM_ACT_SET][3]{};
+            double nL_guess_local[NUM_ACT_SET][3]{};
+            auto mLseed = mLA.unchecked<2>();
+            auto nLseed = nLA.unchecked<2>();
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) for (int i = 0; i < 3; i++) {
+                mL_guess_local[j][i] = mLseed(j, i);
+                nL_guess_local[j][i] = nLseed(j, i);
+            }
+
+            CRMDYNSolverIVP_Prep(
+                BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+                x_0, BVPParams.IntegrationStepSize,
+                BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+                BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+                BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+                BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+                BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
+                BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+                mL_guess_local, nL_guess_local,
+                FinalValueOnly, DYNNLEParams
+            );
+
+            DYNNLEParams.ContactMode = ContactModeType::FREE_TIP;
+            for (int i = 0; i < 3; i++) {
+                DYNNLEParams.TipForce[i] = 0.0;
+                DYNNLEParams.TipConstraintPoint[i] = 0.0;
+                DYNNLEParams.ftip_initialguess[i] = 0.0;
+            }
+
+            // Set xf.
+            auto xfseed = xfA.unchecked<1>();
+            for (int i = 0; i < NUM_STATES; i++) {
+                DYNNLEParams.xf[i] = xfseed(i);
+            }
+
+            // Call residual equation.
+            const int NLEq_Dim = NUM_DYN_RESIDUAL;
+            std::vector<double> x_arr(NLEq_Dim, 0.0);
+            for (int i = 0; i < NLEq_Dim; i++) x_arr[i] = x_scaled(i);
+
+            std::vector<double> out_y(NLEq_Dim, 0.0);
+            double u0_out[3];
+            double tau_out[NUM_ACT_SET * 3];
+
+            DYNNLEquation(x_arr.data(), out_y.data(), DYNNLEParams, u0_out, tau_out);
+
+            Eigen::VectorXd F(NLEq_Dim);
+            for (int i = 0; i < NLEq_Dim; i++) F(i) = out_y[i];
+
+            out_u0 = Eigen::Vector3d(u0_out[0], u0_out[1], u0_out[2]);
+            out_tau_flat.resize(NUM_ACT_SET * 3);
+            for (int i = 0; i < NUM_ACT_SET * 3; i++) out_tau_flat(i) = tau_out[i];
+            return F;
+        };
+
+        auto eval_output = [&](const Eigen::VectorXd& x_scaled,
+                               const Eigen::Vector3d& curr3,
+                               const Eigen::VectorXd& seed_flat) {
+            // Build BVPParams and compute u0/tau from DYNNLEquation, then run DYNSolverIVP.
+            Eigen::VectorXd tau_flat;
+            Eigen::Vector3d u0;
+            Eigen::VectorXd F = eval_residual(x_scaled, curr3, seed_flat, tau_flat, u0);
+            (void)F;
+
+            py::array_t<double> vA, wA, pA, RA, xfA, mLA, nLA;
+            unpack_seed(seed_flat, vA, wA, pA, RA, xfA, mLA, nLA);
+            const double dt_local = dt;
+            CRMShootingMethodParams BVPParams = build_BVPParams(curr3, vA, wA, pA, RA, dt_local);
+
+            double mL_phys[NUM_ACT_SET][3]{};
+            double nL_phys[NUM_ACT_SET][3]{};
+            double tau_phys[NUM_ACT_SET][3]{};
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    mL_phys[j][i] = IVALUE_SCALE_M * x_scaled(j * 6 + i);
+                    nL_phys[j][i] = IVALUE_SCALE_N * x_scaled(j * 6 + 3 + i);
+                    tau_phys[j][i] = tau_flat(j * 3 + i);
+                }
+            }
+
+            double u0_arr[3] = {u0(0), u0(1), u0(2)};
+            double ftip[3] = {0.0, 0.0, 0.0};
+
+            double xf_new[NUM_STATES];
+            double x_coil[NUM_ACT_SET][NUM_COIL_STATES];
+            double ReportedMarkerPos[5][3];
+
+            DYNSolverIVP(BVPParams, u0_arr, mL_phys, nL_phys, tau_phys, ftip, true, xf_new, x_coil, ReportedMarkerPos);
+
+            Eigen::Matrix<double, 6, 1> y;
+            y(0) = xf_new[0];
+            y(1) = xf_new[1];
+            y(2) = xf_new[2];
+            y(3) = x_coil[0][0];
+            y(4) = x_coil[0][1];
+            y(5) = x_coil[0][2];
+            return y;
+        };
+
+        // Current vector (assume 3D for now, matching Torch pipeline).
+        Eigen::Vector3d curr0(0.0, 0.0, 0.0);
+        auto curr_buf = currents.request();
+        const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+        for (int i = 0; i < 3; i++) curr0(i) = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+
+        // Compute residual at (x*,theta) for diagnostics.
+        Eigen::VectorXd tau0_flat;
+        Eigen::Vector3d u0_tmp;
+        const Eigen::VectorXd F0 = eval_residual(x_star_scaled, curr0, seed0, tau0_flat, u0_tmp);
+        const double residual_norm = F0.norm();
+
+        // Residual Jacobians: Jxx and Jxθ (θ = currents3 + seed_flat).
+        Eigen::MatrixXd Jxx(x_dim, x_dim);
+        Jxx.setZero();
+        for (int j = 0; j < x_dim; j++) {
+            Eigen::VectorXd xp = x_star_scaled;
+            Eigen::VectorXd xm = x_star_scaled;
+            xp(j) += eps_residual_x;
+            xm(j) -= eps_residual_x;
+            Eigen::VectorXd tau_p, tau_m;
+            Eigen::Vector3d u0_p, u0_m;
+            const Eigen::VectorXd Fp = eval_residual(xp, curr0, seed0, tau_p, u0_p);
+            const Eigen::VectorXd Fm = eval_residual(xm, curr0, seed0, tau_m, u0_m);
+            Jxx.col(j) = (Fp - Fm) * (0.5 / eps_residual_x);
+        }
+
+        const int theta_dim = 3 + seed_dim;
+        Eigen::MatrixXd Jxth(x_dim, theta_dim);
+        Jxth.setZero();
+        for (int j = 0; j < theta_dim; j++) {
+            Eigen::Vector3d curr_p = curr0;
+            Eigen::Vector3d curr_m = curr0;
+            Eigen::VectorXd seed_p = seed0;
+            Eigen::VectorXd seed_m = seed0;
+            if (j < 3) {
+                curr_p(j) += eps_residual_theta;
+                curr_m(j) -= eps_residual_theta;
+            } else {
+                const int k = j - 3;
+                seed_p(k) += eps_residual_theta;
+                seed_m(k) -= eps_residual_theta;
+            }
+            Eigen::VectorXd tau_p, tau_m;
+            Eigen::Vector3d u0_p, u0_m;
+            const Eigen::VectorXd Fp = eval_residual(x_star_scaled, curr_p, seed_p, tau_p, u0_p);
+            const Eigen::VectorXd Fm = eval_residual(x_star_scaled, curr_m, seed_m, tau_m, u0_m);
+            Jxth.col(j) = (Fp - Fm) * (0.5 / eps_residual_theta);
+        }
+
+        // Solve for dx/dθ: Jxx * X = -Jxθ
+        Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(Jxx);
+        if (qr.rank() < x_dim) {
+            throw std::runtime_error("Implicit linearization failed: Jxx is rank-deficient at x*.");
+        }
+        const Eigen::MatrixXd dxdth = qr.solve(-Jxth);  // (x_dim, theta_dim)
+
+        // Partials of g: gx and gθ (using the post-solve mapping, no root-solve).
+        Eigen::MatrixXd gx(6, x_dim);
+        gx.setZero();
+        for (int j = 0; j < x_dim; j++) {
+            Eigen::VectorXd xp = x_star_scaled;
+            Eigen::VectorXd xm = x_star_scaled;
+            xp(j) += eps_g_x;
+            xm(j) -= eps_g_x;
+            const Eigen::Matrix<double, 6, 1> yp = eval_output(xp, curr0, seed0);
+            const Eigen::Matrix<double, 6, 1> ym = eval_output(xm, curr0, seed0);
+            gx.col(j) = (yp - ym) * (0.5 / eps_g_x);
+        }
+
+        Eigen::MatrixXd gth(6, theta_dim);
+        gth.setZero();
+        for (int j = 0; j < theta_dim; j++) {
+            Eigen::Vector3d curr_p = curr0;
+            Eigen::Vector3d curr_m = curr0;
+            Eigen::VectorXd seed_p = seed0;
+            Eigen::VectorXd seed_m = seed0;
+            if (j < 3) {
+                curr_p(j) += eps_g_theta;
+                curr_m(j) -= eps_g_theta;
+            } else {
+                const int k = j - 3;
+                seed_p(k) += eps_g_theta;
+                seed_m(k) -= eps_g_theta;
+            }
+            const Eigen::Matrix<double, 6, 1> yp = eval_output(x_star_scaled, curr_p, seed_p);
+            const Eigen::Matrix<double, 6, 1> ym = eval_output(x_star_scaled, curr_m, seed_m);
+            gth.col(j) = (yp - ym) * (0.5 / eps_g_theta);
+        }
+
+        // Assemble dy/dθ = gθ + gx * dx/dθ
+        const Eigen::MatrixXd dydth = gth + gx * dxdth;  // (6, theta_dim)
+
+        // Split into B (currents) and A (seed).
+        py::array_t<double> next_state({6});
+        auto ns = next_state.mutable_unchecked<1>();
+        for (int i = 0; i < 6; i++) ns(i) = y0(i);
+
+        py::array_t<double> B_out({6, 3});
+        auto Bout = B_out.mutable_unchecked<2>();
+        for (int i = 0; i < 6; i++) for (int j = 0; j < 3; j++) Bout(i, j) = dydth(i, j);
+
+        py::array_t<double> A_out({6, seed_dim});
+        auto Aout = A_out.mutable_unchecked<2>();
+        for (int i = 0; i < 6; i++) for (int j = 0; j < seed_dim; j++) Aout(i, j) = dydth(i, 3 + j);
+
+        py::dict result;
+        result["next_state"] = next_state;
+        result["B"] = B_out;
+        result["A"] = A_out;
+        result["seed_dim"] = seed_dim;
+        result["base"] = base;
+        result["residual_norm"] = residual_norm;
+        return result;
+    }
+
     /**
      * Get current tip position.
      */
@@ -1657,6 +2132,16 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("eps_u") = 1e-4,
              py::arg("eps_seed") = 1e-4,
              "Finite-difference A,B where A=d(next_state)/d(full_seed) around explicit seed")
+        .def("linearize_full_seed_action_from_seed_implicit", &CRMDynamicsWrapper::linearize_full_seed_action_from_seed_implicit,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("v_in"), py::arg("w_in"), py::arg("p_in"), py::arg("R_in"), py::arg("xf_in"),
+             py::arg("mL_in") = py::array_t<double>(),
+             py::arg("nL_in") = py::array_t<double>(),
+             py::arg("eps_residual_x") = 1e-5,
+             py::arg("eps_residual_theta") = 1e-5,
+             py::arg("eps_g_x") = 1e-5,
+             py::arg("eps_g_theta") = 1e-5,
+             "Implicit linearization scaffold: FD residual Jacobians + implicit sensitivity to compute A,B")
         .def("get_tip_position", &CRMDynamicsWrapper::getTipPosition,
              "Get current tip position")
         .def_readwrite("dt", &CRMDynamicsWrapper::dt)

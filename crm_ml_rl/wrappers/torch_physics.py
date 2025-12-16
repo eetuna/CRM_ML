@@ -14,6 +14,7 @@ Notes:
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Optional, Tuple
 
 import numpy as np
@@ -155,19 +156,37 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
 
         for i in range(batch):
             if need_seed_jac:
-                out = dyn.linearize_full_seed_action_from_seed(
-                    currents_np[i],
-                    float(ins_np[i]),
-                    v_np[i],
-                    w_np[i],
-                    p_np[i],
-                    R_np[i],
-                    xf_np[i],
-                    mL_np[i],
-                    nL_np[i],
-                    float(eps_u),
-                    float(eps_seed),
-                )
+                method = os.environ.get("CRM_DYN_LINEARIZATION_METHOD", "").strip().lower()
+                if method == "implicit":
+                    out = dyn.linearize_full_seed_action_from_seed_implicit(
+                        currents_np[i],
+                        float(ins_np[i]),
+                        v_np[i],
+                        w_np[i],
+                        p_np[i],
+                        R_np[i],
+                        xf_np[i],
+                        mL_np[i],
+                        nL_np[i],
+                        float(eps_seed),  # eps_residual_x
+                        float(eps_seed),  # eps_residual_theta
+                        float(eps_seed),  # eps_g_x
+                        float(eps_seed),  # eps_g_theta
+                    )
+                else:
+                    out = dyn.linearize_full_seed_action_from_seed(
+                        currents_np[i],
+                        float(ins_np[i]),
+                        v_np[i],
+                        w_np[i],
+                        p_np[i],
+                        R_np[i],
+                        xf_np[i],
+                        mL_np[i],
+                        nL_np[i],
+                        float(eps_u),
+                        float(eps_seed),
+                    )
                 next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
                 B_all[i] = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
                 A_all[i] = np.asarray(out["A"], dtype=np.float64).reshape(6, -1)
