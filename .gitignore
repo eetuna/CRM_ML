@@ -140,3 +140,6 @@ dist/
 *.png
 *.json
 *.zip
+
+# Git worktree
+.worktrees/
