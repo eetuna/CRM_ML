@@ -4,6 +4,7 @@
 
 # Build artifacts
 build/
+build_py/
 cmake-build-*/
 *.o
 *.a
@@ -143,3 +144,6 @@ dist/
 
 # Git worktree
 .worktrees/
+
+# Vendor deps (kept local unless explicitly vendored/submodule)
+third_party/autodiff/
