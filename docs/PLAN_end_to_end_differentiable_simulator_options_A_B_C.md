@@ -14,7 +14,7 @@ It is written so another AI agent can:
 If you are handing this repo to another agent, this is the recommended review sequence:
 
 1. **Implementation + results (what exists today)**
-   - Read `docs/autodiff_dynamics_eigen_vs_template_review.md:1`
+   - Read `docs/autodiff_dynamics_eigen_vs_template_review.md`
    - Focus on:
      - what `autodiff_eigen` implements (Eigen residual + AD `Jxx`),
      - what `autodiff_template` provides (templated residual),
@@ -22,7 +22,7 @@ If you are handing this repo to another agent, this is the recommended review se
      - and the trajectory-based “paper-style” reports (ramp included, metrics on circle).
 
 2. **End-to-end options (what to build next)**
-   - Read this doc: `docs/PLAN_end_to_end_differentiable_simulator_options_A_B_C.md:1`
+   - Read this doc: `docs/PLAN_end_to_end_differentiable_simulator_options_A_B_C.md`
    - Focus on:
      - Option A (extend implicit+AD partials),
      - Option C (Torch C++ extension packaging),
@@ -288,7 +288,7 @@ Provide a Torch operator `crm_dyn_step(seed,u,θ) -> y` such that:
 ### C1) Implement a Torch extension
 Tasks:
 1. Create a new extension package, e.g.:
-   - `crm_ml_rl/wrappers/crm_torch_ext/` (or `crm_torch/`)
+   - crm_ml_rl/wrappers/crm_torch_ext/ (planned; not present in this repo today), or `crm_torch/`
 2. Build system:
    - use `torch.utils.cpp_extension` (Python `setup.py`) or integrate into existing CMake with Torch.
 3. Implement the custom autograd Function in C++:

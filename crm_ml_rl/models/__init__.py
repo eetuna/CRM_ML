@@ -10,7 +10,7 @@ Models:
     - HybridDynamicsModel: Integrates CRM dynamics with learned residuals
 """
 
-from .networks import MLP, LSTM_MLP
+from .networks import MLP, LSTM_MLP, DeepResidualMLP
 from .residual_kinematics import ResidualKinematicsModel, ResidualKinematicsWithUncertainty
 from .residual_dynamics import ResidualDynamicsModel, EnsembleResidualDynamics
 from .full_kinematics import FullKinematicsModel
@@ -26,6 +26,7 @@ from .sequence_models import (
 __all__ = [
     'MLP',
     'LSTM_MLP',
+    'DeepResidualMLP',
     'ResidualKinematicsModel',
     'ResidualKinematicsWithUncertainty',
     'ResidualDynamicsModel',

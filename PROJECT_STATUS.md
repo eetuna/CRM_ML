@@ -1,7 +1,7 @@
 # CRM_ML Project Status Report
 
 **Last Updated**: 2025-12-11
-**Total Tests Passing**: 104/104
+**Total Tests Passing**: Run `python3 -m pytest -q` (and optionally `python3 scripts/check_ml_models.py`, `python3 scripts/check_rl_integration.py`) to verify in your environment.
 
 ---
 
@@ -80,7 +80,7 @@ The CRM_ML project integrates C++ Cosserat Rod Model physics with Python ML/RL p
 - `localmin != 0` (e.g., localmin=3)
 
 **Artifacts**:
-- `sweep_failures_py.json`, `sweep_failures_cpp.json` - identical failing cases at dt=0.05
+- `output_data/sweep_failures_py.json`, `output_data/sweep_failures_cpp.json` - identical failing cases at dt=0.05
 - `sweep_failures_dt002.json` - failing cases at dt=0.02 (33/101)
 - `REVIEW_CHECKLIST.md` - guidance for reviewing solver/parity
 

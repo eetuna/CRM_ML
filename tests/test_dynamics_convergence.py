@@ -8,12 +8,15 @@ proper `initialize_from_kinematics` method.
 import json
 import numpy as np
 import pytest
+from pathlib import Path
 from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS
 
 @pytest.fixture(scope="module")
 def failing_currents():
     """Load the list of currents that are known to cause convergence failures."""
-    with open("sweep_failures_cpp.json") as f:
+    repo_root = Path(__file__).resolve().parents[1]
+    failures_path = repo_root / "output_data" / "sweep_failures_cpp.json"
+    with failures_path.open() as f:
         return json.load(f)
 
 @pytest.mark.skipif(not HAS_CPP_BINDINGS, reason="C++ bindings not available")

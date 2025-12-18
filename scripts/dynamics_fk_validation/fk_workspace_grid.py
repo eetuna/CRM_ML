@@ -35,11 +35,12 @@ def fk_workspace_grid(
     kin: "crm_python.CRMKinematics",
     vals: np.ndarray,
     insertion_length: float,
-) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     n = int(vals.size)
     total = n**3
     U = np.zeros((total, 3), dtype=np.float64)
     P = np.full((total, 3), np.nan, dtype=np.float64)
+    DU0 = np.full((total, 3), np.nan, dtype=np.float64)
     conv = np.zeros((total,), dtype=np.uint8)
 
     idx = 0
@@ -60,13 +61,15 @@ def fk_workspace_grid(
                 conv[idx] = 1 if ok else 0
                 if ok:
                     P[idx] = np.asarray(out["tip_position"], dtype=np.float64).reshape(3)
-                    du0_guess = np.asarray(out["delta_u0"], dtype=np.float64).reshape(3)
+                    du0_sol = np.asarray(out["delta_u0"], dtype=np.float64).reshape(3)
+                    DU0[idx] = du0_sol
+                    du0_guess = du0_sol
 
                 idx += 1
                 if idx % 5000 == 0:
                     print(f"FK workspace: {idx}/{total} ({idx/total:.1%})")
 
-    return U, P, conv
+    return U, P, DU0, conv
 
 
 def plot_workspace_xy(P: np.ndarray, conv: np.ndarray, out_png: Path, *, max_points: int = 200_000) -> None:
@@ -116,6 +119,7 @@ def main() -> None:
         data = np.load(out_npz)
         U = data["U"]
         P = data["P"]
+        DU0 = data["DU0"] if "DU0" in data else None
         conv = data["conv"]
     else:
         kin = crm_python.CRMKinematics()
@@ -123,8 +127,8 @@ def main() -> None:
             raise RuntimeError("Failed to load parameters into CRMKinematics.")
         kin.integration_step_size = float(args.integration_step)
 
-        U, P, conv = fk_workspace_grid(kin, vals, float(args.ins))
-        np.savez_compressed(out_npz, U=U, P=P, conv=conv, vals=vals)
+        U, P, DU0, conv = fk_workspace_grid(kin, vals, float(args.ins))
+        np.savez_compressed(out_npz, U=U, P=P, DU0=DU0, conv=conv, vals=vals)
 
     ok = conv.astype(bool) & np.isfinite(P).all(axis=1)
     P_ok = P[ok]
@@ -140,8 +144,9 @@ def main() -> None:
     plot_workspace_xy(P, conv, out_png)
     print(f"Saved: {out_npz}")
     print(f"Saved: {out_png}")
+    if DU0 is None:
+        print("Note: workspace cache is missing DU0; rerun with --out to regenerate including DU0.")
 
 
 if __name__ == "__main__":
     main()
-

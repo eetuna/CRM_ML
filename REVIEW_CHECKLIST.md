@@ -6,7 +6,7 @@
 
 ## 2) Sweep Diagnostics
 - Inspect: `examples/sweep_cpp_dynamics.py`, `main/CRMDYN_grid_sweep.cpp`
-- Artifacts: `sweep_failures_py.json`, `sweep_failures_cpp.json`
+- Artifacts: `output_data/sweep_failures_py.json`, `output_data/sweep_failures_cpp.json`
 - Goals: Confirm sweep setup (currents grid, insertion 94.3 mm, step sizes [0.01, 0.05, 0.1, 0.2]), validate failure sets, and analyze convergence gaps.
 
 ## 3) Outstanding Solver Issues

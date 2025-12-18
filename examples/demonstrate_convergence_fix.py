@@ -1,7 +1,7 @@
 """
 Demonstrate the fix for dynamics convergence failures.
 
-This script loads the failing current combinations from `sweep_failures_cpp.json`
+This script loads the failing current combinations from `output_data/sweep_failures_cpp.json`
 and runs the dynamics with a proper initialization strategy. For each set of
 currents, it first calls `initialize_from_kinematics` to find a good
 starting point for the solver.
@@ -10,6 +10,7 @@ This is expected to significantly reduce or eliminate the convergence failures.
 """
 import json
 import numpy as np
+from pathlib import Path
 from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS
 
 def run_convergence_fix_demonstration():
@@ -18,7 +19,8 @@ def run_convergence_fix_demonstration():
         return
 
     # Load failing currents
-    with open("sweep_failures_cpp.json") as f:
+    repo_root = Path(__file__).resolve().parents[1]
+    with (repo_root / "output_data" / "sweep_failures_cpp.json").open() as f:
         failing_currents = json.load(f)
 
     insertion_length = 94.3

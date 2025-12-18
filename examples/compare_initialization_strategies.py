@@ -16,6 +16,7 @@ the simulation in difficult regions of the state space.
 import time
 import json
 import numpy as np
+from pathlib import Path
 from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS
 
 def run_diagnostic(wrapper: CRMWrapper, currents, insertion_length, dt):
@@ -39,7 +40,8 @@ def main():
         return
 
     # Load the currents known to cause issues
-    with open("sweep_failures_cpp.json") as f:
+    repo_root = Path(__file__).resolve().parents[1]
+    with (repo_root / "output_data" / "sweep_failures_cpp.json").open() as f:
         failing_currents = json.load(f)
 
     # --- Diagnostic Parameters ---

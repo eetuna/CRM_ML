@@ -49,4 +49,4 @@
 
 ## Notes
 - If you want the C++ backend, ensure bindings are built and available; otherwise leave `use_cpp=False` (defaults are robust fallbacks).
-- Install `requirements.txt` plus `pytest` if you want to run the full test suite with `pytest scripts`.
+- Install `requirements.txt` plus `pytest` if you want to run the full test suite with `python3 -m pytest -q` (or `python3 -m pytest -q tests/`).

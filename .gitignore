@@ -147,3 +147,6 @@ dist/
 
 # Vendor deps (kept local unless explicitly vendored/submodule)
 third_party/autodiff/
+
+# Python debug and test scripts for validation
+scripts/dynamics_fk_validation

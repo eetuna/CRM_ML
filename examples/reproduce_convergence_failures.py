@@ -1,7 +1,7 @@
 """
 Reproduce and analyze dynamics convergence failures.
 
-This script loads the failing current combinations from `sweep_failures_cpp.json`
+This script loads the failing current combinations from `output_data/sweep_failures_cpp.json`
 and attempts to run the C++ dynamics with the same hardcoded initial seed
 used in `CRMDYN_grid_sweep.cpp`.
 
@@ -10,6 +10,7 @@ initial state for a wide range of currents.
 """
 import json
 import numpy as np
+from pathlib import Path
 from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS
 
 def run_failure_reproduction():
@@ -18,7 +19,8 @@ def run_failure_reproduction():
         return
 
     # Load failing currents
-    with open("sweep_failures_cpp.json") as f:
+    repo_root = Path(__file__).resolve().parents[1]
+    with (repo_root / "output_data" / "sweep_failures_cpp.json").open() as f:
         failing_currents = json.load(f)
 
     # Hardcoded seeds from CRMDYN_test.cpp

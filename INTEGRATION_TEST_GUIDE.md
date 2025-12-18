@@ -4,7 +4,7 @@
 This document outlines the steps to run the integration tests for the Catheter Robot Model (CRM) Machine Learning and Reinforcement Learning pipeline. It verifies the interaction between the Python wrappers, the training loop, and the RL feature extractors.
 
 ## Prerequisites
-*   Python 3.8+
+*   Python 3.8+ (repo currently targets Python 3.10 in the devcontainer)
 *   PyTorch
 *   NumPy
 *   Gymnasium
@@ -12,41 +12,36 @@ This document outlines the steps to run the integration tests for the Catheter R
 
 ## Running Integration Tests
 
-The integration tests are located in `tests/test_crm_integration.py`. These tests verify:
-1.  **Wrapper Logic**: `CRMWrapper` functionality (handling fallback to simplified physics if C++ is missing).
-2.  **Training Loop**: `DynamicsTrainer` batching and data handling for both Residual (MLP) and Sequence (Transformer) models.
-3.  **RL Integration**: `PhysicsInformedExtractor` feature extraction logic.
+Tests are run with `pytest` and live under `tests/`. Coverage includes:
+1.  **Wrapper/Bindings Parity**: C++ vs Python wrapper behavior, seed-based stepping, and diagnostics.
+2.  **Training Loop**: ML model training/evaluation smoke tests.
+3.  **RL Integration**: Environment + model-based RL smoke tests.
 
 ### Command
-To run the tests, execute the following command from the workspace root:
+To run the full test suite from the workspace root:
 
 ```bash
-python3 tests/test_crm_integration.py
+python3 -m pytest -q
 ```
 
-### Expected Output
-You should see output indicating that tests passed. Note that the test script automatically mocks missing C++ bindings and data loaders to ensure logic correctness even without the full environment.
-
-```text
-Mocking crm_python for testing...
-...
-Ran 5 tests in 0.xxx s
-
-OK
-```
+To run a smaller “integration-ish” subset:
+- End-to-end RL smoke: `python3 -m pytest -q tests/test_end_to_end_rl.py`
+- RL model-based components: `python3 -m pytest -q tests/test_rl_models.py`
+- C++ bindings parity: `python3 -m pytest -q tests/test_crmdyn_binding_vs_cpp.py`
 
 ## Plan for Next Agent
 
 The following tasks need to be completed to move from the current testing state to a fully functional training pipeline.
 
 ### 1. Implement Data Loader
-*   **File**: `crm_ml_rl/data/data_loader.py`
-*   **Task**: Implement `CRMDataLoader` to parse the experimental data formats (MATLAB `.mat` or text files in `3D_dynamic_response_data_0124`).
-*   **Requirement**: Ensure it returns trajectory objects containing `tip_positions`, `currents`, and `sampling_time_ms`.
+*   **Status**: Implemented.
+*   **Files**: `crm_ml_rl/data/data_loader.py`, `crm_ml_rl/data/experimental_loader.py`
+*   **Tests**: `tests/test_experimental_loader.py`
 
 ### 2. Implement Neural Networks
+*   **Status**: Implemented.
 *   **File**: `crm_ml_rl/models/networks.py`
-*   **Task**: Implement the actual PyTorch modules referenced in the models: `MLP`, `LSTM_MLP`, `DeepResidualMLP`, and `ResidualBlock`.
+*   **Tests**: `tests/test_ml_models.py`, `scripts/check_ml_models.py`
 
 ### 3. Build C++ Bindings
 *   **Task**: Compile the C++ physics engine to replace the Python mocks/fallbacks.
