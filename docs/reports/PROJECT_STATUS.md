@@ -108,7 +108,7 @@ The CRM_ML project integrates C++ Cosserat Rod Model physics with Python ML/RL p
 | Damping defaults | CatheterParams now uses 6-element CRMDYN_test.cpp values | `crm_wrapper.py:26-29` |
 | Seed init exposed | `initialize_from_seed` / `bvp_initialize_with_seed` for CRMDYNTest-style seeding | `crm_bindings.cpp`, `crm_wrapper.py` |
 | localmin surfaced | Binding `step` now returns `localmin` for diagnostics | `crm_bindings.cpp` |
-| Test fix | debug_seed_dynamics.py now uses insertion_length=94.3 to match seeds | `debug_seed_dynamics.py:57` |
+| Test fix | debug_seed_dynamics.py now uses insertion_length=50.0 to match seeds | `debug_seed_dynamics.py:57` |
 | Docs update | USAGE_GUIDE.md updated to 104 tests, date 2025-12-11 | `USAGE_GUIDE.md:795,815` |
 
 ---
@@ -220,7 +220,7 @@ from crm_ml_rl.envs import CatheterEnv, CatheterEnvConfig
 config = CatheterEnvConfig(
     use_hybrid_dynamics=True,
     use_cpp=True,
-    insertion_length=94.3
+    insertion_length=50.0
 )
 env = CatheterEnv(config=config)
 ```

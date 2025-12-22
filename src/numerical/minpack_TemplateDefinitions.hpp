@@ -75,8 +75,20 @@
 
 #include <cmath>
 
-#define MAX(a,b) 	( ((b)>(a))?(b):(a) )
-#define MIN(a,b) 	( ((b)<(a))?(b):(a) )
+#ifndef MAX
+#define MAX(a,b) (((b)>(a))?(b):(a))
+#endif
+#ifndef MIN
+#define MIN(a,b) (((b)<(a))?(b):(a))
+#endif
+// MAX(a,b) 	( ((b)>(a))?(b):(a) )
+#ifndef MAX
+#define MAX(a,b) (((b)>(a))?(b):(a))
+#endif
+#ifndef MIN
+#define MIN(a,b) (((b)<(a))?(b):(a))
+#endif
+// MIN(a,b) 	( ((b)<(a))?(b):(a) )
 #define SQR(X) 		( (X)*(X) )
 #define FABS(x)		( ((x)>=0)?(x):(-x) )
 

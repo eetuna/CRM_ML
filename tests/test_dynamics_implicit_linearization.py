@@ -15,7 +15,7 @@ def test_implicit_linearization_shapes_and_finiteness():
     if not (ok1 and ok2):
         pytest.skip("C++ bindings not available")
 
-    insertion = 94.3
+    insertion = 50.0
     dyn.set_damping(np.array([12.1761626666366, 12.1761626666366, 284.429938756989, 0.0304776127617393, 0.0304776127617393, 0.00502712804532508], dtype=np.float64))
     dyn.dt = 0.05
     dyn.integration_step_size = 0.01

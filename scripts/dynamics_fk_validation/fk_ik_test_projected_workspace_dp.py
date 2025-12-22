@@ -36,7 +36,7 @@ class Config:
     workspace_npz: str = "data/output/workspace_fk_ins94.3_b0.3_step0.01_int0.2.npz"
 
     # FK/IK settings
-    insertion_length: float = 94.3
+    insertion_length: float = 50.0
     integration_step_size: float = 0.2  # match MEX default
     param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
     config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"

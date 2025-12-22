@@ -66,7 +66,28 @@ To permanently resolve this without relying on the bindings sync, the following 
 2.  **Unified Params:** Define `CRMParams<Scalar>` that can hold either `double` or `autodiff::real`.
 3.  **Remove Shadow Structs:** Once the core solvers accept `CRMParams<autodiff::real>`, the `DYNNLEqnParamsAD` shadow struct and the manual sync layer can be deleted.
 
-## 4. Recommended Tasks (Next Steps)
+## 4. Primary Task: Core C++ Refactor (Task A1.7)
+**Goal:** Replace the brittle legacy core with a robust, modern C++ foundation that supports AutoDiff natively and uses stable integration. This supersedes the temporary "Manual Sync" and "Acceleration Clamp" patches.
+
+### Phase 1: Memory & Type Modernization
+*   **Target:** `CRMIVPCoreParams` and `CRMShootingMethodParams`.
+*   **Action:** Replace all raw heap pointers (e.g., `double (*K)[9]`) and fixed-size arrays with modern C++ containers:
+    *   `std::vector<Eigen::Matrix3d>` for stiffness/rotation matrices.
+    *   `std::vector<Eigen::Vector3d>` for moments/positions.
+    *   `std::vector<Eigen::Matrix<double, 6, 1>>` for damping.
+*   **Benefit:** Eliminates memory aliasing/corruption (the "Ghost Value" bug) and simplifies initialization.
+
+### Phase 2: Solver Templatization
+*   **Target:** `CoilDynamics`, `CRMIntegrand`, and the `BVP/IVP` solvers.
+*   **Action:** Fully templatize these functions on `<typename Scalar>` to support `autodiff::real` natively.
+*   **Benefit:** Removes the need for "Shadow Structs" and ensures the same verified math flows through both simulation and gradient calculation.
+
+### Phase 3: Integrator Stabilization
+*   **Target:** `CoilDynamics_Defs.cpp`.
+*   **Action:** Replace the brittle, history-dependent **ABM4** integrator with a memoryless **Runge-Kutta 4th Order (RK4)** scheme.
+*   **Benefit:** Prevents numerical explosions ("Coil integration Unbounded") during AutoDiff parameter perturbations.
+
+## 5. Recommended Tasks (Next Steps)
 
 ### ✅ Priority 1: Implement Parameter Gradients (Task A1) - COMPLETE
 **Goal:** Enable "End-to-End" training by computing gradients of the dynamics residual w.r.t physical parameters.

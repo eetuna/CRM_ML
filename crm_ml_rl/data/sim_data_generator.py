@@ -20,7 +20,7 @@ class SimulationConfig:
     # Time data/simulation_parameters
     dt: float = 0.02  # 50 Hz
     episode_length: float = 10.0  # seconds
-    insertion_length: float = 94.3  # mm (matches dynamics parameter set)
+    insertion_length: float = 50.0  # mm (matches dynamics parameter set)
 
     # Trajectory data/simulation_parameters
     trajectory_types: List[str] = None

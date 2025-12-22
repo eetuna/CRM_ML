@@ -43,7 +43,7 @@ def run_binding_steps() -> np.ndarray:
         raise RuntimeError("C++ bindings not built")
 
     currents = np.array([0.0, 0.0, 0.1])
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
     xf_seed = np.array(
         [

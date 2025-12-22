@@ -31,7 +31,7 @@ class HybridDynamicsConfig:
     config_file: Optional[str] = None
     use_cpp: bool = True
     dt: float = 0.02
-    insertion_length: float = 94.3
+    insertion_length: float = 50.0
 
     # Damping coefficients
     damping: np.ndarray = None

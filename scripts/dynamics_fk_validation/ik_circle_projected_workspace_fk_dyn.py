@@ -30,7 +30,7 @@ from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS  # noqa:
 
 @dataclass(frozen=True)
 class Config:
-    insertion_length: float = 94.3
+    insertion_length: float = 50.0
     dt: float = 0.05
     # MATLAB/MEX uses 0.2mm along-rod integration step; it's much faster than 0.01mm.
     integration_step_size: float = 0.2

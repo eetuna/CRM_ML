@@ -11,7 +11,7 @@ import numpy as np
 from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS
 
 
-def compare_fk(currents, insertion_length=94.3, tol=1e-6):
+def compare_fk(currents, insertion_length=50.0, tol=1e-6):
     if not HAS_CPP_BINDINGS:
         raise RuntimeError("C++ bindings not available")
 

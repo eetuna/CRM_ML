@@ -24,7 +24,7 @@ def test_convergence_failures_and_fix(failing_currents):
     """
     Verify that the dynamics fail with a bad initial state and succeed with a good one.
     """
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
 
     # Hardcoded seeds from CRMDYN_test.cpp

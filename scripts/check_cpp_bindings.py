@@ -51,7 +51,7 @@ def test_kinematics():
 
     # Test with zero currents
     currents = np.array([0.0, 0.0, 0.0])
-    result = kin.forward_kinematics(currents, insertion_length=94.3)
+    result = kin.forward_kinematics(currents, insertion_length=50.0)
 
     print(f"   Zero currents:")
     print(f"     Tip position: {result['tip_position']}")
@@ -63,7 +63,7 @@ def test_kinematics():
 
     # Test with non-zero currents
     currents = np.array([0.0, 0.0, 0.1])
-    result = kin.forward_kinematics(currents, insertion_length=94.3)
+    result = kin.forward_kinematics(currents, insertion_length=50.0)
 
     print(f"   Non-zero currents [0, 0, 0.1]:")
     print(f"     Tip position: {result['tip_position']}")
@@ -173,12 +173,12 @@ def test_python_wrapper():
 
     # Test FK
     currents = np.array([0.0, 0.0, 0.1])
-    fk_result = wrapper.forward_kinematics(currents, insertion_length=94.3)
+    fk_result = wrapper.forward_kinematics(currents, insertion_length=50.0)
     print(f"   FK position: {fk_result['tip_position']}")
 
     # Test dynamics with initialization
     wrapper.reset()
-    init_ok = wrapper.initialize_dynamics(currents, insertion_length=94.3)
+    init_ok = wrapper.initialize_dynamics(currents, insertion_length=50.0)
     print(f"   Dynamics init: {'success' if init_ok else 'failed'}")
 
     # Test CRMSimulator
@@ -195,7 +195,7 @@ def test_python_wrapper():
         0.1 * np.sin(2 * np.pi * 0.5 * t)
     ])
 
-    trajectory = sim.simulate_trajectory(currents_seq, insertion_length=94.3)
+    trajectory = sim.simulate_trajectory(currents_seq, insertion_length=50.0)
 
     print(f"   Trajectory shape: {trajectory['positions'].shape}")
     print(f"   Start: {trajectory['positions'][0]}")
@@ -224,8 +224,8 @@ def test_comparison_with_simplified():
 
     currents = np.array([0.0, 0.0, 0.1])
 
-    fk_cpp = wrapper_cpp.forward_kinematics(currents, insertion_length=94.3)
-    fk_simple = wrapper_simple.forward_kinematics(currents, insertion_length=94.3)
+    fk_cpp = wrapper_cpp.forward_kinematics(currents, insertion_length=50.0)
+    fk_simple = wrapper_simple.forward_kinematics(currents, insertion_length=50.0)
 
     print(f"   C++ FK position:        {fk_cpp['tip_position']}")
     print(f"   Simplified FK position: {fk_simple['tip_position']}")

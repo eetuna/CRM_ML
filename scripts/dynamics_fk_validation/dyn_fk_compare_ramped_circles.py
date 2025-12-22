@@ -39,7 +39,7 @@ class Config:
     circle2_csv: str = "data/output/circle2_currents_y-40_r10_dp_0p1mm_n200.csv"
 
     # Model
-    insertion_length: float = 94.3
+    insertion_length: float = 50.0
     dt: float = 0.05
     integration_step_size: float = 0.2
     param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"

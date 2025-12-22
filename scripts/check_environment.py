@@ -313,7 +313,7 @@ def test_cpp_physics_env():
         use_cpp=True,
         param_file='data/catheter_params/CatheterParameterSet_1_dyn.txt',
         config_file='data/catheter_params/CatheterSpatialConfiguration_1.txt',
-        insertion_length=94.3,
+        insertion_length=50.0,
         success_threshold=10.0
     )
 

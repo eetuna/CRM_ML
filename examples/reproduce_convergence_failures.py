@@ -48,7 +48,7 @@ def run_failure_reproduction():
         ]
     )
     zero3 = np.zeros(3)
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
 
     wrapper = CRMWrapper(

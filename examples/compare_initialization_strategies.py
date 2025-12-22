@@ -53,7 +53,7 @@ def main():
     ])
     damping_multipliers_to_test = [1.0, 2.0, 5.0, 10.0]
     
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
 
     print("="*70)

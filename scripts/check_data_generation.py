@@ -46,7 +46,7 @@ def test_sim_data_generator():
     try:
         trajectory = gen.generate_trajectory(
             currents=currents,
-            insertion_length=94.3
+            insertion_length=50.0
         )
 
         print(f"   Trajectory keys: {list(trajectory.keys())}")
@@ -97,7 +97,7 @@ def test_batch_generation():
             np.zeros(T)
         ])
 
-        traj = gen.generate_trajectory(currents, insertion_length=94.3)
+        traj = gen.generate_trajectory(currents, insertion_length=50.0)
         trajectories.append(traj)
 
         print(f"     Trajectory {i+1}: shape={traj['positions'].shape}, "
@@ -145,7 +145,7 @@ def test_dataset_creation():
             np.zeros(T)
         ])
 
-        traj = gen.generate_trajectory(currents, insertion_length=94.3)
+        traj = gen.generate_trajectory(currents, insertion_length=50.0)
 
         dataset['positions'].append(traj['positions'])
         dataset['velocities'].append(traj['velocities'])
@@ -205,7 +205,7 @@ def test_circle_trajectory():
     print(f"   Duration: 2 seconds")
     print(f"   Time steps: {T}")
 
-    traj = gen.generate_trajectory(currents, insertion_length=94.3)
+    traj = gen.generate_trajectory(currents, insertion_length=50.0)
 
     # Analyze trajectory
     positions = traj['positions']
@@ -245,7 +245,7 @@ def test_lemniscate_trajectory():
 
     print(f"   Generating lemniscate pattern...")
 
-    traj = gen.generate_trajectory(currents, insertion_length=94.3)
+    traj = gen.generate_trajectory(currents, insertion_length=50.0)
 
     positions = traj['positions']
     print(f"   Trajectory shape: {positions.shape}")

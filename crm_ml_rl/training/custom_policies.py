@@ -297,11 +297,11 @@ class PhysicsInformedExtractor(BaseFeaturesExtractor):
         for i in range(batch_size):
             try:
                 # Run forward kinematics
-                result = self.wrapper.forward_kinematics(currents[i], insertion_length=94.3)
+                result = self.wrapper.forward_kinematics(currents[i], insertion_length=50.0)
                 tip_pos = result['tip_position']
 
                 # Get Jacobian for additional physics info
-                jac = self.wrapper.compute_jacobian(currents[i], insertion_length=94.3)
+                jac = self.wrapper.compute_jacobian(currents[i], insertion_length=50.0)
                 jac_norm = np.linalg.norm(jac, axis=0)[:3]  # First 3 singular values
 
                 physics_features.append(np.concatenate([tip_pos, jac_norm]))

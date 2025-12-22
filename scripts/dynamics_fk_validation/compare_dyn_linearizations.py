@@ -24,7 +24,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl")
 class Paths:
     param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
     config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
-    insertion_length: float = 94.3
+    insertion_length: float = 50.0
     dt: float = 0.05
     integration_step_size: float = 0.01
     damping: Tuple[float, float, float, float, float, float] = (

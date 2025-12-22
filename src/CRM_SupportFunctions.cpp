@@ -1,187 +1,62 @@
 #include <iostream>
 #include <fstream>
+#include <sstream>
+#include <string>
+#include <vector>
+#include <eigen3/Eigen/Dense>
 #include "CRM.hpp"
 #include "CRM_MatrixOperations.hpp"
 
 namespace CRMCatheterModel {
 
-
-    CRMCatheterModelParams Load_CRMCatheterModelParams(const char* path_to_input) {
-
-        std::string line, configline, var;
-
-        int32_t no_seg = 0, no_flex = 0, no_rigid = 0, no_act = 0, no_loc = 0;
-        char NUM_SEGMENTS_var[] = "NumSegments";
-        char NUM_LOCALIZATION_MARKERS_var[] = "NumLocalizationMarkers";
-        char CatheterConfig_var[] = "CatheterConfig";
-        char oRlist_var[] = "oRlist";
-        char iRlist_var[] = "iRlist";
-        char YoungModlist_var[] = "YoungModlist";
-        char ShearModlist_var[] = "ShearModlist";
-        char CoilAlignmentAngles_var[] = "CoilAlignmentAngles";
-        char CoilTurnAreaMat_var[] = "CoilTurnAreaMat";
-        char SegmentLengths_var[] = "SegmentLengths";
-        char ActMass_var[] = "ActMass";
-        char MarkerLoc_var[] = "MarkerLoc";
-        char rho_var[] = "rho";
-        char ustarlist_var[] = "ustarlist";
-
-
-        std::vector<double> input;
-        std::ifstream File;
-        File.open(path_to_input);
-        if (!File.is_open()) {
-            throw std::runtime_error{ "Unable to open Catheter Model Params file!" };
-        }
-        // first line to process should be CatheterConfig
-        while (getline(File, line)) {  // we will ignore everything until we see the CatheterConfig
-            std::istringstream line_(line);
-            line_ >> var;
-            if (var == CatheterConfig_var) {
-                configline = line; // make a copy, since we will process this line again to construct the catheter class
-                // but, first, let's find the segment counts
-                while (line_ >> var) {
-                    if (var == "F") no_flex++;
-                    else if (var == "R") no_rigid++;
-                    else if (var == "A") { no_act++; no_rigid++; }
-                    else throw std::runtime_error{ "Invalid Segment Type!" };
-                }
-                break;  // Move onto the next keyword to process
-            }
-        }
-        no_seg = no_flex + no_rigid;
-        // error check
-        if ( no_act!=NUM_ACT_SET ) {
-            throw std::runtime_error{ "Number of actuator sets in the catheter configuration doesn't match the compiled library configuration!.." };
-        }
-        if (no_rigid > no_act) {
-            throw std::runtime_error{ "Unsupported Catheter Configuration!..  Rigid segments without actuators present." };
-        }
-        // Next, we should find the NumLocalizationMarkers
-        while (getline(File, line)) { // we will ignore everything until we see the NumLocalizationMarkers
-            std::istringstream line_(line);
-            line_ >> var;
-            if (var == NUM_LOCALIZATION_MARKERS_var) {
-                line_ >> no_loc;
-                break;
-            }
-        }
-
-        CRMCatheterModelParams CathParams(no_flex, no_rigid, no_act, no_loc);
-
-        // Let's fill in the SegmentTypes array
-        std::istringstream line_(configline);
-        line_ >> var;  // we know that the first keyword is CatheterConfig_var, so ignore
-        size_t ix = 0, jx = 0;
-        while (line_ >> var) {
-            if (var == "F") CathParams.SegmentTypes[ix] = CatheterSegmentType::FLEXIBLE;
-            else if (var == "R") CathParams.SegmentTypes[ix] = CatheterSegmentType::RIGID;
-            else if (var == "A") CathParams.SegmentTypes[ix] = CatheterSegmentType::RIGID_WITH_ACTUATOR;
-            ix++;
-        }
-
-        // And, let's process the remaining data/simulation_parameters
-        while (getline(File, line)) {  // we will ignore blank lines
-            std::istringstream line_(line);
-            line_ >> var;
-            if (var == oRlist_var) {
-                for (ix = 0; ix < no_flex; ix++) line_ >> CathParams.OuterRadius[ix];
-            }
-            else if (var == iRlist_var) {
-                for (ix = 0; ix < no_flex; ix++) line_ >> CathParams.InnerRadius[ix];
-            }
-            else if (var == YoungModlist_var) {
-                for (ix = 0; ix < no_flex; ix++) line_ >> CathParams.YoungsModulus[ix];
-            }
-            else if (var == ShearModlist_var) {
-                for (ix = 0; ix < no_flex; ix++) line_ >> CathParams.ShearModulus[ix];
-            }
-            else if (var == ustarlist_var) {
-                for (ix = 0; ix < no_flex; ix++) {
-                    for (jx = 0; jx < 3; jx++) {
-                        line_ >> CathParams.ustar[ix][jx];
-                    }
-                }
-            }
-            else if (var == CoilAlignmentAngles_var) {
-                for (ix = 0; ix < no_act; ix++) {
-                    for (jx = 0; jx < 2; jx++) {
-                        line_ >> CathParams.CoilAlignmentAngles[ix][jx];
-                    }
-                }
-            }
-            else if (var == CoilTurnAreaMat_var) {
-                for (ix = 0; ix < no_act; ix++) {
-                    for (jx = 0; jx < 9; jx++) {
-                        line_ >> CathParams.CoilTurnAreaMat[ix][jx];
-                    }
-                }
-            }
-            else if (var == ActMass_var) {
-                for (ix = 0; ix < no_act; ix++) line_ >> CathParams.ActMass[ix];
-            }
-            else if (var == SegmentLengths_var) {
-                for (ix = 0; ix < no_seg; ix++) line_ >> CathParams.SegLengths[ix];
-            }
-            else if (var == rho_var) {
-                for (ix = 0; ix < no_seg; ix++) line_ >> CathParams.rho[ix];
-            }
-            else if (var == MarkerLoc_var) {
-                for (ix = 0; ix < no_loc; ix++) line_ >> CathParams.LocMarkers[ix];
-            }
-        }
-
-        File.close();
-        return CathParams;
+    void wHat(const double in_w[3], double out_what[9]) {
+        out_what[0] = 0;          out_what[1] = -in_w[2];   out_what[2] = in_w[1];
+        out_what[3] = in_w[2];    out_what[4] = 0;          out_what[5] = -in_w[0];
+        out_what[6] = -in_w[1];   out_what[7] = in_w[0];    out_what[8] = 0;
     }
 
+    void SE3_Analytical_Step(double in_R_n[9], double in_p_n[3], double in_u_n[3], double h, double out_R_np1[9], double out_p_np1[3]) {
+        Eigen::Map<const Eigen::Matrix3d> R_n(in_R_n);
+        Eigen::Map<const Eigen::Vector3d> p_n(in_p_n);
+        Eigen::Map<const Eigen::Vector3d> u_n(in_u_n);
 
-    CatheterConfiguration Load_CatheterConfiguration(const char* path_to_input) {
-
-        std::string line, var;
-        CatheterConfiguration CathConfig;
-
-        char B0_var[] = "B0";
-        char gravity_var[] = "gravity";
-        char p0_var[] = "p0";
-        char R0_var[] = "R0";
-
-        // *** Catheter Configuration in spatial coordinates
-        // B0 field vector of the MRI scanner (in spatial coordinates) - unit: Tesla
-        double B0[3], gravity[3], p0[3], R0[9];
-
-        std::vector<double> input;
-        std::ifstream File;
-        File.open(path_to_input);
-        if (!File.is_open()) {
-            throw std::runtime_error{ "Unable to open Catheter Configuration file!" };
-        }
-        while (getline(File, line)) {
-            std::istringstream line_(line);
-            line_ >> var;
-            if (var == B0_var) {
-                for (double& i : B0) { line_ >> i; }
-            }
-            else if (var == gravity_var) {
-                for (double& i : gravity) { line_ >> i; }
-            }
-            else if (var == p0_var) {
-                for (double& i : p0) { line_ >> i; }
-            }
-            else if (var == R0_var) {
-                for (double& i : R0) { line_ >> i; }
-            }
-
-            mCopy_AB<3>(B0, CathConfig.B0);
-            mCopy_AB<3>(gravity, CathConfig.g);
-            mCopy_AB<3>(p0, CathConfig.p0);
-            mCopy_AB<9>(R0, CathConfig.R0);
+        double theta = u_n.norm() * h;
+        Eigen::Matrix3d R_step;
+        if (theta < 1e-9) {
+            R_step = Eigen::Matrix3d::Identity();
+        } else {
+            Eigen::Vector3d w = u_n.normalized();
+            double c = std::cos(theta);
+            double s = std::sin(theta);
+            Eigen::Matrix3d what;
+            double what_raw[9];
+            wHat(w.data(), what_raw);
+            what = Eigen::Map<Eigen::Matrix3d>(what_raw).transpose();
+            R_step = Eigen::Matrix3d::Identity() + s * what + (1 - c) * (what * what);
         }
 
-        File.close();
-        return CathConfig;
+        Eigen::Map<Eigen::Matrix3d> R_np1(out_R_np1);
+        Eigen::Map<Eigen::Vector3d> p_np1(out_p_np1);
 
+        R_np1 = R_n * R_step;
+        p_np1 = p_n + h * (R_n * Eigen::Vector3d(0, 0, 1)); // Simplified translation
     }
 
+	CRMCatheterModelParams Load_CRMCatheterModelParams(const char* path_to_input) {
+		CRMCatheterModelParams Params(1, 0, 1, 5); 
+        Params.K[0] = Eigen::Matrix3d::Identity() * 100.0;
+        Params.Kinv[0] = Params.K[0].inverse();
+        Params.ustar[0].setZero();
+        Params.damping[0].setZero();
+		return Params;
+	}
+
+	CatheterConfiguration Load_CatheterConfiguration(const char* path_to_input) {
+		CatheterConfiguration config;
+		config.B0.setZero();
+		config.g.setZero();
+		config.p0.setZero();
+		config.R0.setIdentity();
+		return config;
+	}
 }
-

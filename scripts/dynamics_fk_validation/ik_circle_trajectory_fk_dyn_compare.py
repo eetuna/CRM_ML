@@ -32,7 +32,7 @@ from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS  # noqa:
 
 @dataclass(frozen=True)
 class Config:
-    insertion_length: float = 94.3
+    insertion_length: float = 50.0
     dt: float = 0.05
     integration_step_size: float = 0.01
     param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"

@@ -497,7 +497,7 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
     # Test forward kinematics
     try:
         currents = np.array([0.1, 0.0, 0.0])
-        result = wrapper.forward_kinematics(currents, insertion_length=94.3)
+        result = wrapper.forward_kinematics(currents, insertion_length=50.0)
         assert 'tip_position' in result
         assert result['tip_position'].shape == (3,)
         results.add_pass("Forward kinematics")
@@ -507,7 +507,7 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
     # Test Jacobian computation
     try:
         currents = np.array([0.1, 0.0, 0.0])
-        jacobian = wrapper.compute_jacobian(currents, insertion_length=94.3)
+        jacobian = wrapper.compute_jacobian(currents, insertion_length=50.0)
         # Full Jacobian is 6x7 (6 outputs: p[3]+R[3], 7 inputs: currents[3]+insertion+deltau0[3])
         # or 3x3 for simplified model (position only)
         assert jacobian.ndim == 2 and jacobian.shape[0] > 0, f"Jacobian shape is {jacobian.shape}"
@@ -522,11 +522,11 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
     try:
         wrapper.reset()
         currents = np.array([0.05, 0.0, 0.0])  # Small currents to avoid unbounded
-        success = wrapper.initialize_dynamics(currents, insertion_length=94.3)
+        success = wrapper.initialize_dynamics(currents, insertion_length=50.0)
         assert success, "Dynamics initialization failed"
         # Use damping to stabilize
         wrapper.set_damping(np.array([12.17, 12.17, 284.43, 0.03, 0.03, 0.005]))
-        result = wrapper.step_dynamics(currents, insertion_length=94.3)
+        result = wrapper.step_dynamics(currents, insertion_length=50.0)
         assert 'tip_position' in result
         results.add_pass("Dynamics initialization and stepping")
     except Exception as e:
@@ -536,8 +536,8 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
     # Test CRMSimulator
     try:
         sim = CRMSimulator(dt=0.02, use_cpp=True)
-        sim.reset(initial_currents=np.zeros(3), insertion_length=94.3)
-        state = sim.step(np.array([0.1, 0.0, 0.0]), insertion_length=94.3)
+        sim.reset(initial_currents=np.zeros(3), insertion_length=50.0)
+        state = sim.step(np.array([0.1, 0.0, 0.0]), insertion_length=50.0)
         assert hasattr(state, 'position')
         results.add_pass("CRMSimulator step")
     except Exception as e:
@@ -552,7 +552,7 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
 
         # Get physics prediction
         currents = np.array([0.1, 0.0, 0.0])
-        physics_result = wrapper.forward_kinematics(currents, insertion_length=94.3)
+        physics_result = wrapper.forward_kinematics(currents, insertion_length=50.0)
         physics_pos = torch.tensor(physics_result['tip_position'], dtype=torch.float32).unsqueeze(0)
 
         # Create input (currents + position)
@@ -577,7 +577,7 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
         model = ResidualDynamicsModel(state_dim=STATE_DIM, action_dim=ACTION_DIM)
 
         # Run physics simulation
-        sim.reset(initial_currents=np.zeros(3), insertion_length=94.3)
+        sim.reset(initial_currents=np.zeros(3), insertion_length=50.0)
         currents = np.array([0.1, 0.0, 0.0])
 
         # Get current state
@@ -589,7 +589,7 @@ def test_cpp_integration(results: TestResults, verbose: bool = False):
         ).unsqueeze(0)
 
         # Step physics
-        next_state_phys = sim.step(currents, insertion_length=94.3)
+        next_state_phys = sim.step(currents, insertion_length=50.0)
         physics_next = torch.tensor(
             np.concatenate([next_state_phys.position, next_state_phys.velocity]),
             dtype=torch.float32
@@ -619,7 +619,7 @@ def test_hybrid_models(results: TestResults, verbose: bool = False):
     try:
         model = HybridKinematicsModel(use_cpp=True)
         currents = np.array([0.1, 0.0, 0.0])
-        pred = model.predict(currents, insertion_length=94.3)
+        pred = model.predict(currents, insertion_length=50.0)
         assert pred.shape == (3,)
         results.add_pass(f"HybridKinematicsModel (cpp={model.is_using_cpp})")
     except Exception as e:
@@ -628,7 +628,7 @@ def test_hybrid_models(results: TestResults, verbose: bool = False):
     # Test HybridKinematicsModel batch
     try:
         currents_batch = np.random.randn(8, 3) * 0.1
-        preds = model.predict(currents_batch, insertion_length=94.3)
+        preds = model.predict(currents_batch, insertion_length=50.0)
         assert preds.shape == (8, 3)
         results.add_pass("HybridKinematicsModel batch prediction")
     except Exception as e:
@@ -646,7 +646,7 @@ def test_hybrid_models(results: TestResults, verbose: bool = False):
     # Test HybridKinematicsWithUncertainty
     try:
         model_unc = HybridKinematicsWithUncertainty(use_cpp=True)
-        mean, var = model_unc.predict(currents, insertion_length=94.3)
+        mean, var = model_unc.predict(currents, insertion_length=50.0)
         assert mean.shape == (3,)
         assert var.shape == (3,)
         assert np.all(var > 0)

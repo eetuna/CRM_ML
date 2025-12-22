@@ -22,7 +22,7 @@ def plot_dynamics_workspace():
     
     current_vals = np.arange(current_min, current_max + current_step, current_step)
     
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
 
     wrapper = CRMWrapper(

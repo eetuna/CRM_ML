@@ -17,7 +17,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 def main():
     # Params pulled from main/CRMDYN_test.cpp
     currents = np.array([0.0, 0.0, 0.1])
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
 
     xf_seed = np.array([

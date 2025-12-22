@@ -23,7 +23,7 @@ def test_crmdyn_binding_matches_cpp_seed():
         pytest.skip("C++ bindings unavailable")
 
     currents = np.array([0.0, 0.0, 0.1])
-    insertion_length = 94.3
+    insertion_length = 50.0
     dt = 0.05
 
     xf_seed = np.array(
