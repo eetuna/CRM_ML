@@ -534,6 +534,9 @@ public:
     double integrationStepSize = 0.2;  // mm
     bool initialized = false;
 
+    // Integrator selection (Task A1.7 Phase 3)
+    IntegratorType integrator_type = IntegratorType::ABM4;  // Default: ABM4 (legacy)
+
     // State storage for dynamics
     double v_L[NUM_ACT_SET][3];
     double w_L[NUM_ACT_SET][3];
@@ -815,6 +818,34 @@ public:
     }
 
     /**
+     * Set the integrator type for coil dynamics integration (Task A1.7 Phase 3).
+     * @param integrator String: "abm4" (default, legacy) or "rk4" (more stable)
+     */
+    void set_integrator(const std::string& integrator) {
+        if (integrator == "rk4" || integrator == "RK4") {
+            integrator_type = IntegratorType::RK4;
+        } else if (integrator == "abm4" || integrator == "ABM4") {
+            integrator_type = IntegratorType::ABM4;
+        } else {
+            throw std::runtime_error("Unknown integrator type: " + integrator + ". Use 'abm4' or 'rk4'.");
+        }
+    }
+
+    /**
+     * Get the current integrator type.
+     * @return String: "abm4" or "rk4"
+     */
+    std::string get_integrator() const {
+        switch (integrator_type) {
+            case IntegratorType::RK4:
+                return "rk4";
+            case IntegratorType::ABM4:
+            default:
+                return "abm4";
+        }
+    }
+
+    /**
      * Reset dynamics state to zeros (use initializeFromKinematics for proper initialization).
      */
     void reset() {
@@ -1084,6 +1115,9 @@ public:
             actInertia, v_L, w_L, p_L, R_L, damping, dt
         );
 
+        // Task A1.7 Phase 3: Set integrator type
+        BVPParams.dynamics.integrator_type = integrator_type;
+
         // Solve BVP
         double out_u0[3];
         double out_mL[NUM_ACT_SET][3], out_nL[NUM_ACT_SET][3];
@@ -1246,6 +1280,9 @@ public:
             ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
             actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
         );
+
+        // Task A1.7 Phase 3: Set integrator type
+        BVPParams.dynamics.integrator_type = integrator_type;
 
         // Solve BVP
         double out_u0[3];
@@ -1916,6 +1953,8 @@ public:
                 ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
                 actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
             );
+            // Task A1.7 Phase 3: Set integrator type
+            BVPParams.dynamics.integrator_type = integrator_type;
             return BVPParams;
         };
 
@@ -2445,6 +2484,9 @@ public:
             actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
         );
 
+        // Task A1.7 Phase 3: Set integrator type
+        BVPParams.dynamics.integrator_type = integrator_type;
+
         const bool FinalValueOnly = true;
         DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
 
@@ -2646,6 +2688,9 @@ public:
             actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
         );
 
+        // Task A1.7 Phase 3: Set integrator type
+        BVPParams.dynamics.integrator_type = integrator_type;
+
         const bool FinalValueOnly = true;
         DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
 
@@ -2787,6 +2832,11 @@ PYBIND11_MODULE(crm_python, m) {
         .def("set_timestep", &CRMDynamicsWrapper::setTimestep,
              py::arg("dt"),
              "Set simulation timestep")
+        .def("set_integrator", &CRMDynamicsWrapper::set_integrator,
+             py::arg("integrator"),
+             "Set integrator type: 'abm4' (default) or 'rk4' (more stable)")
+        .def("get_integrator", &CRMDynamicsWrapper::get_integrator,
+             "Get current integrator type ('abm4' or 'rk4')")
         .def("reset", &CRMDynamicsWrapper::reset,
              "Reset dynamics state to zeros")
         .def("initialize_from_kinematics", &CRMDynamicsWrapper::initializeFromKinematics,
