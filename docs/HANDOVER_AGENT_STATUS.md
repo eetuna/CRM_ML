@@ -131,6 +131,7 @@ Issue was not memory corruption; it was stride=0 arrays from pybind output creat
 - Full file run: `CRM_RUN_DYNNLEQUATION_AD_TESTS=1 pytest tests/test_parameter_jacobian_autodiff.py` -> 2 passed, 1 skipped.
 - Default suite now runs previously “slow” tests (skip guards removed).
 - Full suite: `pytest -q` -> 31 passed, 0 warnings after wrapping eval env with `Monitor` in `scripts/example_train_rl.py`.
+- Task 1.4 benchmark run: `scripts/benchmark_task1_4.py` results saved to `data/output/benchmark_task1_4.json`.
 
 ---
 

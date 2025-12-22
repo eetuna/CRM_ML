@@ -25,7 +25,7 @@ We are currently at **Phase 1 (Proof of Concept)** - Task A1 Complete.
 *   **Missing (Next Steps):**
     *   ~~Gradient w.r.t parameters ($\partial F/\partial \theta$).~~ ✅ Done
     *   **Task 1.3:** Verify Gradient Accuracy (Finite-Difference validation complete; tests now run by default).
-    *   **Task 1.4:** Benchmark Performance (Profile AutoDiff vs. FD vs. Analytic).
+    *   ~~Task 1.4: Benchmark Performance (Profile AutoDiff vs. FD vs. Analytic).~~ ✅ Done (see `scripts/benchmark_task1_4.py`, results in `data/output/benchmark_task1_4.json`)
     *   **Task 1.5:** Implement gradient w.r.t control inputs ($\partial F/\partial u$).
     *   **Task A1.6:** Dynamics Stabilization (Mitigated; convergence stable with validated damping values).
     *   **Task A2:** Multi-actuator support (`NUM_ACT_SET > 1`).
