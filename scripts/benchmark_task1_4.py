@@ -71,11 +71,27 @@ def get_seed(dyn):
 
 def time_block(fn, repeats: int):
     times = []
+    failures = 0
     for _ in range(repeats):
         t0 = time.perf_counter()
-        fn()
+        try:
+            fn()
+        except Exception:
+            failures += 1
+            continue
         times.append(time.perf_counter() - t0)
-    return times
+    return times, failures
+
+
+def ensure_converged(result, label: str):
+    if not isinstance(result, dict):
+        return
+    if "converged" in result and not bool(result["converged"]):
+        raise RuntimeError(f"{label}: unconverged")
+    if "base" in result:
+        base = result["base"]
+        if isinstance(base, dict) and "converged" in base and not bool(base["converged"]):
+            raise RuntimeError(f"{label}: base unconverged")
 
 
 def main():
@@ -91,44 +107,61 @@ def main():
 
     # AD parameter Jacobian
     def run_param_ad():
-        dyn.compute_parameter_jacobian(currents, args.insertion, v, w, p, R, xf, mL, nL)
+        out = dyn.compute_parameter_jacobian(currents, args.insertion, v, w, p, R, xf, mL, nL)
+        ensure_converged(out, "param_ad")
 
     # FD parameter Jacobian (damping-only via compute_residual_at_state)
     def run_param_fd():
         eps = 1e-5
         base = dyn.compute_residual_at_state(currents, args.insertion, v, w, p, R, xf, mL, nL)
+        ensure_converged(base, "param_fd_base")
         _ = np.asarray(base["residual"], dtype=np.float64)
         for i in range(6):
             pert = BASE_DAMPING.copy()
             pert[i] += eps
             dyn.set_damping(pert)
-            dyn.compute_residual_at_state(currents, args.insertion, v, w, p, R, xf, mL, nL)
+            out = dyn.compute_residual_at_state(currents, args.insertion, v, w, p, R, xf, mL, nL)
+            ensure_converged(out, "param_fd_pert")
         dyn.set_damping(BASE_DAMPING)
 
     # Linearization: implicit AD
     def run_lin_implicit():
-        dyn.linearize_full_seed_action_from_seed_implicit(
+        out = dyn.linearize_full_seed_action_from_seed_implicit(
             currents, args.insertion, v, w, p, R, xf, mL, nL, 1e-4, 1e-5, 1e-5, 1e-5
         )
+        ensure_converged(out, "lin_implicit")
 
     # Linearization: full FD
     def run_lin_fd():
-        dyn.linearize_full_seed_action_from_seed(
+        out = dyn.linearize_full_seed_action_from_seed(
             currents, args.insertion, v, w, p, R, xf, mL, nL, 1e-4, 1e-4
         )
+        ensure_converged(out, "lin_full_fd")
 
     # Linearization: currents-only FD
     def run_lin_currents_fd():
-        dyn.linearize_action_from_seed(currents, args.insertion, v, w, p, R, xf, mL, nL, 1e-4)
+        out = dyn.linearize_action_from_seed(currents, args.insertion, v, w, p, R, xf, mL, nL, 1e-4)
+        ensure_converged(out, "lin_currents_fd")
+
+    param_ad_times, param_ad_fail = time_block(run_param_ad, args.repeats)
+    param_fd_times, param_fd_fail = time_block(run_param_fd, args.repeats)
+    lin_impl_times, lin_impl_fail = time_block(run_lin_implicit, args.repeats)
+    lin_fd_times, lin_fd_fail = time_block(run_lin_fd, args.repeats)
+    lin_curr_times, lin_curr_fail = time_block(run_lin_currents_fd, args.repeats)
 
     results = {
         "repeats": args.repeats,
         "insertion": args.insertion,
-        "param_jacobian_ad_sec": time_block(run_param_ad, args.repeats),
-        "param_jacobian_fd_damping_sec": time_block(run_param_fd, args.repeats),
-        "linearize_implicit_ad_sec": time_block(run_lin_implicit, args.repeats),
-        "linearize_full_fd_sec": time_block(run_lin_fd, args.repeats),
-        "linearize_currents_fd_sec": time_block(run_lin_currents_fd, args.repeats),
+        "param_jacobian_ad_sec": param_ad_times,
+        "param_jacobian_ad_failures": param_ad_fail,
+        "param_jacobian_fd_damping_sec": param_fd_times,
+        "param_jacobian_fd_damping_failures": param_fd_fail,
+        "linearize_implicit_ad_sec": lin_impl_times,
+        "linearize_implicit_ad_failures": lin_impl_fail,
+        "linearize_full_fd_sec": lin_fd_times,
+        "linearize_full_fd_failures": lin_fd_fail,
+        "linearize_currents_fd_sec": lin_curr_times,
+        "linearize_currents_fd_failures": lin_curr_fail,
         "notes": [
             "FD parameter benchmark is damping-only (set_damping is the only exposed setter).",
             "Implicit linearization uses AD Jxx; full_fd is the expensive baseline.",
@@ -140,7 +173,9 @@ def main():
     out_path.write_text(json.dumps(results, indent=2))
 
     def summarize(label, data):
-        arr = np.array(data)
+        arr = np.array(data, dtype=np.float64)
+        if arr.size == 0:
+            return {"label": label, "mean_s": None, "p50_s": None, "p95_s": None}
         return {
             "label": label,
             "mean_s": float(arr.mean()),
