@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "CRMDYN.hpp"
+#include "CRM_DynamicsContext.hpp"
 
 namespace CRMCatheterModel {
 
@@ -332,10 +333,12 @@ inline void CoilDynamics(const Vec6<Scalar>& v0w0,
                          Vec6<Scalar>& v1w1,
                          Vec3<Scalar>& p1,
                          Mat3<Scalar>& R1,
-                         Vec6<Scalar>& out_xdot_n)
+                         Vec6<Scalar>& out_xdot_n,
+                         bool* out_diverged = nullptr)
 {
     // ABM4 with RK2 warmup, matching CoilDynamics_Defs.cpp (t_step fixed at 0.001).
     const int N = static_cast<int>(std::ceil(DELTA_T / kCoilTStep));
+    constexpr double kDivergenceThreshold = 1e6;  // Phase 3: Soft failure mode
 
     Vec6<Scalar> twist_nm3 = Vec6<Scalar>::Zero();
     Vec6<Scalar> twist_nm2 = Vec6<Scalar>::Zero();
@@ -415,11 +418,166 @@ inline void CoilDynamics(const Vec6<Scalar>& v0w0,
         xdot_nm3 = xdot_nm2;
         xdot_nm2 = xdot_nm1;
         xdot_nm1 = xdot_n;
+
+        // Phase 3: Check for divergence (soft failure mode)
+        if (out_diverged != nullptr) {
+            const double twist_mag = std::sqrt(static_cast<double>(twist_n.squaredNorm()));
+            const double p_mag = std::sqrt(static_cast<double>(p_n.squaredNorm()));
+            if (!std::isfinite(twist_mag) || !std::isfinite(p_mag) ||
+                twist_mag > kDivergenceThreshold || p_mag > kDivergenceThreshold) {
+                *out_diverged = true;
+                return;  // Early exit on divergence
+            }
+        }
     }
 
     v1w1 = twist_n;
     p1 = p_n;
     R1 = R_n;
+
+    // Phase 3: Final divergence check
+    if (out_diverged != nullptr) {
+        *out_diverged = false;  // Success
+    }
+}
+
+/**
+ * @brief RK4 integrator for coil dynamics (Task A1.7 Phase 3)
+ *
+ * This is a more stable alternative to the ABM4 integrator above. RK4 has no
+ * history dependence and is more robust to stiff systems and large perturbations
+ * (e.g., during AutoDiff parameter sweeps).
+ *
+ * Interface matches CoilDynamics exactly for drop-in replacement.
+ *
+ * @tparam Scalar Numeric type (double or autodiff::real)
+ */
+template <typename Scalar>
+inline void CoilDynamicsRK4(const Vec6<Scalar>& v0w0,
+                            const Vec3<Scalar>& p0,
+                            const Mat3<Scalar>& R0,
+                            const Vec3<Scalar>& n_L,
+                            const Eigen::Vector3d& g,
+                            const Scalar actMass,
+                            const Eigen::Matrix3d& actInertia,
+                            const Eigen::Matrix<Scalar, 6, 1>& damping,
+                            const double DELTA_T,
+                            const Eigen::Vector3d& B0,
+                            const Mat3<Scalar>& muhat,
+                            const Vec3<Scalar>& m_L,
+                            Vec6<Scalar>& v1w1,
+                            Vec3<Scalar>& p1,
+                            Mat3<Scalar>& R1,
+                            Vec6<Scalar>& out_xdot_n,
+                            bool* out_diverged = nullptr)
+{
+    // Use same substep size as ABM4 for consistency
+    const int N = static_cast<int>(std::ceil(DELTA_T / kCoilTStep));
+    const Scalar h = Scalar(kCoilTStep);
+    constexpr double kDivergenceThreshold = 1e6;  // Phase 3: Soft failure mode
+
+    Vec6<Scalar> twist_n = v0w0;
+    Vec3<Scalar> p_n = p0;
+    Mat3<Scalar> R_n = R0;
+
+    Vec6<Scalar> xdot_n = Vec6<Scalar>::Zero();
+
+    for (int idx = 0; idx < N; ++idx) {
+        // RK4 Stage 1
+        Vec6<Scalar> k1;
+        CoilIntegrand(twist_n, n_L, g, R_n, actMass, actInertia, damping, B0, muhat, m_L, k1);
+        out_xdot_n = k1;  // Save for output
+
+        // RK4 Stage 2
+        const Vec6<Scalar> twist_2 = twist_n + h * k1 * Scalar(0.5);
+        Mat3<Scalar> R_2;
+        Vec3<Scalar> p_2;
+        DYNSE3_TimeSpace(R_n, p_n, h * Scalar(0.5), twist_n, R_2, p_2);
+        Vec6<Scalar> k2;
+        CoilIntegrand(twist_2, n_L, g, R_2, actMass, actInertia, damping, B0, muhat, m_L, k2);
+
+        // RK4 Stage 3
+        const Vec6<Scalar> twist_3 = twist_n + h * k2 * Scalar(0.5);
+        Mat3<Scalar> R_3;
+        Vec3<Scalar> p_3;
+        DYNSE3_TimeSpace(R_n, p_n, h * Scalar(0.5), twist_n + k1 * Scalar(0.5), R_3, p_3);
+        Vec6<Scalar> k3;
+        CoilIntegrand(twist_3, n_L, g, R_3, actMass, actInertia, damping, B0, muhat, m_L, k3);
+
+        // RK4 Stage 4
+        const Vec6<Scalar> twist_4 = twist_n + h * k3;
+        Mat3<Scalar> R_4;
+        Vec3<Scalar> p_4;
+        DYNSE3_TimeSpace(R_n, p_n, h, twist_n + k2, R_4, p_4);
+        Vec6<Scalar> k4;
+        CoilIntegrand(twist_4, n_L, g, R_4, actMass, actInertia, damping, B0, muhat, m_L, k4);
+
+        // RK4 Update
+        twist_n = twist_n + h * (k1 + Scalar(2.0) * k2 + Scalar(2.0) * k3 + k4) / Scalar(6.0);
+
+        // SE3 update using weighted average twist (midpoint rule for stability)
+        const Vec6<Scalar> twist_avg = (twist_n + (twist_n - h * (k1 + Scalar(2.0) * k2 + Scalar(2.0) * k3 + k4) / Scalar(6.0))) * Scalar(0.5);
+        DYNSE3_TimeSpace(R_n, p_n, h, twist_avg, R_n, p_n);
+
+        // Phase 3: Check for divergence (soft failure mode)
+        if (out_diverged != nullptr) {
+            const double twist_mag = std::sqrt(static_cast<double>(twist_n.squaredNorm()));
+            const double p_mag = std::sqrt(static_cast<double>(p_n.squaredNorm()));
+            if (!std::isfinite(twist_mag) || !std::isfinite(p_mag) ||
+                twist_mag > kDivergenceThreshold || p_mag > kDivergenceThreshold) {
+                *out_diverged = true;
+                return;  // Early exit on divergence
+            }
+        }
+    }
+
+    v1w1 = twist_n;
+    p1 = p_n;
+    R1 = R_n;
+
+    // Phase 3: Final divergence check
+    if (out_diverged != nullptr) {
+        *out_diverged = false;  // Success
+    }
+}
+
+/**
+ * @brief Dispatcher for coil dynamics integrator (Task A1.7 Phase 3.4)
+ *
+ * Calls either CoilDynamics (ABM4) or CoilDynamicsRK4 based on the selected
+ * integrator type. This allows runtime selection of integration method.
+ *
+ * @tparam Scalar Numeric type (double or autodiff::real)
+ */
+template <typename Scalar>
+inline void CoilDynamicsDispatch(IntegratorType integrator,
+                                 const Vec6<Scalar>& v0w0,
+                                 const Vec3<Scalar>& p0,
+                                 const Mat3<Scalar>& R0,
+                                 const Vec3<Scalar>& n_L,
+                                 const Eigen::Vector3d& g,
+                                 const Scalar actMass,
+                                 const Eigen::Matrix3d& actInertia,
+                                 const Eigen::Matrix<Scalar, 6, 1>& damping,
+                                 const double DELTA_T,
+                                 const Eigen::Vector3d& B0,
+                                 const Mat3<Scalar>& muhat,
+                                 const Vec3<Scalar>& m_L,
+                                 Vec6<Scalar>& v1w1,
+                                 Vec3<Scalar>& p1,
+                                 Mat3<Scalar>& R1,
+                                 Vec6<Scalar>& out_xdot_n,
+                                 bool* out_diverged = nullptr)
+{
+    switch (integrator) {
+        case IntegratorType::RK4:
+            CoilDynamicsRK4(v0w0, p0, R0, n_L, g, actMass, actInertia, damping, DELTA_T, B0, muhat, m_L, v1w1, p1, R1, out_xdot_n, out_diverged);
+            break;
+        case IntegratorType::ABM4:
+        default:
+            CoilDynamics(v0w0, p0, R0, n_L, g, actMass, actInertia, damping, DELTA_T, B0, muhat, m_L, v1w1, p1, R1, out_xdot_n, out_diverged);
+            break;
+    }
 }
 
 template <typename Scalar>

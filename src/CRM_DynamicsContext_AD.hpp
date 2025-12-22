@@ -109,11 +109,12 @@ template <typename Scalar>
 struct DynamicsContextAD {
     std::vector<ActuatorDynamicsParamsAD<Scalar>> actuators;  ///< Dynamics params for each actuator
     double DELTA_T;  ///< Time step (not differentiated, remains double)
+    IntegratorType integrator_type;  ///< Which integrator to use (not differentiated)
 
     /**
-     * @brief Default constructor - initializes empty context.
+     * @brief Default constructor - initializes empty context with ABM4 (legacy default).
      */
-    DynamicsContextAD() : DELTA_T(0.0) {}
+    DynamicsContextAD() : DELTA_T(0.0), integrator_type(IntegratorType::ABM4) {}
 
     /**
      * @brief Construct from non-templated DynamicsContext.
@@ -123,7 +124,7 @@ struct DynamicsContextAD {
      * When Scalar = autodiff::real, this converts all values to AD types.
      */
     explicit DynamicsContextAD(const DynamicsContext& ctx)
-        : DELTA_T(ctx.DELTA_T)
+        : DELTA_T(ctx.DELTA_T), integrator_type(ctx.integrator_type)
     {
         actuators.reserve(ctx.size());
         for (int i = 0; i < ctx.size(); ++i) {
@@ -182,6 +183,7 @@ template <>
 inline DynamicsContextAD<double> convertToAD<double>(const DynamicsContext& ctx) {
     DynamicsContextAD<double> result;
     result.DELTA_T = ctx.DELTA_T;
+    result.integrator_type = ctx.integrator_type;
     result.actuators.reserve(ctx.size());
 
     for (int i = 0; i < ctx.size(); ++i) {

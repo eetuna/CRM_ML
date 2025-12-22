@@ -6,6 +6,14 @@
 namespace CRMCatheterModel {
 
 /**
+ * @brief Integrator type selection for coil dynamics (Task A1.7 Phase 3)
+ */
+enum class IntegratorType {
+    ABM4,  ///< Adams-Bashforth-Moulton 4th order (default, legacy behavior)
+    RK4    ///< Runge-Kutta 4th order (more stable, no history dependence)
+};
+
+/**
  * @brief Container for dynamics parameters of a single actuator.
  *
  * This struct replaces the legacy fixed-size arrays (e.g., double damping[NUM_ACT_SET][6])
@@ -55,11 +63,12 @@ struct ActuatorDynamicsParams {
 struct DynamicsContext {
     std::vector<ActuatorDynamicsParams> actuators;  ///< Dynamics params for each actuator [no_act_set]
     double DELTA_T;                                  ///< Time step for integration
+    IntegratorType integrator_type;                  ///< Which integrator to use (ABM4 or RK4)
 
     /**
-     * @brief Default constructor - initializes empty context.
+     * @brief Default constructor - initializes empty context with ABM4 (legacy default).
      */
-    DynamicsContext() : DELTA_T(0.0) {}
+    DynamicsContext() : DELTA_T(0.0), integrator_type(IntegratorType::ABM4) {}
 
     /**
      * @brief Resize the actuator vector to accommodate no_act_set actuators.
