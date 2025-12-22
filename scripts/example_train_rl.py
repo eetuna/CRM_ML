@@ -68,6 +68,7 @@ def quick_training_demo():
     from stable_baselines3 import PPO
     from stable_baselines3.common.vec_env import DummyVecEnv
     from stable_baselines3.common.evaluation import evaluate_policy
+    from stable_baselines3.common.monitor import Monitor
 
     # Create environment
     print("\nCreating environment...")
@@ -92,7 +93,7 @@ def quick_training_demo():
 
     # Evaluate
     print("\nEvaluating trained agent...")
-    eval_env = create_env("reaching", seed=100)
+    eval_env = Monitor(create_env("reaching", seed=100))
     mean_reward, std_reward = evaluate_policy(model, eval_env, n_eval_episodes=5)
     print(f"Mean reward: {mean_reward:.2f} ± {std_reward:.2f}")
 
