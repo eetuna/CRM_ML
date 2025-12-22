@@ -154,5 +154,5 @@ int RunFKExample(void) {
     std::cout << "localmin:" << localmin << std::endl;
     std::cout << "----" << std::endl;
 
+    return 0;
 }
-

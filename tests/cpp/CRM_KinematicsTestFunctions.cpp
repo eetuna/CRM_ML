@@ -179,7 +179,8 @@ namespace CRMCatheterModel {
 		for (int i = 0; i < 3; i++) ftip_calc[i] = in(i + 3 + 9 + 3);
 		for (int i = 0; i < NUM_ACT_SET; i++) {
 			for (int j = 0; j < 3; j++) actvect[j] = in(i * 3 + j + 3 + 9 + 3 + 3);
-			mMult_AB<3, 3, 1>(Params.CoilAlignmentTurnAreaMatrix[i], actvect, Params.MagMoment[i]);
+			const Eigen::Map<const Eigen::Vector3d> actvec_map(actvect);
+			Params.MagMoment[i] = Params.CoilAlignmentTurnAreaMatrix[i] * actvec_map;
 		}
 		Params.Li = in(in.rows() - 1);
 

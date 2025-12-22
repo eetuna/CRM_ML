@@ -1027,6 +1027,157 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     return out;
 }
 
+// ============================================================================
+// Control Input Gradient Support (Task 1.5)
+// ============================================================================
+// Compute ∂F/∂u where u = actuation currents (3D)
+// MagMoment = CoilAlignmentTurnAreaMatrix * currents
+// ============================================================================
+
+template <typename Scalar>
+inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithControlsAD(
+    const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& x_scaled,
+    const Eigen::Matrix<Scalar, 3, 1>& currents,
+    const DYNNLEqnParams* ParamsPtr)
+{
+    static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
+    using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
+
+    const DYNNLEqnParams& Params = *ParamsPtr;
+
+    // Compute MagMoment from currents using CoilAlignmentTurnAreaMatrix
+    const Eigen::Matrix3d& CATAM = Params.CoilAlignmentTurnAreaMatrix[0];
+    Vec3<Scalar> MagMoment = CATAM.template cast<Scalar>() * currents;
+    Mat3<Scalar> muhat;
+    muhat << Scalar(0), -MagMoment(2), MagMoment(1),
+             MagMoment(2), Scalar(0), -MagMoment(0),
+             -MagMoment(1), MagMoment(0), Scalar(0);
+
+    // Unpack NLE variables (scaled) -> physical m_L, n_L.
+    Vec3<Scalar> m_L;
+    Vec3<Scalar> n_L;
+    for (int i = 0; i < 3; ++i) {
+        m_L(i) = Scalar(IVALUE_SCALE_M) * x_scaled(i);
+        n_L(i) = Scalar(IVALUE_SCALE_N) * x_scaled(3 + i);
+    }
+
+    Vec3<Scalar> n_0;
+    for (int i = 0; i < 3; ++i) n_0(i) = Scalar(Params.TipForce[i]);
+
+    Vec3<Scalar> p_d;
+    Mat3<Scalar> R_d;
+    for (int i = 0; i < 3; ++i) p_d(i) = Scalar(Params.xi[i]);
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_d(r, c) = Scalar(Params.xi[3 + r * 3 + c]);
+
+    Vec3<Scalar> p_t;
+    Mat3<Scalar> R_t;
+    for (int i = 0; i < 3; ++i) p_t(i) = Scalar(Params.xf[i]);
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_t(r, c) = Scalar(Params.xf[3 + r * 3 + c]);
+
+    Vec3<Scalar> tau_0 = Vec3<Scalar>::Zero();
+
+    const int NUM_SEGMENTS = Params.no_segments;
+
+    Vec3<Scalar> u_f = Vec3<Scalar>::Zero();
+    Vec3<Scalar> p_f = p_t;
+    Mat3<Scalar> R_f = R_t;
+
+    Vec3<Scalar> tau = Vec3<Scalar>::Zero();
+    Vec3<Scalar> u_t = Vec3<Scalar>::Zero();
+    Vec3<Scalar> u_tau = Vec3<Scalar>::Zero();
+    Vec3<Scalar> p_ = Vec3<Scalar>::Zero();
+    Mat3<Scalar> R_ = Mat3<Scalar>::Identity();
+
+    Vec6<Scalar> xdot_dummy = Vec6<Scalar>::Zero();
+
+    Vec6<Scalar> vw_coil0;
+    Vec3<Scalar> p_coil0;
+    Mat3<Scalar> R_coil0;
+    for (int i = 0; i < 3; ++i) {
+        vw_coil0(i) = Scalar(Params.v_L_pre[0][i]);
+        vw_coil0(3 + i) = Scalar(Params.w_L_pre[0][i]);
+        p_coil0(i) = Scalar(Params.p_pre[0][i]);
+    }
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
+
+    const Scalar actMass = Scalar(Params.ActMass[0]);
+    Eigen::Matrix3d actInertia;
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) actInertia(r, c) = Params.actInertia[0][r * 3 + c];
+    Eigen::Matrix<Scalar, 6, 1> damping;
+    for (int i = 0; i < 6; ++i) damping(i) = Scalar(Params.damping[0][i]);
+
+    Vec3<Scalar> net_mL = Vec3<Scalar>::Zero();
+    Vec3<Scalar> net_nL = Vec3<Scalar>::Zero();
+
+    bool have_out_coil = false;
+    Vec6<Scalar> vw_coil_out = vw_coil0;
+    Vec3<Scalar> p_coil_out = p_coil0;
+    Mat3<Scalar> R_coil_out = R_coil0;
+
+    for (int segi = NUM_SEGMENTS - 1; segi >= 0; --segi) {
+        if (segi % 2 == 0) {
+            const int fsegi = segi >> 1;
+            const Vec3<Scalar> ustar = Params.ustar[fsegi].template cast<Scalar>();
+            const Mat3<Scalar> Kinv = Params.Kinv[fsegi].template cast<Scalar>();
+            const Mat3<Scalar> K = Params.K[fsegi].template cast<Scalar>();
+
+            if (segi == NUM_SEGMENTS - 1) {
+                u_t = ustar + Kinv * tau_0;
+                CRMFlexible_IVP_Back(segi, p_t, R_t, Params, u_t, n_0, u_tau, p_, R_);
+            } else {
+                const Vec3<Scalar> u_L = ustar + Kinv * m_L;
+                const int actseg = segi + 1;
+                const double RigidSegmentLength = Params.SegBounds[actseg + 1] - Params.SegBounds[actseg];
+
+                if (!have_out_coil) {
+                    CRMFlexible_IVP_Back(segi, p_f, R_f, Params, u_L, n_L, u_tau, p_, R_);
+                } else {
+                    const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
+                    const Mat3<Scalar> R_L = R_coil_out;
+                    CRMFlexible_IVP_Back(segi, p_L, R_L, Params, u_L, n_L, u_f, p_f, R_f);
+                    u_tau = u_f;
+                    p_ = p_f;
+                    R_ = R_f;
+                }
+            }
+
+            tau = K * (u_tau - ustar);
+
+            const int actno = fsegi - 1;
+            if (actno >= 0) {
+                net_mL = m_L - tau;
+            } else {
+                p_f = p_;
+                R_f = R_;
+                u_f = u_tau;
+            }
+        } else {
+            const int actno = (segi - 1) >> 1;
+            (void)actno;
+
+            net_nL = n_L - n_0;
+
+            CoilDynamics(vw_coil0, p_coil0, R_coil0, net_nL, Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
+                         actMass, actInertia, damping, Params.DELTA_T,
+                         Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
+                         muhat, net_mL,
+                         vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
+            have_out_coil = true;
+        }
+    }
+
+    Vec3<Scalar> res_p = p_f - p_d;
+    Vec3<Scalar> res_r;
+    for (int k = 0; k < 3; ++k) {
+        const Vec3<Scalar> diff = R_f.col(k) - R_d.col(k);
+        res_r(k) = sqrtT(diff.squaredNorm() + Scalar(1e-24));
+    }
+    Resid out;
+    out.template head<3>() = Scalar(RESIDUAL_SCALE_P) * res_p;
+    out.template tail<3>() = Scalar(RESIDUAL_SCALE_R) * res_r;
+    return out;
+}
+
 } // namespace dynnl_ad_eigen
 
 inline Eigen::VectorXd DYNNLEquationResidualEigenDouble(const Eigen::VectorXd& x_scaled, DYNNLEqnParams& Params)
@@ -1144,6 +1295,42 @@ inline void DYNNLEquationFullJacobiansEigenAD(
     if (out_theta) {
         *out_theta = theta_d;
     }
+}
+
+inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
+    const Eigen::VectorXd& x_scaled,
+    const Eigen::Vector3d& currents,
+    DYNNLEqnParams& Params,
+    Eigen::VectorXd* out_residual = nullptr)
+{
+    using autodiff::VectorXreal;
+    using autodiff::real;
+    using autodiff::jacobian;
+    using autodiff::wrt;
+    using autodiff::at;
+
+    // Convert inputs to autodiff types
+    VectorXreal x_ad(x_scaled.size());
+    for (int i = 0; i < x_scaled.size(); ++i) x_ad(i) = x_scaled(i);
+
+    autodiff::Vector3real u_ad;
+    for (int i = 0; i < 3; ++i) u_ad(i) = currents(i);
+
+    VectorXreal y_ad;
+    Eigen::MatrixXd J_u;
+
+    auto residual_fn = [&x_ad, &Params](const autodiff::Vector3real& u_) -> VectorXreal {
+        return dynnl_ad_eigen::DYNNLEquationResidualWithControlsAD<real>(x_ad, u_, &Params);
+    };
+
+    jacobian(residual_fn, wrt(u_ad), at(u_ad), y_ad, J_u);
+
+    if (out_residual) {
+        out_residual->resize(y_ad.size());
+        for (int i = 0; i < y_ad.size(); ++i) (*out_residual)(i) = autodiff::val(y_ad(i));
+    }
+
+    return J_u;
 }
 
 } // namespace CRMCatheterModel

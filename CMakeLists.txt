@@ -51,6 +51,10 @@ target_include_directories(CRMCPPLib PUBLIC
 	"${PROJECT_SOURCE_DIR}/src/numerical"
         )
 
+target_link_libraries(CRMCPPLib PUBLIC
+	Eigen3::Eigen
+	)
+
 add_executable(CRMDYNTest
 	tests/cpp/CRMDYN_test.cpp
 	tests/cpp/CRMTest.h

@@ -2128,7 +2128,82 @@ public:
         const int theta_dim = 3 + seed_dim;
         Eigen::MatrixXd Jxth(x_dim, theta_dim);
         Jxth.setZero();
+
+        // Compute ∂F/∂u (currents) using AD when available (Task 1.5)
+        bool have_ad_jxu = false;
+        if (x_dim == NUM_DYN_RESIDUAL && num_sets == 1) {
+            try {
+                // Build DYNNLEParams at (curr0, seed0) and compute Jxu = dF/du at x* via autodiff.
+                py::array_t<double> vA, wA, pA, RA, xfA, mLA, nLA;
+                unpack_seed(seed0, vA, wA, pA, RA, xfA, mLA, nLA);
+                const double dt_local = dt;
+                CRMShootingMethodParams BVPParams = build_BVPParams(curr0, vA, wA, pA, RA, dt_local);
+
+                const bool FinalValueOnly = true;
+                DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
+
+                double x_0[NUM_STATES];
+                for (int i = 0; i < NUM_STATES; i++) {
+                    if (i < 3) x_0[i] = BVPParams.p0[i];
+                    else if (i < 12) x_0[i] = BVPParams.R0[i - 3];
+                    else x_0[i] = 0.0;
+                }
+
+                double mL_guess_local[NUM_ACT_SET][3]{};
+                double nL_guess_local[NUM_ACT_SET][3]{};
+                auto mLseed = mLA.unchecked<2>();
+                auto nLseed = nLA.unchecked<2>();
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) for (int i = 0; i < 3; i++) {
+                    mL_guess_local[j][i] = mLseed(j, i);
+                    nL_guess_local[j][i] = nLseed(j, i);
+                }
+
+                CRMDYNSolverIVP_Prep(
+                    BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+                    x_0, BVPParams.IntegrationStepSize,
+                    BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+                    BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+                    BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+                    BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+                    BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
+                    BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+                    mL_guess_local, nL_guess_local,
+                    FinalValueOnly, DYNNLEParams
+                );
+
+                DYNNLEParams.ContactMode = ContactModeType::FREE_TIP;
+                for (int i = 0; i < 3; i++) {
+                    DYNNLEParams.TipForce[i] = 0.0;
+                    DYNNLEParams.TipConstraintPoint[i] = 0.0;
+                    DYNNLEParams.ftip_initialguess[i] = 0.0;
+                }
+
+                auto xfseed = xfA.unchecked<1>();
+                for (int i = 0; i < NUM_STATES; i++) {
+                    DYNNLEParams.xf[i] = xfseed(i);
+                }
+
+                Eigen::VectorXd Fad;
+                Eigen::MatrixXd Jxu_ad = DYNNLEquationControlJacobianEigenAD(x_star_scaled, curr0, DYNNLEParams, &Fad);
+                if (Jxu_ad.rows() == x_dim && Jxu_ad.cols() == 3 && Jxu_ad.allFinite()) {
+                    Jxth.leftCols(3) = Jxu_ad;
+                    have_ad_jxu = true;
+                }
+            } catch (const std::exception& e) {
+                std::cerr << "AD control jacobian failed: " << e.what() << std::endl;
+                have_ad_jxu = false;
+            } catch (...) {
+                std::cerr << "AD control jacobian failed with unknown exception" << std::endl;
+                have_ad_jxu = false;
+            }
+        }
+
+        // Compute remaining ∂F/∂θ for seed and currents (if AD failed) using FD
         for (int j = 0; j < theta_dim; j++) {
+            if (j < 3 && have_ad_jxu) {
+                // Skip currents - already computed via AD
+                continue;
+            }
             Eigen::Vector3d curr_p = curr0;
             Eigen::Vector3d curr_m = curr0;
             Eigen::VectorXd seed_p = seed0;
@@ -2213,6 +2288,7 @@ public:
         result["residual_norm"] = residual_norm;
         if (return_debug) {
             result["have_ad_jxx"] = have_ad_jxx;
+            result["have_ad_jxu"] = have_ad_jxu;
             py::array_t<double> Jxx_out({x_dim, x_dim});
             auto Ju = Jxx_out.mutable_unchecked<2>();
             for (int r = 0; r < x_dim; r++) for (int c = 0; c < x_dim; c++) Ju(r, c) = Jxx(r, c);
