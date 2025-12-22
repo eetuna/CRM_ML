@@ -140,7 +140,7 @@ currents = np.array([0.1, 0.0, 0.0])
 currents_tensor = torch.tensor([currents], dtype=torch.float32)
 
 # Get physics prediction
-physics_result = physics.forward_kinematics(currents, insertion_length=50.0)
+physics_result = physics.forward_kinematics(currents, insertion_length=94.3)
 physics_pred = torch.tensor([physics_result['tip_position']], dtype=torch.float32)
 
 # Get residual correction
@@ -201,7 +201,7 @@ model = HybridKinematicsModel(
 
 # Forward pass
 currents = torch.tensor([[0.1, 0.0, 0.0]], dtype=torch.float32)
-insertion_length = 50.0
+insertion_length = 94.3
 
 # Get prediction (physics + residual)
 prediction = model.forward(currents, insertion_length)
@@ -238,7 +238,7 @@ config = HybridDynamicsConfig(
     config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
     use_cpp=True,
     dt=0.02,
-    insertion_length=50.0,
+    insertion_length=94.3,
     hidden_dims=[256, 256, 128],
     max_correction=5.0,
     use_ensemble=False
@@ -250,7 +250,7 @@ model = HybridDynamicsModel(config, device="cpu")
 # Reset to initial state
 initial_state = model.reset(
     initial_currents=np.zeros(3),
-    insertion_length=50.0
+    insertion_length=94.3
 )
 print(f"Initial state: {initial_state}")  # (6,) - position + velocity
 
@@ -496,7 +496,7 @@ env_config = CatheterEnvConfig(
     use_cpp=True,
     param_file="data/catheter_params/CatheterParameterSet_1.txt",
     config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
-    insertion_length=50.0
+    insertion_length=94.3
 )
 
 # Create environment

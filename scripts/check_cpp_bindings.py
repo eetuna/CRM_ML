@@ -225,7 +225,7 @@ def test_comparison_with_simplified():
     currents = np.array([0.0, 0.0, 0.1])
 
     fk_cpp = wrapper_cpp.forward_kinematics(currents, insertion_length=94.3)
-    fk_simple = wrapper_simple.forward_kinematics(currents, insertion_length=50.0)
+    fk_simple = wrapper_simple.forward_kinematics(currents, insertion_length=94.3)
 
     print(f"   C++ FK position:        {fk_cpp['tip_position']}")
     print(f"   Simplified FK position: {fk_simple['tip_position']}")

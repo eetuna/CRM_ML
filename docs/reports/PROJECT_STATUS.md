@@ -220,7 +220,7 @@ from crm_ml_rl.envs import CatheterEnv, CatheterEnvConfig
 config = CatheterEnvConfig(
     use_hybrid_dynamics=True,
     use_cpp=True,
-    insertion_length=50.0
+    insertion_length=94.3
 )
 env = CatheterEnv(config=config)
 ```

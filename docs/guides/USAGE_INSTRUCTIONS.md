@@ -8,7 +8,7 @@
   ```python
   from crm_ml_rl.wrappers.crm_wrapper import CRMSimulator
   sim = CRMSimulator(dt=0.02, use_cpp=False)  # set use_cpp=True if bindings built
-  traj = sim.simulate_trajectory([[0.1, 0, 0]] * 50, insertion_length=50.0)
+  traj = sim.simulate_trajectory([[0.1, 0, 0]] * 50, insertion_length=94.3)
   print(traj["positions"].shape)
   ```
 

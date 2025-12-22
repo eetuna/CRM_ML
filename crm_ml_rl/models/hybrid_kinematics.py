@@ -464,7 +464,7 @@ if __name__ == "__main__":
 
     # Test single prediction
     currents = np.array([0.1, 0.0, 0.0])
-    pred = model.predict(currents, insertion_length=50.0)
+    pred = model.predict(currents, insertion_length=94.3)
     print(f"Single prediction: {pred}")
 
     # Test batch prediction
@@ -473,7 +473,7 @@ if __name__ == "__main__":
         [0.0, 0.1, 0.0],
         [0.0, 0.0, 0.1]
     ])
-    preds = model.predict(currents_batch, insertion_length=50.0)
+    preds = model.predict(currents_batch, insertion_length=94.3)
     print(f"Batch predictions:\n{preds}")
 
     # Test forward with components
@@ -492,7 +492,7 @@ if __name__ == "__main__":
     print("\n\nTesting HybridKinematicsWithUncertainty...")
     model_unc = HybridKinematicsWithUncertainty(use_cpp=True)
 
-    mean, var = model_unc.predict(currents, insertion_length=50.0)
+    mean, var = model_unc.predict(currents, insertion_length=94.3)
     print(f"Mean: {mean}")
     print(f"Variance: {var}")
     print(f"Std: {np.sqrt(var)}")

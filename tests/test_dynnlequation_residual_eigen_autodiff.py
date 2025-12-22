@@ -16,7 +16,7 @@ def test_dynnlequation_ad_jxx_close_to_fd():
     if not ok:
         pytest.skip("C++ bindings not available")
 
-    insertion = 50.0
+    insertion = 94.3
     dyn.set_damping(
         np.array(
             [

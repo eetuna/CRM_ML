@@ -78,7 +78,7 @@ def test_hybrid_kinematics(results: TestResults, verbose: bool = False):
     # Test single prediction (numpy interface)
     try:
         currents = np.array([0.1, 0.0, 0.0])
-        pred = model.predict(currents, insertion_length=50.0)
+        pred = model.predict(currents, insertion_length=94.3)
         assert pred.shape == (3,), f"Expected (3,), got {pred.shape}"
         assert not np.any(np.isnan(pred)), "Prediction contains NaN"
         results.add_pass("Single prediction (numpy)")
@@ -93,7 +93,7 @@ def test_hybrid_kinematics(results: TestResults, verbose: bool = False):
             [0.0, 0.0, 0.1],
             [-0.1, 0.05, 0.0]
         ])
-        preds = model.predict(currents_batch, insertion_length=50.0)
+        preds = model.predict(currents_batch, insertion_length=94.3)
         assert preds.shape == (4, 3), f"Expected (4, 3), got {preds.shape}"
         results.add_pass("Batch prediction")
     except Exception as e:
@@ -192,7 +192,7 @@ def test_hybrid_kinematics_uncertainty(results: TestResults, verbose: bool = Fal
     # Test single prediction with uncertainty
     try:
         currents = np.array([0.1, 0.0, 0.0])
-        mean, var = model.predict(currents, insertion_length=50.0)
+        mean, var = model.predict(currents, insertion_length=94.3)
         assert mean.shape == (3,)
         assert var.shape == (3,)
         assert np.all(var > 0), "Variance should be positive"
@@ -203,7 +203,7 @@ def test_hybrid_kinematics_uncertainty(results: TestResults, verbose: bool = Fal
     # Test batch prediction
     try:
         currents_batch = np.random.randn(8, 3) * 0.1
-        mean, var = model.predict(currents_batch, insertion_length=50.0)
+        mean, var = model.predict(currents_batch, insertion_length=94.3)
         assert mean.shape == (8, 3)
         assert var.shape == (8, 3)
         results.add_pass("Batch prediction with uncertainty")
@@ -436,7 +436,7 @@ def test_rl_integration(results: TestResults, verbose: bool = False, quick: bool
         for ix in currents_grid:
             for iy in currents_grid:
                 curr = np.array([ix, iy, 0.0])
-                pred = model.predict(curr, insertion_length=50.0)
+                pred = model.predict(curr, insertion_length=94.3)
                 predictions.append(pred)
 
         predictions = np.array(predictions)

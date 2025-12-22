@@ -221,7 +221,7 @@ class CRMWrapper:
     def forward_kinematics(
         self,
         currents: np.ndarray,
-        insertion_length: float = 50.0,
+        insertion_length: float = 94.3,
         deltau0_initialguess: Optional[np.ndarray] = None,
     ) -> Dict:
         """
@@ -264,7 +264,7 @@ class CRMWrapper:
     def compute_jacobian(
         self,
         currents: np.ndarray,
-        insertion_length: float = 50.0
+        insertion_length: float = 94.3
     ) -> np.ndarray:
         """
         Compute analytical Jacobian.
@@ -292,7 +292,7 @@ class CRMWrapper:
     def fk_and_jacobian(
         self,
         currents: np.ndarray,
-        insertion_length: float = 50.0,
+        insertion_length: float = 94.3,
         deltau0_initialguess: Optional[np.ndarray] = None,
     ) -> Dict:
         """
@@ -323,7 +323,7 @@ class CRMWrapper:
     def step_dynamics(
         self,
         currents: np.ndarray,
-        insertion_length: float = 50.0,
+        insertion_length: float = 94.3,
         dt: Optional[float] = None
     ) -> Dict:
         """
@@ -469,7 +469,7 @@ class CRMWrapper:
     def initialize_dynamics(
         self,
         currents: np.ndarray,
-        insertion_length: float = 50.0
+        insertion_length: float = 94.3
     ) -> bool:
         """
         Initialize dynamics from a valid forward kinematics solution.
@@ -674,7 +674,7 @@ class CRMSimulator:
         self,
         initial_position: Optional[np.ndarray] = None,
         initial_currents: Optional[np.ndarray] = None,
-        insertion_length: float = 50.0
+        insertion_length: float = 94.3
     ):
         """
         Reset simulator to initial state.
@@ -708,7 +708,7 @@ class CRMSimulator:
         self.state.velocity = np.zeros(3)
         self.history = []
 
-    def step(self, currents: np.ndarray, insertion_length: float = 50.0) -> CatheterState:
+    def step(self, currents: np.ndarray, insertion_length: float = 94.3) -> CatheterState:
         """
         Execute one simulation step.
 
@@ -734,7 +734,7 @@ class CRMSimulator:
     def simulate_trajectory(
         self,
         currents_sequence: np.ndarray,
-        insertion_length: float = 50.0,
+        insertion_length: float = 94.3,
         initial_position: Optional[np.ndarray] = None
     ) -> Dict[str, np.ndarray]:
         """
@@ -867,7 +867,7 @@ if __name__ == "__main__":
 
     # Test forward kinematics
     currents = np.array([0.1, 0.0, 0.0])
-    result = wrapper.forward_kinematics(currents, insertion_length=50.0)
+    result = wrapper.forward_kinematics(currents, insertion_length=94.3)
     print(f"\nForward kinematics result:")
     print(f"  Tip position: {result['tip_position']}")
     print(f"  Converged: {result['converged']}")
@@ -876,11 +876,11 @@ if __name__ == "__main__":
     print("\nTesting dynamics with FK initialization...")
     wrapper.reset()
     # IMPORTANT: Initialize from FK before stepping dynamics
-    init_success = wrapper.initialize_dynamics(currents, insertion_length=50.0)
+    init_success = wrapper.initialize_dynamics(currents, insertion_length=94.3)
     print(f"  Dynamics initialization: {'success' if init_success else 'failed'}")
 
     for i in range(10):
-        result = wrapper.step_dynamics(currents, insertion_length=50.0)
+        result = wrapper.step_dynamics(currents, insertion_length=94.3)
         if not result['converged']:
             print(f"  Step {i}: convergence failed")
             break

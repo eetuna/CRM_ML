@@ -341,7 +341,7 @@ class DynamicsTrainer:
                     # Initialize dynamics at the start of the trajectory
                     init_success = self.physics_model.initialize_dynamics(
                         actions[0],
-                        insertion_length=50.0, # Default or from traj if available
+                        insertion_length=94.3, # Default or from traj if available
                     )
                     if not init_success:
                         print(f"Warning: Failed to initialize physics model for trajectory, skipping.")
@@ -352,7 +352,7 @@ class DynamicsTrainer:
                         # Note: This assumes physics_model is the CRMWrapper instance
                         res = self.physics_model.step_dynamics(
                             actions[i],
-                            insertion_length=50.0, # Default or from traj if available
+                            insertion_length=94.3, # Default or from traj if available
                             dt=dt
                         )
                         phys_preds.append(np.hstack([res['tip_position'], res['tip_velocity']]))

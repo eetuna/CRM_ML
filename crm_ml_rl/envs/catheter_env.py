@@ -58,7 +58,7 @@ class CatheterEnvConfig:
     use_cpp: bool = False  # Whether to use C++ bindings (slower but more accurate)
     param_file: Optional[str] = None  # Path to catheter parameter file
     config_file: Optional[str] = None  # Path to catheter configuration file
-    insertion_length: float = 50.0  # Default insertion length (mm)
+    insertion_length: float = 94.3  # Default insertion length (mm)
 
     # Damping coefficients for C++ dynamics (from CRMDYN_test.cpp)
     damping: np.ndarray = field(default_factory=lambda: np.array([
