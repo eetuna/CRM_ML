@@ -51,6 +51,11 @@
   - Use known convergent damping values (same as other tests).
 - Run: `pytest -q tests/test_dynamics_implicit_linearization.py`
 
+## Step 7.1: Convergence handling
+- Mirror the new convergence guards used in linearizers:
+  - If any perturbation step does not converge, fail fast or skip that perturbation.
+  - Ensure AD/FD comparison only uses converged steps.
+
 ## Step 8: Full test run
 - `pytest -q`
 
