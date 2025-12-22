@@ -78,7 +78,15 @@ add_executable(CRMTest
 		${CRMSOURCES}
 		)
 
+add_executable(TestDynamicsContext
+		tests/cpp/test_dynamics_context.cpp
+		)
+
 target_link_libraries(CRMTest PUBLIC
+	Eigen3::Eigen
+	)
+
+target_link_libraries(TestDynamicsContext PUBLIC
 	Eigen3::Eigen
 	)
 
@@ -99,6 +107,11 @@ target_include_directories(CRMDYNTest PUBLIC
 		"${PROJECT_SOURCE_DIR}/src/numerical"
 		)
 target_include_directories(CRMDYNGirdSweep PUBLIC
+		"${PROJECT_SOURCE_DIR}/src"
+		"${PROJECT_SOURCE_DIR}/src/numerical"
+		)
+
+target_include_directories(TestDynamicsContext PUBLIC
 		"${PROJECT_SOURCE_DIR}/src"
 		"${PROJECT_SOURCE_DIR}/src/numerical"
 		)

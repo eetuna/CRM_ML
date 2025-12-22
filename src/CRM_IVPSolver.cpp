@@ -936,6 +936,101 @@ namespace CRMCatheterModel {
         LocMarkers.resize(no_locmarkers);
 		p_atLocMarkers.resize(no_locmarkers);
 		fcumlambda.resize(no_fcum_steps + 1);
+
+		// NEW (Task A1.7): Allocate modern dynamics context
+		dynamics.resize(no_act_set);
+	}
+
+	void CRMIVPCoreParams::sync_dynamics_context() {
+		// Copy from legacy arrays to DynamicsContext
+		// This method should be called after legacy Prep functions populate the old arrays
+		dynamics.DELTA_T = DELTA_T;
+
+		for (int i = 0; i < no_act_set; ++i) {
+			// Copy damping (6 values: linear x,y,z + angular x,y,z)
+			for (int j = 0; j < 6; ++j) {
+				dynamics.actuators[i].damping(j) = damping[i][j];
+			}
+
+			// Copy inertia matrix (3x3 stored as 9-element array in row-major)
+			for (int row = 0; row < 3; ++row) {
+				for (int col = 0; col < 3; ++col) {
+					dynamics.actuators[i].inertia(row, col) = actInertia[i][row * 3 + col];
+				}
+			}
+
+			// Copy mass from ActMass vector
+			dynamics.actuators[i].mass = ActMass[i];
+
+			// Copy previous velocities
+			for (int j = 0; j < 3; ++j) {
+				dynamics.actuators[i].v_L_pre(j) = v_L_pre[i][j];
+				dynamics.actuators[i].w_L_pre(j) = w_L_pre[i][j];
+			}
+
+			// Copy previous position and rotation
+			for (int j = 0; j < 3; ++j) {
+				dynamics.actuators[i].p_pre(j) = p_pre[i][j];
+			}
+
+			for (int row = 0; row < 3; ++row) {
+				for (int col = 0; col < 3; ++col) {
+					dynamics.actuators[i].R_pre(row, col) = R_pre[i][row * 3 + col];
+				}
+			}
+
+			// Copy moments and forces
+			for (int j = 0; j < 3; ++j) {
+				dynamics.actuators[i].m_L(j) = m_L[i][j];
+				dynamics.actuators[i].n_L(j) = n_L[i][j];
+			}
+		}
+	}
+
+	void CRMIVPCoreParams::sync_legacy_arrays() {
+		// Copy from DynamicsContext back to legacy arrays
+		// This method should be called before passing data to legacy code that expects old arrays
+		DELTA_T = dynamics.DELTA_T;
+
+		for (int i = 0; i < no_act_set; ++i) {
+			// Copy damping
+			for (int j = 0; j < 6; ++j) {
+				damping[i][j] = dynamics.actuators[i].damping(j);
+			}
+
+			// Copy inertia matrix
+			for (int row = 0; row < 3; ++row) {
+				for (int col = 0; col < 3; ++col) {
+					actInertia[i][row * 3 + col] = dynamics.actuators[i].inertia(row, col);
+				}
+			}
+
+			// Copy mass to ActMass vector
+			ActMass[i] = dynamics.actuators[i].mass;
+
+			// Copy previous velocities
+			for (int j = 0; j < 3; ++j) {
+				v_L_pre[i][j] = dynamics.actuators[i].v_L_pre(j);
+				w_L_pre[i][j] = dynamics.actuators[i].w_L_pre(j);
+			}
+
+			// Copy previous position and rotation
+			for (int j = 0; j < 3; ++j) {
+				p_pre[i][j] = dynamics.actuators[i].p_pre(j);
+			}
+
+			for (int row = 0; row < 3; ++row) {
+				for (int col = 0; col < 3; ++col) {
+					R_pre[i][row * 3 + col] = dynamics.actuators[i].R_pre(row, col);
+				}
+			}
+
+			// Copy moments and forces
+			for (int j = 0; j < 3; ++j) {
+				m_L[i][j] = dynamics.actuators[i].m_L(j);
+				n_L[i][j] = dynamics.actuators[i].n_L(j);
+			}
+		}
 	}
 
 

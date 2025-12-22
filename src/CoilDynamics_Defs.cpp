@@ -1422,6 +1422,9 @@ void CRMDYNSolverIVP_Prep (
         }
     }
 
+    // NEW (Task A1.7): Synchronize legacy arrays to modern DynamicsContext
+    // This ensures the new container is populated with the same data as legacy arrays
+    out_CoreParams.sync_dynamics_context();
 
 }
 
@@ -1567,6 +1570,10 @@ CRMShootingMethodParams CRMDYNConstructShootingMethodParamSet(	CRMCatheterModelP
     delete[] ActNos;
 
     for (int i = 0; i < CathParams.no_locmarkers; i++) ShootingParams.LocMarkerLambdas[i] = CathParams.LocMarkers[i];
+
+    // NEW (Task A1.7): Synchronize legacy arrays to modern DynamicsContext
+    // This ensures the new container is populated with the same data as legacy arrays
+    ShootingParams.sync_dynamics_context();
 
     return ShootingParams;
 

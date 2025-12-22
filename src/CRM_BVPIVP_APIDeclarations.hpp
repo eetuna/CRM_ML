@@ -4,6 +4,7 @@
 #include <Eigen/Dense>
 #include "CRM_MatrixOperations.hpp"
 #include "CRM_StateVector_Definitions.hpp"
+#include "CRM_DynamicsContext.hpp"
 //#include "CRM.hpp"
 
 //
@@ -78,6 +79,13 @@ namespace CRMCatheterModel {
 		std::vector<Eigen::Vector3d> fcumlambda;				// [no_fcum_steps+1]
 
         //Dynamics data/simulation_parameters
+
+        // NEW (Task A1.7): Modern dynamics storage using type-safe containers
+        DynamicsContext dynamics;  // Modern container for all dynamics-related parameters
+
+        // DEPRECATED (Legacy): Keep for backwards compatibility during migration
+        // TODO: Remove these after Phase 2 completion (once all code uses DynamicsContext)
+        // These fixed-size arrays cause the "Ghost Value" bug due to memory aliasing issues
         double v_L_pre[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
         double w_L_pre[NUM_ACT_SET][3];                                  // The angular velocity at the coil (L)
         double p_pre[NUM_ACT_SET][3];
@@ -85,6 +93,10 @@ namespace CRMCatheterModel {
         double actInertia[NUM_ACT_SET][9];
         double damping[NUM_ACT_SET][6];
         double DELTA_T;
+
+        // Synchronization methods for backwards compatibility
+        void sync_dynamics_context();   // Copy from legacy arrays to DynamicsContext
+        void sync_legacy_arrays();      // Copy from DynamicsContext to legacy arrays
 
 	protected:
 		void allocate_memory();
@@ -228,6 +240,13 @@ namespace CRMCatheterModel {
 		std::vector<Eigen::Vector3d> fcumlambda;	// 3*(no_fcum_steps+1) by 1 array (grouped by 3 doubles) storing cumulative external force (excluding tip force) integrated from \lambda = index * \Delta\lambda to the catheter tip (\lambda=0) - in spatial (catheter base frame) coordinates
 
         //Dynamics data/simulation_parameters
+
+        // NEW (Task A1.7): Modern dynamics storage using type-safe containers
+        DynamicsContext dynamics;  // Modern container for all dynamics-related parameters
+
+        // DEPRECATED (Legacy): Keep for backwards compatibility during migration
+        // TODO: Remove these after Phase 2 completion (once all code uses DynamicsContext)
+        // These fixed-size arrays cause the "Ghost Value" bug due to memory aliasing issues
         double v_L_pre[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
         double w_L_pre[NUM_ACT_SET][3];                                  // The angular velocity at the coil (L)
         double p_pre[NUM_ACT_SET][3];
@@ -235,8 +254,12 @@ namespace CRMCatheterModel {
         double actInertia[NUM_ACT_SET][9];
         double damping[NUM_ACT_SET][6];
         double DELTA_T;
-        double m_L[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
-        double n_L[NUM_ACT_SET][3];
+        double m_L[NUM_ACT_SET][3];                                  // Moment at the coil (L)
+        double n_L[NUM_ACT_SET][3];                                  // Force at the coil (L)
+
+        // Synchronization methods for backwards compatibility
+        void sync_dynamics_context();   // Copy from legacy arrays to DynamicsContext
+        void sync_legacy_arrays();      // Copy from DynamicsContext to legacy arrays
 
 	protected:
 		void allocate_memory();
