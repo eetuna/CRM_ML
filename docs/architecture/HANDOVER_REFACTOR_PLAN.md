@@ -1,53 +1,32 @@
-# Handover Plan: Modernizing C++ Core for Differentiable Dynamics
+# Handover Plan: Modernizing C++ Core for Task A1 (Parameter Learning)
 
 ## 1. Objective
-Refactor the legacy Cosserat Rod dynamics engine from raw C pointers (`double*`) to modern, memory-safe containers (`std::vector`, `Eigen::Matrix`) to enable stable Automatic Differentiation (AutoDiff) for Parameter Learning (Task A1).
+Refactor the C++ Dynamics Core from raw pointers to `Eigen` and `std::vector` to enable stable AutoDiff. This is required to finalize Task A1.
 
-## 2. Background & Challenges
-- **Legacy State:** The code uses fixed-size buffers and raw pointer arithmetic. During AutoDiff (which uses dual numbers), the internal `double*` pointers can cause aliasing ("Ghost Values"), where gradients from one parameter leak into another.
-- **The Failure Mode:** Previous attempts at a "Nuclear Rewrite" resulted in lost logic (e.g., rigid segment transport) and truncation errors.
-- **Requirement:** The new implementation must match the legacy branch (`feature/autodiff-parameter-gradients`) output to within `1e-10` precision for the same inputs.
+## 2. The Ground Truth
+- **Logic Source:** Branch `autodiff_eigen`. This is where Task A1 math was originally implemented and verified.
+- **Physics Source:** `Mexfiles/CRMDYN_c.cpp`. This is the original, stable C++ code used by Matlab. It is the "Bible" for the dynamics equations.
+- **Verification Source:** `tests/test_parameter_jacobian_autodiff.py`. This test must pass with analytical gradients ($J_{AD}$) matching Finite Difference ($J_{FD}$) within $1e-4$.
 
-## 3. Step-by-Step Task List for the Implementing Agent
+## 3. Step-by-Step Task List
 
-### Task 1: Establish Ground Truth (Regression Testing)
-- **Do not refactor yet.** Check out the legacy branch.
-- Write a script to run a variety of catheter configurations (1-3 segments, free tip and constrained).
-- Save the results (tip position, orientation, and residuals) to a JSON/CSV file. This is the **Gold Standard**.
+### Task 1: Struct Modernization
+- Modify `src/CRM_BVPIVP_APIDeclarations.hpp`.
+- Replace all fixed-size arrays (e.g., `double K[5][9]`) with `std::vector<Eigen::Matrix3d>`.
+- Use `.resize()` in constructors to ensure memory safety and eliminate "Ghost Value" bugs.
 
-### Task 2: Incremental Type Migration
-Instead of rewriting files, migrate data structures one by one:
-1.  **`CRMCatheterModelParams`**: Change fixed arrays to `std::vector`. Update the constructor to resize based on `no_flex_seg`.
-2.  **`CRMIVPCoreParams`**: Move from raw arrays to `Eigen::Vector3d` and `Eigen::Matrix3d`. 
-3.  **Interface Alignment**: Keep the function signatures in `.hpp` files stable as long as possible, using `.data()` to bridge `std::vector` to legacy functions during the transition.
+### Task 2: Porting the Core Loop (`CRM_IVPSolver.cpp`)
+- Rewrite `CRMSolverIVP_Core` to use the new Eigen-based structs.
+- **MANDATORY:** Ensure the loop handles `FLEXIBLE` segments (ABM4 integration) and `RIGID` segments (linear transport). Skipping rigid segments will break the catheter kinematic chain.
 
-### Task 3: Porting the Physics Logic
-- **`CRM_IVPSolver.cpp`**: 
-    - Port `CRMSolverIVP_Core`. 
-    - **Critical:** Ensure the loop handles both `FLEXIBLE` (integration via ABM4) and `RIGID` (linear transport: `p += L * R.col(2)`) segments.
-- **`CoilDynamics_Defs.cpp`**: 
-    - Implement the Newton-Euler equations using Eigen expressions for readability and AD compatibility.
-    - Match the exact order of operations found in the legacy `CoilIntegrad`.
+### Task 3: Physics Implementation (`CoilDynamics_Defs.cpp`)
+- Re-implement Newton-Euler equations using Eigen.
+- Ensure the mathematical steps match the logic in `Mexfiles/CRMDYN_c.cpp` exactly.
 
-### Task 4: AutoDiff Integration
-- Create a template-based residual function `DYNNLEquationResidualEigenAD<Scalar>`.
-- Map the internal state to the `Scalar` type (which will be `autodiff::real` or `double`).
-- Ensure all physical constants (Gravity, B-field) are correctly cast to the `Scalar` type.
+### Task 4: AutoDiff & Bindings
+- Update `src/CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp` to match the new Eigen math.
+- Update `crm_bindings.cpp` to return all keys: `J_theta`, `residual`, `base`, `next_mL`, `next_nL`.
 
-### Task 5: Linker & Binding Audit
-- Verify that `crm_bindings.cpp` (pybind11) returns a dictionary with:
-    - `J_theta`: The Jacobian matrix.
-    - `residual`: The current residual vector.
-    - `base`: A sub-dictionary containing the state (`v`, `w`, `p`, `R`, `mL`, `nL`) to allow Finite Difference comparison.
-
-### Task 6: Validation against Gold Standard
-- Run the new code against the inputs saved in **Task 1**.
-- Verify tip positions match.
-- Verify that `J_theta` gradients match Finite Difference approximations to at least 4 decimal places.
-
-## 4. Files to Audit Carefully
-- `src/CRM_BVPIVP_APIDeclarations.hpp`: The source of truth for structs.
-- `src/CRM_IVPSolver.cpp`: The core integration loop.
-- `src/CoilDynamics_Defs.cpp`: The physics engine.
-- `src/CRM_BVPSolver.cpp`: The shooting method implementation.
-- `crm_ml_rl/wrappers/crm_bindings.cpp`: The Python gateway.
+## 4. Risks to Avoid
+- **Silent Truncation:** Do not use `write_file` for large `.cpp` files. Use `replace` or incremental writes.
+- **Nuclear Rewrite:** Do not delete legacy logic assuming you can "simplify" it. Every line of the original physics must have a verified Eigen equivalent.
