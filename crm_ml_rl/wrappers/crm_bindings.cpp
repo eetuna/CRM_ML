@@ -1361,6 +1361,9 @@ public:
         double eps = 1e-4
     ) {
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
+        if (!base["converged"].cast<bool>()) {
+            throw std::runtime_error("linearize_action_from_seed: base dynamics did not converge");
+        }
         auto tip_pos_base = base["tip_position"].cast<py::array_t<double>>().request();
         auto tip_vel_base = base["tip_velocity"].cast<py::array_t<double>>().request();
         const double* pos_ptr = static_cast<double*>(tip_pos_base.ptr);
@@ -1395,6 +1398,9 @@ public:
 
             py::dict out_plus = step_from_seed(u_plus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
             py::dict out_minus = step_from_seed(u_minus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
+            if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
+                throw std::runtime_error("linearize_action_from_seed: perturbation dynamics did not converge");
+            }
 
             auto pos_p = out_plus["tip_position"].cast<py::array_t<double>>().request();
             auto vel_p = out_plus["tip_velocity"].cast<py::array_t<double>>().request();
@@ -1500,6 +1506,9 @@ public:
 
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
         const bool ok = base["converged"].cast<bool>();
+        if (!ok) {
+            throw std::runtime_error("linearize_full_seed_action_from_seed: base dynamics did not converge");
+        }
         const Eigen::Matrix<double, 6, 1> y0 = get_state6(base);
 
         Eigen::Matrix<double, 6, 3> B;
@@ -1541,6 +1550,9 @@ public:
 
                 py::dict out_plus = step_from_seed(u_plus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
                 py::dict out_minus = step_from_seed(u_minus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
+                if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
+                    throw std::runtime_error("linearize_full_seed_action_from_seed: perturbation dynamics did not converge");
+                }
 
                 const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
                 const Eigen::Matrix<double, 6, 1> ym = get_state6(out_minus);
@@ -1640,6 +1652,9 @@ public:
 
                 py::dict out_plus = step_from_seed(currents, insertion_length, *vP, *wP, *pP, *RP, *xfP, *mLP, *nLP, std::nullopt);
                 py::dict out_minus = step_from_seed(currents, insertion_length, *vM, *wM, *pM, *RM, *xfM, *mLM, *nLM, std::nullopt);
+                if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
+                    throw std::runtime_error("linearize_full_seed_action_from_seed: seed perturbation did not converge");
+                }
 
                 const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
                 const Eigen::Matrix<double, 6, 1> ym = get_state6(out_minus);
@@ -2468,6 +2483,23 @@ public:
         const int num_sets = static_cast<int>(vbuf.shape[0]);
         if (num_sets != 1) {
             throw std::runtime_error("compute_residual_at_state currently only supports NUM_ACT_SET=1");
+        }
+
+        auto wbuf = w_in.request();
+        auto pbuf = p_in.request();
+        auto Rbuf = R_in.request();
+        auto xfbuf = xf_in.request();
+        if (wbuf.ndim != 2 || wbuf.shape[0] != num_sets || wbuf.shape[1] != 3) {
+            throw std::runtime_error("w_in must have shape (num_act_set, 3)");
+        }
+        if (pbuf.ndim != 2 || pbuf.shape[0] != num_sets || pbuf.shape[1] != 3) {
+            throw std::runtime_error("p_in must have shape (num_act_set, 3)");
+        }
+        if (Rbuf.ndim != 2 || Rbuf.shape[0] != num_sets || Rbuf.shape[1] != 9) {
+            throw std::runtime_error("R_in must have shape (num_act_set, 9)");
+        }
+        if (xfbuf.ndim != 1 || xfbuf.shape[0] != NUM_STATES) {
+            throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
         }
 
         auto mLbuf = mL_fixed.request();
