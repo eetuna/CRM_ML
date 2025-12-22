@@ -670,7 +670,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Train dynamics model")
-    parser.add_argument("--data-dir", type=str, default="3D_dynamic_response_data_0124",
+    parser.add_argument("--data-dir", type=str, default="data/experimental",
                         help="Data directory")
     parser.add_argument("--output-dir", type=str, default="crm_ml_rl/trained_models",
                         help="Output directory")

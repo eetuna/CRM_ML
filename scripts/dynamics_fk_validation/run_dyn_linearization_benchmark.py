@@ -21,8 +21,8 @@ def load_crm_python(so_path: str):
 def setup_dyn(mod, insertion: float):
     dyn = mod.CRMDynamics()
     ok = dyn.load_parameters(
-        "catheterdata/CatheterParameterSet_1_dyn.txt",
-        "catheterdata/CatheterSpatialConfiguration_1.txt",
+        "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        "data/catheter_params/CatheterSpatialConfiguration_1.txt",
     )
     if not ok:
         raise RuntimeError("Failed to load parameters")

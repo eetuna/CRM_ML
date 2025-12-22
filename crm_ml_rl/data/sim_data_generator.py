@@ -11,28 +11,28 @@ from dataclasses import dataclass
 from pathlib import Path
 import json
 
-from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, CRMSimulator, CatheterParameters
+from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, CRMSimulator, CatheterParams
 
 
 @dataclass
 class SimulationConfig:
     """Configuration for data simulation."""
-    # Time parameters
+    # Time data/simulation_parameters
     dt: float = 0.02  # 50 Hz
     episode_length: float = 10.0  # seconds
     insertion_length: float = 94.3  # mm (matches dynamics parameter set)
 
-    # Trajectory parameters
+    # Trajectory data/simulation_parameters
     trajectory_types: List[str] = None
     trajectory_freqs: List[float] = None
     trajectory_radii: List[float] = None
 
-    # Noise parameters
+    # Noise data/simulation_parameters
     action_noise_std: float = 0.01
     observation_noise_std: float = 0.5  # mm
     process_noise_std: float = 0.1
 
-    # Physics parameters
+    # Physics data/simulation_parameters
     damping: float = 10.0
     stiffness: float = 100.0
     mass: float = 0.001  # kg

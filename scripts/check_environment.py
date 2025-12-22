@@ -311,8 +311,8 @@ def test_cpp_physics_env():
         max_steps=50,
         max_current=0.2,
         use_cpp=True,
-        param_file='catheterdata/CatheterParameterSet_1_dyn.txt',
-        config_file='catheterdata/CatheterSpatialConfiguration_1.txt',
+        param_file='data/catheter_params/CatheterParameterSet_1_dyn.txt',
+        config_file='data/catheter_params/CatheterSpatialConfiguration_1.txt',
         insertion_length=94.3,
         success_threshold=10.0
     )

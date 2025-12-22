@@ -7,7 +7,7 @@ but first projects the desired circle points onto an FK-sampled workspace so the
 are reachable.
 
 Outputs:
-  - output_data/ik_circle_projected_workspace.npz
+  - data/output/ik_circle_projected_workspace.npz
   - plots/ik_circle_projected_workspace_multiview.png
   - plots/ik_circle_projected_workspace_timeseries.png
 """
@@ -35,8 +35,8 @@ class Config:
     # MATLAB/MEX uses 0.2mm along-rod integration step; it's much faster than 0.01mm.
     integration_step_size: float = 0.2
 
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
 
     # Current bounds and workspace sampling resolution
     current_bound: float = 0.2
@@ -52,7 +52,7 @@ class Config:
     # z-plane selection for the desired circles (computed from FK at a reference current)
     z0_probe_currents: Tuple[float, float, float] = (0.0, 0.0, 0.2)
 
-    # MATLAB-like normalized pinv IK parameters
+    # MATLAB-like normalized pinv IK data/simulation_parameters
     step_size: float = 1e-2
     threshold_start_mm: float = 1.0
     threshold_traj_mm: float = 1.0
@@ -406,7 +406,7 @@ def main() -> None:
     kin.integration_step_size = float(cfg.integration_step_size)
 
     # Workspace sampling (cached)
-    cache = Path("output_data") / f"workspace_fk_ins{cfg.insertion_length}_b{cfg.current_bound}_n{cfg.workspace_grid_n}_step{cfg.integration_step_size}.npz"
+    cache = Path("data/output") / f"workspace_fk_ins{cfg.insertion_length}_b{cfg.current_bound}_n{cfg.workspace_grid_n}_step{cfg.integration_step_size}.npz"
     cache.parent.mkdir(parents=True, exist_ok=True)
     if cache.exists():
         data = np.load(cache)
@@ -466,7 +466,7 @@ def main() -> None:
     # FK for the full timeline (so ramps are consistent with the applied currents).
     p_fk = fk_trajectory(cfg, kin, currents)
 
-    out_npz = Path("output_data") / "ik_circle_projected_workspace.npz"
+    out_npz = Path("data/output") / "ik_circle_projected_workspace.npz"
     out_npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         out_npz,

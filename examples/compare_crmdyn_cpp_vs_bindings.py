@@ -15,7 +15,7 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mplconfig")
 
 
 def main():
-    # Parameters pulled from main/CRMDYN_test.cpp
+    # Params pulled from main/CRMDYN_test.cpp
     currents = np.array([0.0, 0.0, 0.1])
     insertion_length = 94.3
     dt = 0.05
@@ -64,8 +64,8 @@ def main():
     )
 
     wrapper = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
         flip_third_current=False,
     )

@@ -22,7 +22,7 @@ namespace CRMCatheterModel {
 		else { // FIXED_TIP
 			NLEq_Dim = 6;
 		}
-		// Call CRMSolverIVP_Prep, to pre-process parameters
+		// Call CRMSolverIVP_Prep, to pre-process data/simulation_parameters
 		double x_0[NUM_STATES];
 		for (int i = 0; i < 3; i++) x_0[i] = in_Params.p0[i];
 		for (int i = 0; i < 9; i++) x_0[i + 3] = in_Params.R0[i];
@@ -123,12 +123,12 @@ namespace CRMCatheterModel {
 		double	in_TipConstraintPoint[3],					// The spatial coordinates of the point where the catheter tip is constrained to be (used if in_ContactMode == FIXED_TIP)
 		double	in_TipForce[3],								// External point force (in spatial coordinates) applied at the tip of the catheter (\lambda = 0) - this value will not be used if in_ContactMode == FIXED_TIP 
 		double	in_IntegrationStepSize,						// Stepsize used in numerical integration along the length of the catheter
-		// Catheter Configuration Parameters
+		// Catheter Configuration Params
 		double 	in_B0[3],									// B0 field vector of the MRI scanner (in spatial coordinates)
 		double 	in_g[3],									// Gravity vector (in spatial coordinates)
 		double 	in_p0[3],									// Catheter entry port position (in spatial coordinates)
 		double 	in_R0[9],									// Catheter orientation at the entry port (relative to the spatial frame); 3x3 matrix stored in row major order
-		// Catheter Model Parameters
+		// Catheter Model Params
 		//	For all parameters below, segments and actuator units are numbered/ordered from the tip of the catheter towards the base (distal to proximal)
 		double 	in_SegLengths[/*NUM_SEGMENTS*/],			// Array of segment lengths; NUM_SEGMENTS long array
 		double	in_LocMarkers[/*no_locmarkers*/],			// Array of localization marker locations (in lambda coordinates); in_no_locmarkers long array
@@ -160,7 +160,7 @@ namespace CRMCatheterModel {
 		double ActuationCurrents[NUM_ACT_SET][3];
 		mCopy_AB<NUM_ACT_SET * 3>(&(in_ActuationCurrents[0][0]), &(ActuationCurrents[0][0]));
 		double IntegrationStepSize = in_IntegrationStepSize;
-		// Calculate Shooting Method Parameter Set from model and configuration parameters
+		// Calculate Shooting Method Parameter Set from model and configuration data/simulation_parameters
 		CRMShootingMethodParams ShootingParams = CRMConstructShootingMethodParamSet(CathParams, CathConfig,
 			InsertedLength, ActuationCurrents, in_ContactMode, in_TipConstraintPoint, in_TipForce,
 			IntegrationStepSize);

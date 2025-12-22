@@ -11,13 +11,13 @@ from typing import Any, Dict, Optional, Tuple, Union
 import sys
 sys.path.append('..')
 
-from ..wrappers.crm_wrapper import CRMSimulator, CatheterParameters, CatheterState
+from ..wrappers.crm_wrapper import CRMSimulator, CatheterParams, CatheterState
 
 
 @dataclass
 class CatheterEnvConfig:
     """Configuration for catheter environment."""
-    # Simulation parameters
+    # Simulation data/simulation_parameters
     dt: float = 0.01  # Timestep (seconds)
     max_steps: int = 200  # Maximum episode length
 
@@ -30,7 +30,7 @@ class CatheterEnvConfig:
     include_target: bool = True
     history_length: int = 1  # Number of past states to include
 
-    # Reward parameters
+    # Reward data/simulation_parameters
     position_reward_scale: float = 1.0
     action_penalty_scale: float = 0.01
     smoothness_penalty_scale: float = 0.01
@@ -54,7 +54,7 @@ class CatheterEnvConfig:
     # Use hybrid model (CRM physics + learned residuals)
     use_hybrid_dynamics: bool = False
 
-    # C++ physics parameters
+    # C++ physics data/simulation_parameters
     use_cpp: bool = False  # Whether to use C++ bindings (slower but more accurate)
     param_file: Optional[str] = None  # Path to catheter parameter file
     config_file: Optional[str] = None  # Path to catheter configuration file
@@ -106,7 +106,7 @@ class CatheterEnv(gym.Env):
         self.config = config or CatheterEnvConfig()
         self.render_mode = render_mode
 
-        # Initialize simulator with proper parameters
+        # Initialize simulator with proper data/simulation_parameters
         self.simulator = CRMSimulator(
             param_file=self.config.param_file,
             config_file=self.config.config_file,

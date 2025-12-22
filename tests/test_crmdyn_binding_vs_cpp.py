@@ -14,8 +14,8 @@ def test_crmdyn_binding_matches_cpp_seed():
         pytest.skip("C++ bindings not built")
 
     wrapper = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
         flip_third_current=False,
     )

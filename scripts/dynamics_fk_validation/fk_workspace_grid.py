@@ -94,8 +94,8 @@ def plot_workspace_xy(P: np.ndarray, conv: np.ndarray, out_png: Path, *, max_poi
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--param-file", default="catheterdata/CatheterParameterSet_1_dyn.txt")
-    ap.add_argument("--config-file", default="catheterdata/CatheterSpatialConfiguration_1.txt")
+    ap.add_argument("--param-file", default="data/catheter_params/CatheterParameterSet_1_dyn.txt")
+    ap.add_argument("--config-file", default="data/catheter_params/CatheterSpatialConfiguration_1.txt")
     ap.add_argument("--ins", type=float, default=94.3, help="Insertion length (mm)")
     ap.add_argument("--bound", type=float, default=0.3, help="Current bound (A)")
     ap.add_argument("--step", type=float, default=0.01, help="Current grid step (A)")
@@ -107,7 +107,7 @@ def main() -> None:
     total = int(vals.size) ** 3
     print(f"Grid: n={vals.size} per axis => total={total} FK solves")
 
-    out_dir = Path("output_data")
+    out_dir = Path("data/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     if args.out:
         out_npz = Path(args.out)

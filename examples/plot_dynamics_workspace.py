@@ -15,7 +15,7 @@ def plot_dynamics_workspace():
         print("C++ bindings not available, skipping.")
         return
 
-    # Grid parameters
+    # Grid data/simulation_parameters
     current_min = -0.3
     current_max = 0.3
     current_step = 0.1  # Using a larger step for reasonable execution time
@@ -26,8 +26,8 @@ def plot_dynamics_workspace():
     dt = 0.05
 
     wrapper = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
     )
     if not wrapper.is_using_cpp:

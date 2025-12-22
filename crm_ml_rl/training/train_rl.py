@@ -40,7 +40,7 @@ class RLTrainingConfig:
     n_eval_episodes: int = 10
     save_freq: int = 50_000
 
-    # Algorithm hyperparameters
+    # Algorithm hyperdata/simulation_parameters
     learning_rate: float = 3e-4
     batch_size: int = 256
     gamma: float = 0.99

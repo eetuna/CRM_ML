@@ -9,10 +9,10 @@ function [ currents, coil_position_mat, tip_position_mat, data_length] = read_in
     % NEW DATA
     % 
     fileID = fopen(path_to_output,'r');
-    output_data = textscan(fileID,'%f %f < %f %f %f > < %f %f %f > < %f %f %f > < %f %f %f > ', 'Delimiter',',');
+    data/output = textscan(fileID,'%f %f < %f %f %f > < %f %f %f > < %f %f %f > < %f %f %f > ', 'Delimiter',',');
     data_raw = [];
-    for i = 1:length(output_data)
-        raw_traj = cell2mat(output_data(i));
+    for i = 1:length(data/output)
+        raw_traj = cell2mat(data/output(i));
         data_raw = [data_raw,raw_traj];
     end
     fclose(fileID);

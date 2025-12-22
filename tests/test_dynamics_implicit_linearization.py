@@ -10,8 +10,8 @@ def test_implicit_linearization_shapes_and_finiteness():
 
     kin = crm_python.CRMKinematics()
     dyn = crm_python.CRMDynamics()
-    ok1 = kin.load_parameters("catheterdata/CatheterParameterSet_1_dyn.txt", "catheterdata/CatheterSpatialConfiguration_1.txt")
-    ok2 = dyn.load_parameters("catheterdata/CatheterParameterSet_1_dyn.txt", "catheterdata/CatheterSpatialConfiguration_1.txt")
+    ok1 = kin.load_parameters("data/catheter_params/CatheterParameterSet_1_dyn.txt", "data/catheter_params/CatheterSpatialConfiguration_1.txt")
+    ok2 = dyn.load_parameters("data/catheter_params/CatheterParameterSet_1_dyn.txt", "data/catheter_params/CatheterSpatialConfiguration_1.txt")
     if not (ok1 and ok2):
         pytest.skip("C++ bindings not available")
 

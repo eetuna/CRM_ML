@@ -1,4 +1,4 @@
-function obj = load_parameters( youngModulus,shearModulus,Alignment_Parameters)
+function obj = load_parameters( youngModulus,shearModulus,Alignment_Params)
 
 %This file introduces all of the geometric parameters of catheter 
 %and calculates the weights of the catheter and coils.
@@ -122,20 +122,20 @@ A_3 = pi*(OutDia_AxialCoil/2)^2;
 %     0 0 N_3*A_3];
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-theta_1_a = Alignment_Parameters(1);
-theta_2_a = Alignment_Parameters(2);
+theta_1_a = Alignment_Params(1);
+theta_2_a = Alignment_Params(2);
 
-theta_1_b = Alignment_Parameters(3);
-theta_2_b = Alignment_Parameters(4);
+theta_1_b = Alignment_Params(3);
+theta_2_b = Alignment_Params(4);
 
-alpha_1_a = Alignment_Parameters(5);
-alpha_2_a = Alignment_Parameters(6);
+alpha_1_a = Alignment_Params(5);
+alpha_2_a = Alignment_Params(6);
 
-alpha_1_b = Alignment_Parameters(7);
-alpha_2_b = Alignment_Parameters(8);
+alpha_1_b = Alignment_Params(7);
+alpha_2_b = Alignment_Params(8);
 
-beta_1 = Alignment_Parameters(9);
-beta_2 = Alignment_Parameters(10);
+beta_1 = Alignment_Params(9);
+beta_2 = Alignment_Params(10);
 
 obj.MuMatrix = zeros(3,3);
 obj.MuMatrix(1,1) = 0.5*N_1*A_1*(cos(theta_1_a)*cos(theta_2_a) + cos(theta_1_b)*cos(theta_2_b));

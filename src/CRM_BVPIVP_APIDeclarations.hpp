@@ -75,7 +75,7 @@ namespace CRMCatheterModel {
 		double	*LocMarkerLambdas;								// [no_locmarkers]
 		double 	(*fcumlambda)[3];								// [no_fcum_steps+1]
 
-        //Dynamics parameters
+        //Dynamics data/simulation_parameters
         double v_L_pre[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
         double w_L_pre[NUM_ACT_SET][3];                                  // The angular velocity at the coil (L)
         double p_pre[NUM_ACT_SET][3];
@@ -89,7 +89,7 @@ namespace CRMCatheterModel {
 		bool memory_allocated = false;							// true if memory for the dynamic array were allocate by the class constructor
 	};
 
-	// Construct Shooting Method Parameter Set from Catheter Model and Configuration Parameters
+	// Construct Shooting Method Parameter Set from Catheter Model and Configuration Params
 	CRMShootingMethodParams CRMConstructShootingMethodParamSet(
 		CRMCatheterModelParams CathParams, CatheterConfiguration CathConfig,
 		double InsertionLength, double ActuationCurrents[NUM_ACT_SET][3],
@@ -120,7 +120,7 @@ namespace CRMCatheterModel {
                       double out_p_atLocMarkers[/*in_Params.no_locmarkers*/][3],
                       double out_R_atActuators[/*in_params.no_act_set*/][9] , double out_p_atActuators[/*in_params.no_act_set*/][3] ) ;
 
-	// CRMSolverIVP API which exposes all of the individual parameters
+	// CRMSolverIVP API which exposes all of the individual data/simulation_parameters
     void CRMSolverIVP(
             int32_t in_no_flex_seg,
             int32_t in_no_rigid_seg,
@@ -226,7 +226,7 @@ namespace CRMCatheterModel {
 													//   only the entries 0..NextLocMarker-1 are filled
 		double (*fcumlambda)[3];					// 3*(no_fcum_steps+1) by 1 array (grouped by 3 doubles) storing cumulative external force (excluding tip force) integrated from \lambda = index * \Delta\lambda to the catheter tip (\lambda=0) - in spatial (catheter base frame) coordinates
 
-        //Dynamics parameters
+        //Dynamics data/simulation_parameters
         double v_L_pre[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
         double w_L_pre[NUM_ACT_SET][3];                                  // The angular velocity at the coil (L)
         double p_pre[NUM_ACT_SET][3];
@@ -346,7 +346,7 @@ namespace CRMCatheterModel {
 		double in_deltau0_initialguess[3], double in_ftip_initialguess[3],
 		double out_deltau0[3], double out_ftip[3], int& out_localmin);
 
-	// CRMShootingMethodBVP API which exposes all of the individual parameters
+	// CRMShootingMethodBVP API which exposes all of the individual data/simulation_parameters
 	void CRMShootingMethodBVP(
 		int32_t in_no_flex_seg,								// Number of flexible segments
 		int32_t in_no_rigid_seg,							// Number of rigid segments (including actuator segments and non-actuator rigid segments)
@@ -361,12 +361,12 @@ namespace CRMCatheterModel {
 		double	in_TipConstraintPoint[3],					// The spatial coordinates of the point where the catheter tip is constrained to be (used if in_ContactMode == FIXED_TIP)
 		double	in_TipForce[3],								// External point force (in spatial coordinates) applied at the tip of the catheter (\lambda = 0) - this value will not be used if in_ContactMode == FIXED_TIP 
 		double	in_IntegrationStepSize,						// Stepsize used in numerical integration along the length of the catheter
-		// Catheter Configuration Parameters
+		// Catheter Configuration Params
 		double 	in_B0[3],									// B0 field vector of the MRI scanner (in spatial coordinates)
 		double 	in_g[3],									// Gravity vector (in spatial coordinates)
 		double 	in_p0[3],									// Catheter entry port position (in spatial coordinates)
 		double 	in_R0[9],									// Catheter orientation at the entry port (relative to the spatial frame); 3x3 matrix stored in row major order
-		// Catheter Model Parameters
+		// Catheter Model Params
 		//	For all parameters below, segments and actuator units are numbered/ordered from the tip of the catheter towards the base (distal to proximal)
 		double 	in_SegLengths[/*NUM_SEGMENTS*/],			// Array of segment lengths; NUM_SEGMENTS long array
 		double	in_LocMarkers[/*no_locmarkers*/],			// Array of localization marker locations (in lambda coordinates); in_no_locmarkers long array

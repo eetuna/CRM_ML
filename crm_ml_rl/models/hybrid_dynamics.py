@@ -26,7 +26,7 @@ from ..wrappers.crm_wrapper import CRMWrapper, CRMSimulator, CatheterState, HAS_
 @dataclass
 class HybridDynamicsConfig:
     """Configuration for hybrid dynamics model."""
-    # Physics parameters
+    # Physics data/simulation_parameters
     param_file: Optional[str] = None
     config_file: Optional[str] = None
     use_cpp: bool = True
@@ -36,7 +36,7 @@ class HybridDynamicsConfig:
     # Damping coefficients
     damping: np.ndarray = None
 
-    # Neural network parameters
+    # Neural network data/simulation_parameters
     hidden_dims: List[int] = None
     dropout: float = 0.1
     max_correction: float = 5.0
@@ -120,8 +120,8 @@ class HybridDynamicsModel(nn.Module):
                 from ..wrappers.torch_physics import TorchCRMPhysics
                 if TorchCRMPhysics is not None:
                     self._torch_physics = TorchCRMPhysics(
-                        param_file=self.config.param_file or "catheterdata/CatheterParameterSet_1_dyn.txt",
-                        config_file=self.config.config_file or "catheterdata/CatheterSpatialConfiguration_1.txt",
+                        param_file=self.config.param_file or "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+                        config_file=self.config.config_file or "data/catheter_params/CatheterSpatialConfiguration_1.txt",
                         device=str(self.device),
                     )
             except Exception:

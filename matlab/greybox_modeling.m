@@ -2,8 +2,8 @@ close all;
 clear;
 
 %% input output
-path_to_output = '3D_dynamic_response_data_0124/output_trajectories/lemniscate01_01.txt';
-path_to_input = '3D_dynamic_response_data_0124/input_currents/lemniscateCurrents.mat';
+path_to_output = 'data/experimental/output_trajectories/lemniscate01_01.txt';
+path_to_input = 'data/experimental/input_currents/lemniscateCurrents.mat';
 Ts = 0.001; %s
 Ts_camera = 0.0167; %s
 % read_input_output;
@@ -46,13 +46,13 @@ mL = [0;0;0];
 % SegmentLengths = [19.85;  18.3; 59.40];
 
 % load("param_4.mat");
-% damping = nlgr_model.Parameters(1).Value;
+% damping = nlgr_model.Params(1).Value;
 % radius_ = [1.5875;0.9906];
-% E_ = nlgr_model.Parameters(4).Value;
-% Coil_align = nlgr_model.Parameters(5).Value; %[-0.0871, -0.3934]
-% Coil_turnarea = nlgr_model.Parameters(6).Value;%[1.3851;1.44;1.60];% [1.44;1.3851;1.60];
-% mass_ =nlgr_model.Parameters(7).Value;% [5.7736e-5]; 
-% SegmentLengths =nlgr_model.Parameters(8).Value;% [5.7736e-5]; 
+% E_ = nlgr_model.Params(4).Value;
+% Coil_align = nlgr_model.Params(5).Value; %[-0.0871, -0.3934]
+% Coil_turnarea = nlgr_model.Params(6).Value;%[1.3851;1.44;1.60];% [1.44;1.3851;1.60];
+% mass_ =nlgr_model.Params(7).Value;% [5.7736e-5]; 
+% SegmentLengths =nlgr_model.Params(8).Value;% [5.7736e-5]; 
 
 %%%%%%% for new data
 damping = [100;200;0.1;0.01]; 
@@ -75,13 +75,13 @@ SegmentLengths = [18.5;  18.3; 57.50];
 % InitialStates = [vL;wL;mL;nL;pL;RL; xf];
 
 load("model_3.mat");
-damping = nlgr_model.Parameters(1).Value;
+damping = nlgr_model.Params(1).Value;
 radius_ = [1.5875;0.9906];
-E_ = nlgr_model.Parameters(4).Value;
-Coil_align = nlgr_model.Parameters(5).Value; %[-0.0871, -0.3934]
-Coil_turnarea = nlgr_model.Parameters(6).Value;%[1.3851;1.44;1.60];% [1.44;1.3851;1.60];
-mass_ =nlgr_model.Parameters(7).Value;% [5.7736e-5]; 
-SegmentLengths =nlgr_model.Parameters(8).Value;% [5.7736e-5]; 
+E_ = nlgr_model.Params(4).Value;
+Coil_align = nlgr_model.Params(5).Value; %[-0.0871, -0.3934]
+Coil_turnarea = nlgr_model.Params(6).Value;%[1.3851;1.44;1.60];% [1.44;1.3851;1.60];
+mass_ =nlgr_model.Params(7).Value;% [5.7736e-5]; 
+SegmentLengths =nlgr_model.Params(8).Value;% [5.7736e-5]; 
 
 % % %test with varying freq data
 
@@ -210,18 +210,18 @@ plot(x,coil_position_mat(3,ind_start:ind_start + test_length-1), 'r');
 
 Order = [3, 3, 39]; %[Ny, Nu, Nx == dim(v, w, m, n, p, R, xf)]
 
-Parameters = {damping; Ts;radius_;E_;Coil_align;Coil_turnarea;mass_; SegmentLengths};
+Params = {damping; Ts;radius_;E_;Coil_align;Coil_turnarea;mass_; SegmentLengths};
 
 
-nlgr = idnlgrey('CRMDYN_c', Order, Parameters, InitialStates, Ts);
-nlgr.Parameters(1).Fixed = false;
-nlgr.Parameters(2).Fixed = true;
-nlgr.Parameters(3).Fixed = true;
-nlgr.Parameters(4).Fixed = false;
-nlgr.Parameters(5).Fixed = false;
-nlgr.Parameters(6).Fixed = false;
-nlgr.Parameters(7).Fixed = false;
-nlgr.Parameters(8).Fixed = false;
+nlgr = idnlgrey('CRMDYN_c', Order, Params, InitialStates, Ts);
+nlgr.Params(1).Fixed = false;
+nlgr.Params(2).Fixed = true;
+nlgr.Params(3).Fixed = true;
+nlgr.Params(4).Fixed = false;
+nlgr.Params(5).Fixed = false;
+nlgr.Params(6).Fixed = false;
+nlgr.Params(7).Fixed = false;
+nlgr.Params(8).Fixed = false;
 
 opt = nlgreyestOptions;
 opt.Display = 'on';

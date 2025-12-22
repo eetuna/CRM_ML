@@ -1,6 +1,6 @@
 /* Load_CRMCatheterModelParams
  * CathParams = Load_CRMCatheterModelParams(inputfile);
- * Loads the catheter model parameters from the file inputfile
+ * Loads the catheter model.parameters from the file inputfile
  *   and returns on the CathParams structure
 */
 
@@ -25,7 +25,7 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     //    CRMCatheterModelParams CathParams =Load_CRMCatheterModelParams(str);
     //}
     //catch (const std::runtime_error& e) {
-    //    mexPrintf("Error loading Catheter Model Parameters file. \n");
+    //    mexPrintf("Error loading Catheter Model Params file. \n");
     //    mexPrintf(e.what());
     //}
     

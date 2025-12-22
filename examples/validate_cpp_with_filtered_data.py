@@ -13,7 +13,7 @@ from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper
 
 
 def run_filtered_validation(min_hz: float = 20.0):
-    root = Path("3D_dynamic_response_data_0124")
+    root = Path("data/experimental")
     currents_mat = root / "input_currents" / "circleCurrents.mat"
     trajs = list_available_trajectories(root)
     # Only use .mat trajectories to avoid malformed txt files

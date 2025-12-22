@@ -9,7 +9,7 @@ Runs one lap of circle1 currents (default 200 points) and supports hold=1 or hol
 by repeating each ramp/circle current row.
 
 Outputs:
-  - output_data/dyn_fk_ramp_circle1_hold{H}.npz
+  - data/output/dyn_fk_ramp_circle1_hold{H}.npz
   - plots/dyn_fk_ramp_circle1_hold{H}_multiview.png
   - plots/dyn_fk_ramp_circle1_hold{H}_timeseries.png
 """
@@ -33,12 +33,12 @@ from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS  # noqa:
 
 @dataclass(frozen=True)
 class Config:
-    circle1_csv: str = "output_data/circle1_currents_y40_r10_dp_0p1mm_n200.csv"
+    circle1_csv: str = "data/output/circle1_currents_y40_r10_dp_0p1mm_n200.csv"
     insertion_length: float = 94.3
     dt: float = 0.05
     integration_step_size: float = 0.2
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
 
     c3_start: float = 0.01
     ramp_to_circle_steps: int = 120
@@ -266,7 +266,7 @@ def main() -> None:
     e_ramp = e_ok[: int(np.sum(ok[:n_ramp]))] if np.any(ok[:n_ramp]) else np.array([])
     e_circle = e_ok[int(np.sum(ok[:n_ramp])) :] if np.any(ok[n_ramp:]) else np.array([])
 
-    out_dir = Path("output_data")
+    out_dir = Path("data/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     plots_dir = Path("plots")
     plots_dir.mkdir(parents=True, exist_ok=True)

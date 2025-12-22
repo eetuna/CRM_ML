@@ -19,7 +19,7 @@ except ImportError:
 
 
 @dataclass
-class CatheterParameters:
+class CatheterParams:
     """Catheter physical parameters."""
     # Damping coefficients (6 elements): [linear_x, linear_y, linear_z, angular_x, angular_y, angular_z]
     # Values from CRMDYN_test.cpp for consistency with C++ dynamics
@@ -53,7 +53,7 @@ class CatheterParameters:
     num_act_set: int = 1
 
     @classmethod
-    def from_dict(cls, params: Dict) -> 'CatheterParameters':
+    def from_dict(cls, params: Dict) -> 'CatheterParams':
         """Create parameters from dictionary."""
         default_damping = [
             12.1761626666366, 12.1761626666366, 284.429938756989,
@@ -129,7 +129,7 @@ class CRMWrapper:
         self,
         param_file: Optional[str] = None,
         config_file: Optional[str] = None,
-        params: Optional[CatheterParameters] = None,
+        params: Optional[CatheterParams] = None,
         use_cpp: bool = True,
         damping: Optional[np.ndarray] = None,
         flip_third_current: bool = False,
@@ -147,7 +147,7 @@ class CRMWrapper:
             damping: Optional damping coefficients
             flip_third_current: Apply dataset-specific flip on third current channel
         """
-        self.params = params or CatheterParameters()
+        self.params = params or CatheterParams()
         self.use_cpp = use_cpp and HAS_CPP_BINDINGS
         self.initialized = False
         self._initial_use_cpp = self.use_cpp
@@ -166,9 +166,9 @@ class CRMWrapper:
         # Default file paths
         if param_file is None:
             # Use dynamics-tuned parameters by default for stability
-            param_file = "catheterdata/CatheterParameterSet_1_dyn.txt"
+            param_file = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
         if config_file is None:
-            config_file = "catheterdata/CatheterSpatialConfiguration_1.txt"
+            config_file = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
 
         self.param_file = param_file
         self.config_file = config_file
@@ -184,7 +184,7 @@ class CRMWrapper:
         self._cpp_kinematics = crm_python.CRMKinematics()
         self._cpp_dynamics = crm_python.CRMDynamics()
 
-        # Try to load parameters
+        # Try to load data/simulation_parameters
         if Path(self.param_file).exists() and Path(self.config_file).exists():
             self.initialized = self._cpp_kinematics.load_parameters(
                 self.param_file, self.config_file
@@ -203,7 +203,7 @@ class CRMWrapper:
 
     def _init_simplified(self):
         """Initialize simplified dynamics model."""
-        # Simplified model parameters
+        # Simplified model.parameters
         self._mass = 0.001  # kg
         self._damping = 10.0  # N·s/m
         self._stiffness = 100.0  # N/m
@@ -442,7 +442,7 @@ class CRMWrapper:
         Prevents repeated C++ solver attempts (and log spam) while keeping the
         simulation running from the latest known state.
         """
-        # Initialize simplified model parameters/state
+        # Initialize simplified model.parameters/state
         self._init_simplified()
         if last_result is not None:
             # If the solver reported non-convergence, discard its state entirely

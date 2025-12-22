@@ -77,7 +77,7 @@ Thumbs.db
 
 # Data files (keep structure but not large data)
 *.mat
-!parameters/*.mat
+!data/simulation_parameters/*.mat
 *.pkl
 *.h5
 *.hdf5
@@ -92,7 +92,7 @@ checkpoints/
 *.onnx
 
 # Output data
-output_data/
+data/output/
 results/
 
 # Environment files with secrets

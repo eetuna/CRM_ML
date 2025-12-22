@@ -17,7 +17,7 @@ Example Usage:
     # Train a dynamics model
     from crm_ml_rl.training.train_dynamics import train_dynamics_model
     trainer, history = train_dynamics_model(
-        data_dir="3D_dynamic_response_data_0124",
+        data_dir="data/experimental",
         output_dir="trained_models",
         model_type="residual"
     )

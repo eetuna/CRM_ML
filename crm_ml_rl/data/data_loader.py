@@ -1,7 +1,7 @@
 """
 Data loader for CRM experimental and simulated data.
 
-Data format from 3D_dynamic_response_data_0124/:
+Data format from data/experimental/:
 - Output trajectories: timestamp, arduino_state, base_pos(3), coil_pos(3), normal(3), tip_pos(3)
 - Input currents: 3 coil currents (axial, side1, side2)
 - File naming: {trajectory_type}{sampling_ms}_01.txt (e.g., circle100_01.txt = 100ms sampling)
@@ -30,7 +30,7 @@ SAMPLING_TIMES_MS = [1, 3, 5, 8, 10, 12, 15, 18, 20, 25, 50, 100]
 SLOW_SAMPLING_TIMES_MS = [20, 25, 50, 100]
 
 # Data directory relative to project root
-DATA_DIR = "3D_dynamic_response_data_0124"
+DATA_DIR = "data/experimental"
 
 
 def get_project_root() -> Path:

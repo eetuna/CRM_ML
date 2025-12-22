@@ -1,7 +1,7 @@
 """
 Reproduce and analyze dynamics convergence failures.
 
-This script loads the failing current combinations from `output_data/sweep_failures_cpp.json`
+This script loads the failing current combinations from `data/output/sweep_failures_cpp.json`
 and attempts to run the C++ dynamics with the same hardcoded initial seed
 used in `CRMDYN_grid_sweep.cpp`.
 
@@ -20,7 +20,7 @@ def run_failure_reproduction():
 
     # Load failing currents
     repo_root = Path(__file__).resolve().parents[1]
-    with (repo_root / "output_data" / "sweep_failures_cpp.json").open() as f:
+    with (repo_root / "data/output" / "sweep_failures_cpp.json").open() as f:
         failing_currents = json.load(f)
 
     # Hardcoded seeds from CRMDYN_test.cpp
@@ -52,8 +52,8 @@ def run_failure_reproduction():
     dt = 0.05
 
     wrapper = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
         disable_cpp_fallback=True, # Don't fallback, we want to see the failures
     )

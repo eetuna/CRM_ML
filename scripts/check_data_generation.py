@@ -165,7 +165,7 @@ def test_dataset_creation():
     print(f"     times: {dataset['times'].shape}")
 
     # Save example
-    output_dir = Path("output_data")
+    output_dir = Path("data/output")
     output_dir.mkdir(exist_ok=True)
     output_file = output_dir / "example_dataset.npz"
 

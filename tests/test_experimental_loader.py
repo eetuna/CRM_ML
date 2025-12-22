@@ -5,7 +5,7 @@ from crm_ml_rl.data.experimental_loader import load_experimental_sample
 
 
 def test_load_experimental_sample_flips_third_current():
-    root = Path("3D_dynamic_response_data_0124")
+    root = Path("data/experimental")
     currents_path = root / "input_currents" / "circleCurrents.mat"
     traj_path = root / "desired_input_trajectories" / "circleTrajectory.mat"
 
@@ -20,7 +20,7 @@ def test_load_experimental_sample_flips_third_current():
 
 
 def test_load_experimental_sample_shapes_match():
-    root = Path("3D_dynamic_response_data_0124")
+    root = Path("data/experimental")
     currents_path = root / "input_currents" / "circleCurrents.mat"
     traj_path = root / "desired_input_trajectories" / "circleTrajectory.mat"
 

@@ -749,7 +749,7 @@ void CRMFlexible_IVP_Back ( int SegmentIndex, const double in_p[3], const double
     auto & no_locmarkers = in_params.no_locmarkers;
 
     // Flexible Segment
-    // Prepare the CRMIntegrand Parameters
+    // Prepare the CRMIntegrand Params
     fsegno=SegmentIndex>>1; // i/2, flexible segment no
     h= -1* (SegBounds[SegmentIndex+1] - SegBounds[SegmentIndex] )/(SegSteps[fsegno]*1.0);
 
@@ -840,7 +840,7 @@ void CRMFlexForward_pass (  int SegmentIndex, const double in_p[3], const double
     auto & no_locmarkers = in_params.no_locmarkers;
 
 
-    // Prepare the CRMIntegrand Parameters
+    // Prepare the CRMIntegrand Params
     fsegno=SegmentIndex>>1; // i/2, flexible segment no
     h=(SegBounds[SegmentIndex+1]-SegBounds[SegmentIndex])/(SegSteps[fsegno]*1.0);
 
@@ -1071,7 +1071,7 @@ void DynamicsBVP(	CRMShootingMethodParams& in_Params, const double xf[NUM_STATES
     int NLEq_Dim;  // Dimension of the Nonlinear Equation to Solve
     NLEq_Dim = NUM_DYN_RESIDUAL;
 
-    // Call CRMSolverIVP_Prep, to pre-process parameters
+    // Call CRMSolverIVP_Prep, to pre-process data/simulation_parameters
     double x_0[NUM_STATES];
     for (int i = 0; i < NUM_STATES; i++) {
         if (i < 3) {

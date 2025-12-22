@@ -44,8 +44,8 @@ def main():
 
     dyn = cur_mod.CRMDynamics()
     ok = dyn.load_parameters(
-        "catheterdata/CatheterParameterSet_1_dyn.txt",
-        "catheterdata/CatheterSpatialConfiguration_1.txt",
+        "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        "data/catheter_params/CatheterSpatialConfiguration_1.txt",
     )
     if not ok:
         raise RuntimeError("Failed to load parameters with current module")
@@ -67,8 +67,8 @@ def main():
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], args.insertion)
     seed = dyn.get_seed_state()
 
-    seed_npz = "output_data/seed_for_compare_autodiff.npz"
-    os.makedirs("output_data", exist_ok=True)
+    seed_npz = "data/output/seed_for_compare_autodiff.npz"
+    os.makedirs("data/output", exist_ok=True)
     np.savez(
         seed_npz,
         v=np.asarray(seed["v"], dtype=np.float64),
@@ -84,11 +84,11 @@ def main():
     # Keep currents small to avoid coil integration blow-ups (which also spam stdout).
     currents = rng.uniform(low=-0.01, high=0.01, size=(args.candidates, 3)).astype(np.float64)
     currents[:, 2] += 0.02
-    currents_npz = "output_data/currents_for_compare_autodiff.npz"
+    currents_npz = "data/output/currents_for_compare_autodiff.npz"
     np.savez(currents_npz, currents=currents)
 
-    eigen_out = "output_data/bench_eigen.jsonl"
-    tpl_out = "output_data/bench_template.jsonl"
+    eigen_out = "data/output/bench_eigen.jsonl"
+    tpl_out = "data/output/bench_template.jsonl"
 
     cmd = [
         sys.executable,
@@ -107,15 +107,15 @@ def main():
         str(args.insertion),
     ]
 
-    os.makedirs("output_data", exist_ok=True)
+    os.makedirs("data/output", exist_ok=True)
     os.makedirs("/tmp/mpl", exist_ok=True)
     env = dict(os.environ)
     env["MPLCONFIGDIR"] = "/tmp/mpl"
     env["PYTHONWARNINGS"] = "ignore"
 
-    with open("output_data/bench_eigen.log", "w", encoding="utf-8") as log:
+    with open("data/output/bench_eigen.log", "w", encoding="utf-8") as log:
         subprocess.run(cmd + ["--so", args.current_so, "--out-jsonl", eigen_out], check=True, env=env, stdout=log, stderr=log)
-    with open("output_data/bench_template.log", "w", encoding="utf-8") as log:
+    with open("data/output/bench_template.log", "w", encoding="utf-8") as log:
         subprocess.run(cmd + ["--so", args.template_so, "--out-jsonl", tpl_out], check=True, env=env, stdout=log, stderr=log)
 
     eigen_rows = {r["idx"]: r for r in load_jsonl(eigen_out)}

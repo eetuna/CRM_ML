@@ -5,8 +5,8 @@ Export a single metadata bundle describing the current Y±40, r=10 setup:
   - dynamics/FK ramped rollout settings (hold=2 baseline)
 
 Writes:
-  - output_data/run_metadata_y40_r10_dp_0p1mm_hold2.json
-  - output_data/run_metadata_y40_r10_dp_0p1mm_hold2.txt
+  - data/output/run_metadata_y40_r10_dp_0p1mm_hold2.json
+  - data/output/run_metadata_y40_r10_dp_0p1mm_hold2.txt
 """
 
 from __future__ import annotations
@@ -30,7 +30,7 @@ def try_get_pkg_version(name: str) -> str | None:
 
 
 def main() -> None:
-    out_dir = Path("output_data")
+    out_dir = Path("data/output")
     out_dir.mkdir(parents=True, exist_ok=True)
 
     workspace_npz = out_dir / "workspace_fk_ins94.3_b0.3_step0.01_int0.2.npz"
@@ -63,8 +63,8 @@ def main() -> None:
             "current_bound_A": 0.3,
             "current_step_A": 0.01,
             "integration_step_size_mm": 0.2,
-            "param_file": "catheterdata/CatheterParameterSet_1_dyn.txt",
-            "config_file": "catheterdata/CatheterSpatialConfiguration_1.txt",
+            "param_file": "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+            "config_file": "data/catheter_params/CatheterSpatialConfiguration_1.txt",
         },
         "dp_projection_and_ik": {
             "script": "scripts/fk_ik_test_projected_workspace_dp.py",
@@ -82,8 +82,8 @@ def main() -> None:
             "itrmax": None,
             "insertion_length_mm": 94.3,
             "integration_step_size_mm": 0.2,
-            "param_file": "catheterdata/CatheterParameterSet_1_dyn.txt",
-            "config_file": "catheterdata/CatheterSpatialConfiguration_1.txt",
+            "param_file": "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+            "config_file": "data/catheter_params/CatheterSpatialConfiguration_1.txt",
         },
         "dyn_fk_ramped_rollout": {
             "script": "scripts/dyn_fk_compare_ramped_circles.py",

@@ -63,7 +63,7 @@ public:
         }
     }
 
-    // Getters for key parameters
+    // Getters for key data/simulation_parameters
     int getNumFlexSeg() const { return params->no_flex_seg; }
     int getNumRigidSeg() const { return params->no_rigid_seg; }
     int getNumActSet() const { return params->no_act_set; }
@@ -114,7 +114,7 @@ public:
 
     CRMKinematicsWrapper() {}
 
-    bool loadParameters(const std::string& param_file, const std::string& config_file) {
+    bool loadParams(const std::string& param_file, const std::string& config_file) {
         initialized = catheter.loadFromFiles(param_file, config_file);
         return initialized;
     }
@@ -158,7 +158,7 @@ public:
      */
     py::dict forwardKinematics(py::array_t<double> currents, double insertion_length) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded. Call load_parameters first.");
+            throw std::runtime_error("Params not loaded. Call load_parameters first.");
         }
 
         auto curr_buf = currents.request();
@@ -178,7 +178,7 @@ public:
         }
         in_x[num_currents] = insertion_length;
 
-        // Setup FK parameters
+        // Setup FK data/simulation_parameters
         CRMForwardKinematicsData FKParams;
         CRMCatheterModelParams* cparams = catheter.getParams();
         fillFKParams(FKParams, cparams, /*finalValueOnly=*/true);
@@ -245,7 +245,7 @@ public:
      */
     py::dict forwardKinematicsWithGuess(py::array_t<double> currents, double insertion_length, py::array_t<double> deltau0_initialguess) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded. Call load_parameters first.");
+            throw std::runtime_error("Params not loaded. Call load_parameters first.");
         }
 
         auto curr_buf = currents.request();
@@ -311,7 +311,7 @@ public:
      */
     py::dict fkAndJacobian(py::array_t<double> currents, double insertion_length, py::array_t<double> deltau0_initialguess) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
 
         auto curr_buf = currents.request();
@@ -388,7 +388,7 @@ public:
      */
     py::array_t<double> computeJacobian(py::array_t<double> currents, double insertion_length) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
 
         // First compute FK to get output
@@ -426,7 +426,7 @@ public:
         for (int i = 0; i < 9; i++) in_FKouty(3 + i) = rot_ptr[i];
         for (int i = 0; i < 3; i++) in_FKouty(12 + i) = u0_ptr[i];
 
-        // Setup FK parameters
+        // Setup FK data/simulation_parameters
         CRMForwardKinematicsData FKParams;
         FKParams.CathParams = cparams;
         FKParams.CathConfig = &catheter.config;
@@ -563,7 +563,7 @@ public:
         py::array_t<double> nL_in = py::array_t<double>()
     ) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
 
         const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
@@ -610,10 +610,10 @@ public:
         }
     }
 
-    bool loadParameters(const std::string& param_file, const std::string& config_file) {
+    bool loadParams(const std::string& param_file, const std::string& config_file) {
         initialized = catheter.loadFromFiles(param_file, config_file);
         if (initialized) {
-            // Initialize inertia based on loaded parameters
+            // Initialize inertia based on loaded data/simulation_parameters
             CRMCatheterModelParams* cparams = catheter.getParams();
             for (int i = 0; i < cparams->no_act_set && i < NUM_ACT_SET; i++) {
                 double mass = cparams->ActMass[i];
@@ -744,7 +744,7 @@ public:
      */
     bool initializeFromKinematics(py::array_t<double> currents, double insertion_length) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
 
         auto curr_buf = currents.request();
@@ -760,7 +760,7 @@ public:
         }
         in_x[num_currents] = insertion_length;
 
-        // Setup FK parameters
+        // Setup FK data/simulation_parameters
         CRMForwardKinematicsData FKParams;
         FKParams.CathParams = cparams;
         FKParams.CathConfig = &catheter.config;
@@ -869,7 +869,7 @@ public:
         py::array_t<double> nL_in = py::array_t<double>()
     ) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
         auto curr_buf = currents.request(); const double* cptr = static_cast<double*>(curr_buf.ptr);
         auto pbuf = p_in.request(); const double* pptr = static_cast<double*>(pbuf.ptr);
@@ -927,7 +927,7 @@ public:
      */
     py::dict stepDynamics(py::array_t<double> currents, double insertion_length) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
 
         auto curr_buf = currents.request();
@@ -942,7 +942,7 @@ public:
             }
         }
 
-        // Setup shooting method parameters
+        // Setup shooting method data/simulation_parameters
         ContactModeType ContactMode = ContactModeType::FREE_TIP;
         double TipForce[3] = {0.0, 0.0, 0.0};
         double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
@@ -1028,7 +1028,7 @@ public:
         std::optional<double> dt_override = std::nullopt
     ) {
         if (!initialized) {
-            throw std::runtime_error("Parameters not loaded.");
+            throw std::runtime_error("Params not loaded.");
         }
 
         const double dt_local = dt_override.has_value() ? *dt_override : dt;
@@ -1105,7 +1105,7 @@ public:
             for (int i = 0; i < 6; i++) damping_local[j][i] = damping[j][i];
         }
 
-        // Setup shooting method parameters
+        // Setup shooting method data/simulation_parameters
         ContactModeType ContactMode = ContactModeType::FREE_TIP;
         double TipForce[3] = {0.0, 0.0, 0.0};
         double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
@@ -1778,7 +1778,7 @@ public:
                                  const Eigen::VectorXd& seed_flat,
                                  Eigen::VectorXd& out_tau_flat,
                                  Eigen::Vector3d& out_u0) {
-            // Rebuild DYNNLEParams (includes preprocessed IVP parameters).
+            // Rebuild DYNNLEParams (includes preprocessed IVP data/simulation_parameters).
             py::array_t<double> vA, wA, pA, RA, xfA, mLA, nLA;
             unpack_seed(seed_flat, vA, wA, pA, RA, xfA, mLA, nLA);
             const double dt_local = dt;
@@ -2137,7 +2137,7 @@ PYBIND11_MODULE(crm_python, m) {
     // CRMKinematicsWrapper
     py::class_<CRMKinematicsWrapper>(m, "CRMKinematics")
         .def(py::init<>())
-        .def("load_parameters", &CRMKinematicsWrapper::loadParameters,
+        .def("load_parameters", &CRMKinematicsWrapper::loadParams,
              py::arg("param_file"), py::arg("config_file"),
              "Load catheter parameters from files")
         .def("forward_kinematics", &CRMKinematicsWrapper::forwardKinematics,
@@ -2159,7 +2159,7 @@ PYBIND11_MODULE(crm_python, m) {
     // CRMDynamicsWrapper
     py::class_<CRMDynamicsWrapper>(m, "CRMDynamics")
         .def(py::init<>())
-        .def("load_parameters", &CRMDynamicsWrapper::loadParameters,
+        .def("load_parameters", &CRMDynamicsWrapper::loadParams,
              py::arg("param_file"), py::arg("config_file"),
              "Load catheter parameters from files")
         .def("set_damping", &CRMDynamicsWrapper::setDamping,

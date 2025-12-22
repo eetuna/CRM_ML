@@ -22,8 +22,8 @@ os.environ.setdefault("MPLCONFIGDIR", "/tmp/mpl")
 
 @dataclass(frozen=True)
 class Paths:
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
     insertion_length: float = 94.3
     dt: float = 0.05
     integration_step_size: float = 0.01

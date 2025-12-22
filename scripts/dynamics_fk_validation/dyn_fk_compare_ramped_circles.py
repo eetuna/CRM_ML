@@ -9,9 +9,9 @@ Sequence:
      then ramp to circle2 start current.
   5) Traverse circle2 currents (full loop).
 
-Inputs are the exported IK currents from `output_data/*.csv`.
+Inputs are the exported IK currents from `data/output/*.csv`.
 Outputs:
-  - output_data/dyn_fk_ramped_circles.npz
+  - data/output/dyn_fk_ramped_circles.npz
   - plots/dyn_fk_ramped_circles_multiview.png
   - plots/dyn_fk_ramped_circles_timeseries.png
 """
@@ -35,15 +35,15 @@ from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS  # noqa:
 @dataclass(frozen=True)
 class Config:
     # Currents (exported)
-    circle1_csv: str = "output_data/circle1_currents_y40_r10_dp_0p1mm_n200.csv"
-    circle2_csv: str = "output_data/circle2_currents_y-40_r10_dp_0p1mm_n200.csv"
+    circle1_csv: str = "data/output/circle1_currents_y40_r10_dp_0p1mm_n200.csv"
+    circle2_csv: str = "data/output/circle2_currents_y-40_r10_dp_0p1mm_n200.csv"
 
     # Model
     insertion_length: float = 94.3
     dt: float = 0.05
     integration_step_size: float = 0.2
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
 
     # Ramps
     c3_start: float = 0.01
@@ -356,7 +356,7 @@ def main() -> None:
     ok = conv_dyn
     e_ok = e[ok]
 
-    out_dir = Path("output_data")
+    out_dir = Path("data/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     plots_dir = Path("plots")
     plots_dir.mkdir(parents=True, exist_ok=True)

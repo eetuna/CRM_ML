@@ -296,7 +296,7 @@ class TorchCRMPhysics:
         ok1 = self.kin.load_parameters(param_file, config_file)
         ok2 = self.dyn.load_parameters(param_file, config_file)
         if not (ok1 and ok2):
-            raise RuntimeError("Failed to load CRM parameters/config into C++ bindings.")
+            raise RuntimeError("Failed to load CRM data/simulation_parameters/config into C++ bindings.")
 
     def fk(self, currents: torch.Tensor, insertion_length: torch.Tensor) -> torch.Tensor:
         return CRMFKFunction.apply(currents, insertion_length, self.kin)

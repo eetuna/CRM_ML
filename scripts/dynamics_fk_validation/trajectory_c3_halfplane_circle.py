@@ -3,7 +3,7 @@ Generate a slow, slew-limited current trajectory that biases c3 to one half-plan
 and runs (c1,c2) circles, then repeats at other c3 biases, and plots results.
 
 Outputs:
-  - output_data/trajectory_c3_halfplane_circle.npz
+  - data/output/trajectory_c3_halfplane_circle.npz
   - plots/trajectory_c3_halfplane_circle_multiview.png
   - plots/trajectory_c3_halfplane_circle_timeseries.png
 """
@@ -43,9 +43,9 @@ class TrajectoryConfig:
     c3_mid: float = 0.1
     c3_lo: float = -0.2
     fk_stride: int = 5  # compute FK every N steps (1 = every step)
-    # C++ parameters
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    # C++ data/simulation_parameters
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
     damping: Tuple[float, float, float, float, float, float] = (
         12.1761626666366,
         12.1761626666366,
@@ -315,7 +315,7 @@ def plot_timeseries(
 
 def main() -> None:
     cfg = TrajectoryConfig()
-    out_npz = Path("output_data") / "trajectory_c3_halfplane_circle.npz"
+    out_npz = Path("data/output") / "trajectory_c3_halfplane_circle.npz"
     out_npz.parent.mkdir(parents=True, exist_ok=True)
     recompute = os.environ.get("CRM_TRAJ_RECOMPUTE", "0").strip() in ("1", "true", "TRUE", "yes", "YES")
 

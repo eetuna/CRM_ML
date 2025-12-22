@@ -39,9 +39,9 @@ def test_kinematics():
     # Create kinematics wrapper
     kin = crm_python.CRMKinematics()
 
-    # Load parameters
-    param_file = 'catheterdata/CatheterParameterSet_1_dyn.txt'
-    config_file = 'catheterdata/CatheterSpatialConfiguration_1.txt'
+    # Load data/simulation_parameters
+    param_file = 'data/catheter_params/CatheterParameterSet_1_dyn.txt'
+    config_file = 'data/catheter_params/CatheterSpatialConfiguration_1.txt'
 
     loaded = kin.load_parameters(param_file, config_file)
     if not loaded:
@@ -90,9 +90,9 @@ def test_dynamics():
     # Create dynamics wrapper
     dyn = crm_python.CRMDynamics()
 
-    # Load parameters
-    param_file = 'catheterdata/CatheterParameterSet_1_dyn.txt'
-    config_file = 'catheterdata/CatheterSpatialConfiguration_1.txt'
+    # Load data/simulation_parameters
+    param_file = 'data/catheter_params/CatheterParameterSet_1_dyn.txt'
+    config_file = 'data/catheter_params/CatheterSpatialConfiguration_1.txt'
 
     loaded = dyn.load_parameters(param_file, config_file)
     if not loaded:
@@ -152,8 +152,8 @@ def test_python_wrapper():
     print("\n4. Testing Python Wrapper (CRMWrapper, CRMSimulator)...")
     from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, CRMSimulator
 
-    param_file = 'catheterdata/CatheterParameterSet_1_dyn.txt'
-    config_file = 'catheterdata/CatheterSpatialConfiguration_1.txt'
+    param_file = 'data/catheter_params/CatheterParameterSet_1_dyn.txt'
+    config_file = 'data/catheter_params/CatheterSpatialConfiguration_1.txt'
 
     # Test CRMWrapper
     wrapper = CRMWrapper(param_file=param_file, config_file=config_file, use_cpp=True)
@@ -216,8 +216,8 @@ def test_comparison_with_simplified():
     from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper
 
     # C++ model
-    param_file = 'catheterdata/CatheterParameterSet_1_dyn.txt'
-    config_file = 'catheterdata/CatheterSpatialConfiguration_1.txt'
+    param_file = 'data/catheter_params/CatheterParameterSet_1_dyn.txt'
+    config_file = 'data/catheter_params/CatheterSpatialConfiguration_1.txt'
 
     wrapper_cpp = CRMWrapper(param_file=param_file, config_file=config_file, use_cpp=True)
     wrapper_simple = CRMWrapper(use_cpp=False)

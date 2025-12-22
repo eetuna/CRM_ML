@@ -12,8 +12,8 @@ def test_fk_backward_produces_gradients():
         pytest.skip("C++ bindings not available")
 
     physics = TorchCRMPhysics(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         device="cpu",
     )
 
@@ -40,8 +40,8 @@ def test_dyn_backward_produces_gradients():
         pytest.skip("C++ bindings not available")
 
     physics = TorchCRMPhysics(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         device="cpu",
     )
 

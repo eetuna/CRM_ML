@@ -17,8 +17,8 @@ def compare_fk(currents, insertion_length=94.3, tol=1e-6):
 
     # Direct C++ binding via CRMWrapper with C++ enabled
     w_cpp = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
         flip_third_current=False,
         disable_cpp_fallback=True,
@@ -29,8 +29,8 @@ def compare_fk(currents, insertion_length=94.3, tol=1e-6):
 
     # Fresh wrapper, also using C++ (should match)
     w2 = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
         flip_third_current=False,
         disable_cpp_fallback=True,

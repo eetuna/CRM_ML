@@ -183,7 +183,7 @@ void mexFunction(int nlhs, mxArray* plhs[], int nrhs, const mxArray* prhs[]) {
     // Prepare the variables needed for CRMSolverIVP call
 
     // We will need to construct the ShootingMethodParamSet
-    //     Parameters needed for constructing the ShootingMethodParamSet
+    //     Params needed for constructing the ShootingMethodParamSet
 	double ActuationCurrents[NUM_ACT_SET][3];
 	double InsertedLength;
     for (int i = 0; i < NUM_ACT_SET; i++)	for (int j = 0; j < 3; j++)	ActuationCurrents[i][j] = control_inputs[i * 3 + j];

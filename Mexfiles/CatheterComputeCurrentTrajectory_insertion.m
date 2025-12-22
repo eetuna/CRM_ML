@@ -1,16 +1,16 @@
 close all
 clear all;
 
-load('../catheterdata/Catheter_TipPosition_Circle_r12.mat');
+load('../data/catheter_params/Catheter_TipPosition_Circle_r12.mat');
 disp('### CRM Forward Kinematics Calculate and Render Examples... ');
 disp('Free Space Deflection Example: ');
 
 % *** Load parameters from file
 % This step would typically needs to be executed only once
 %  Physical Description of the Catheter
-FKParams.CathParams=Load_CRMCatheterModelParams_matlab('../catheterdata/ParameterEst_2.txt')
+FKParams.CathParams=Load_CRMCatheterModelParams_matlab('../data/catheter_params/ParameterEst_2.txt')
 %  Catheter Configuration in spatial coordinates
-FKParams.CathConfig=Load_CatheterConfiguration_matlab('../catheterdata/CatheterSpatialConfiguration_1.txt')
+FKParams.CathConfig=Load_CatheterConfiguration_matlab('../data/catheter_params/CatheterSpatialConfiguration_1.txt')
 
 % *** Other External variables
 % specify if catheter is in free space or if the catheter tip is constrained to a contact point
@@ -24,7 +24,7 @@ FKParams.TipConstraintPoint = [ 0.0, 0.0, 0.0 ];
 % We want the localization coil locations, too
 FKParams.FinalValueOnly = false; 
 
-% *** Numerical Computation Parameters
+% *** Numerical Computation Params
 % Stepsize used in numerical integration along the length of the catheter during IVP - unit: mm
 FKParams.IntegrationStepSize = 0.2;
 % Define initial guesses to be used when solving boundary value problem

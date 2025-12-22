@@ -397,7 +397,7 @@ namespace CRMCatheterModel {
 		// Integrate each of the remaining segments
 		for (int i = StartSegmentIndex; i < no_segments; i++) {
 			if (SegTypes[i] == CatheterSegmentType::FLEXIBLE) {  // Flexible Segment
-				// Prepare the CRMIntegrand Parameters
+				// Prepare the CRMIntegrand Params
 				fsegno = FlexActIndex[i]; // flexible segment no
 
 				// Calculate the actual stepsize, based on the number of steps

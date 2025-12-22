@@ -76,8 +76,8 @@ class HybridKinematicsModel(nn.Module):
                 from ..wrappers.torch_physics import TorchCRMPhysics
                 if TorchCRMPhysics is not None:
                     self._torch_physics = TorchCRMPhysics(
-                        param_file=param_file or "catheterdata/CatheterParameterSet_1_dyn.txt",
-                        config_file=config_file or "catheterdata/CatheterSpatialConfiguration_1.txt",
+                        param_file=param_file or "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+                        config_file=config_file or "data/catheter_params/CatheterSpatialConfiguration_1.txt",
                         device=str(self.device),
                     )
             except Exception:

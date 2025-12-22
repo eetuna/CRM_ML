@@ -10,7 +10,7 @@ What this script does:
 5) Save data + plots.
 
 Outputs:
-  - output_data/ik_circle_fk_dyn.npz
+  - data/output/ik_circle_fk_dyn.npz
   - plots/ik_circle_fk_dyn_multiview.png
   - plots/ik_circle_fk_dyn_timeseries.png
 """
@@ -35,8 +35,8 @@ class Config:
     insertion_length: float = 94.3
     dt: float = 0.05
     integration_step_size: float = 0.01
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
     damping: Tuple[float, float, float, float, float, float] = (
         12.1761626666366,
         12.1761626666366,
@@ -73,7 +73,7 @@ class Config:
     # Keep c3 fixed per half-plane (much more stable IK).
     fix_c3: bool = True
 
-    # MATLAB-style normalized pseudoinverse tracking parameters
+    # MATLAB-style normalized pseudoinverse tracking data/simulation_parameters
     pinv_step_size: float = 2e-2
     pinv_threshold_start_mm: float = 5.0
     pinv_threshold_traj_mm: float = 10.0
@@ -528,7 +528,7 @@ def main() -> None:
     )
     t, p_dyn, conv_dyn, localmin_dyn = run_dynamics(wrapper_dyn, cfg, currents)
 
-    out_npz = Path("output_data") / "ik_circle_fk_dyn.npz"
+    out_npz = Path("data/output") / "ik_circle_fk_dyn.npz"
     out_npz.parent.mkdir(parents=True, exist_ok=True)
     np.savez_compressed(
         out_npz,

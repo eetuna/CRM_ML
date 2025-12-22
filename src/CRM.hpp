@@ -60,7 +60,7 @@ namespace CRMCatheterModel {
 	// ---------------------------------------------------------
 	//
 
-	// Structure for defining catheter model parameters
+	// Structure for defining catheter model.parameters
 	class CRMCatheterModelParams {
 	public:
 		CRMCatheterModelParams(int32_t no_flex, int32_t no_rigid, int32_t no_act, int32_t no_loc);
@@ -93,7 +93,7 @@ namespace CRMCatheterModel {
 		bool memory_allocated = false;						// true if memory for the dynamic array were allocate by the class constructor
 	};
 
-	// Structure for defining catheter configuration parameters
+	// Structure for defining catheter configuration data/simulation_parameters
 	struct CatheterConfiguration {
 		double 	B0[3];		//  B0 field vector of the MRI scanner (in spatial coordinates)
 		double 	g[3];		//  Gravity vector (in spatial coordinates)
@@ -117,7 +117,7 @@ namespace CRMCatheterModel {
 		double  (*ReportedCoilPos)[3];
 	};
 
-	// Load Catheter Model Parameters, which provides the Physical Description of the Catheter, from file
+	// Load Catheter Model Params, which provides the Physical Description of the Catheter, from file
 	//
 	// IMPORTANT NOTE: For now, most proximal segment is assumed to be always flexible
 	//    and the flexible and rigid segments are assumed to be alternating
@@ -127,7 +127,7 @@ namespace CRMCatheterModel {
 	CRMCatheterModelParams Load_CRMCatheterModelParams(const char* path_to_input);
 	// throws a std::runtime_error if there is an error
 
-	// Load Catheter Configuration Parameters, which specifies Catheter Configuration in spatial coordinates, from file
+	// Load Catheter Configuration Params, which specifies Catheter Configuration in spatial coordinates, from file
 	//
 	//   B0 field vector of the MRI scanner (in spatial coordinates) - unit: Tesla
 	//   Gravity vector - unit: ??

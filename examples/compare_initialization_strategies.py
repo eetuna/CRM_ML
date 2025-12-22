@@ -41,10 +41,10 @@ def main():
 
     # Load the currents known to cause issues
     repo_root = Path(__file__).resolve().parents[1]
-    with (repo_root / "output_data" / "sweep_failures_cpp.json").open() as f:
+    with (repo_root / "data/output" / "sweep_failures_cpp.json").open() as f:
         failing_currents = json.load(f)
 
-    # --- Diagnostic Parameters ---
+    # --- Diagnostic Params ---
     step_sizes_to_test = [0.2, 0.1, 0.05, 0.01]
     # Default damping from the wrapper
     base_damping = np.array([

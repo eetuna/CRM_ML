@@ -15,7 +15,7 @@ from crm_ml_rl.wrappers.crm_wrapper import CRMWrapper, HAS_CPP_BINDINGS
 def failing_currents():
     """Load the list of currents that are known to cause convergence failures."""
     repo_root = Path(__file__).resolve().parents[1]
-    failures_path = repo_root / "output_data" / "sweep_failures_cpp.json"
+    failures_path = repo_root / "data/output" / "sweep_failures_cpp.json"
     with failures_path.open() as f:
         return json.load(f)
 
@@ -49,8 +49,8 @@ def test_convergence_failures_and_fix(failing_currents):
 
 
     wrapper = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
         disable_cpp_fallback=True, # We want to assert the failure
     )
@@ -71,8 +71,8 @@ def test_convergence_failures_and_fix(failing_currents):
 
     # 2. Verify that the dynamics succeed with the proper initialization
     wrapper_with_fallback = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
     )
     for currents in failing_currents:

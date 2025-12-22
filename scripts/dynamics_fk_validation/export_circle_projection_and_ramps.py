@@ -3,10 +3,10 @@ Export (1) desired circle points, (2) workspace-projected circle points, and (3)
 for the ramp/bridge segments used in the dynamics rollout.
 
 Uses existing cached outputs:
-  - output_data/fk_ik_test_dp_projection.npz  (circle*_des, circle*_proj)
-  - output_data/dyn_fk_ramped_circles_hold2.npz (tip_fk + segments for ramps/bridge)
+  - data/output/fk_ik_test_dp_projection.npz  (circle*_des, circle*_proj)
+  - data/output/dyn_fk_ramped_circles_hold2.npz (tip_fk + segments for ramps/bridge)
 
-Outputs CSVs (VS Code friendly) in output_data/.
+Outputs CSVs (VS Code friendly) in data/output/.
 """
 
 from __future__ import annotations
@@ -34,9 +34,9 @@ def save_labeled_xyz_csv(path: Path, rows: np.ndarray) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ik-npz", default="output_data/fk_ik_test_dp_projection.npz")
-    ap.add_argument("--dyn-npz", default="output_data/dyn_fk_ramped_circles_hold2.npz")
-    ap.add_argument("--out-dir", default="output_data")
+    ap.add_argument("--ik-npz", default="data/output/fk_ik_test_dp_projection.npz")
+    ap.add_argument("--dyn-npz", default="data/output/dyn_fk_ramped_circles_hold2.npz")
+    ap.add_argument("--out-dir", default="data/output")
     args = ap.parse_args()
 
     out_dir = Path(args.out_dir)

@@ -2,7 +2,7 @@
 Experimental data loader for catheter trajectories.
 
 Loads tracked trajectories and commanded currents from
-`3D_dynamic_response_data_0124/` and prepares them for CRM validation or
+`data/experimental/` and prepares them for CRM validation or
 ML model training. Includes an optional sign flip on the third current
 channel to match the convention used in the historical dataset.
 """

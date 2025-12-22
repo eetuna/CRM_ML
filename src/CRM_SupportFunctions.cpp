@@ -31,7 +31,7 @@ namespace CRMCatheterModel {
         std::ifstream File;
         File.open(path_to_input);
         if (!File.is_open()) {
-            throw std::runtime_error{ "Unable to open Catheter Model Parameters file!" };
+            throw std::runtime_error{ "Unable to open Catheter Model Params file!" };
         }
         // first line to process should be CatheterConfig
         while (getline(File, line)) {  // we will ignore everything until we see the CatheterConfig
@@ -80,7 +80,7 @@ namespace CRMCatheterModel {
             ix++;
         }
 
-        // And, let's process the remaining parameters
+        // And, let's process the remaining data/simulation_parameters
         while (getline(File, line)) {  // we will ignore blank lines
             std::istringstream line_(line);
             line_ >> var;

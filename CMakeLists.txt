@@ -31,12 +31,12 @@ set(CRMSOURCES
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CRM_ForwardKinematics.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CRM_CatheterClass.cpp
         ${CMAKE_CURRENT_SOURCE_DIR}/src/CRM_SupportFunctions.cpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/numerical/minpack.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/numerical/minpack_TemplateDefinitions.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/numerical/minpack_wGivenJac_TemplateDefinitions.hpp
-        ${CMAKE_CURRENT_SOURCE_DIR}/numerical/minpack.cpp
-		${CMAKE_CURRENT_SOURCE_DIR}/numerical/minpack_DYN.hpp
-		${CMAKE_CURRENT_SOURCE_DIR}/numerical/minpack_DYN_Defs.cpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/numerical/minpack.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/numerical/minpack_TemplateDefinitions.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/numerical/minpack_wGivenJac_TemplateDefinitions.hpp
+        ${CMAKE_CURRENT_SOURCE_DIR}/src/numerical/minpack.cpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/numerical/minpack_DYN.hpp
+		${CMAKE_CURRENT_SOURCE_DIR}/src/numerical/minpack_DYN_Defs.cpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/CoilDynamics_Defs.cpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/CRMDYN.hpp
 		${CMAKE_CURRENT_SOURCE_DIR}/src/CRMDYN_Numerical_Integration.hpp
@@ -48,29 +48,29 @@ add_library(CRMCPPLib STATIC
 
 target_include_directories(CRMCPPLib PUBLIC
 	"${PROJECT_SOURCE_DIR}/src"
-	"${PROJECT_SOURCE_DIR}/numerical"
+	"${PROJECT_SOURCE_DIR}/src/numerical"
         )
 
 add_executable(CRMDYNTest
-	main/CRMDYN_test.cpp
-	main/CRMTest.h
-	main/CRM_KinematicsTestFunctions.hpp
-	main/CRM_KinematicsTestFunctions.cpp
+	tests/cpp/CRMDYN_test.cpp
+	tests/cpp/CRMTest.h
+	tests/cpp/CRM_KinematicsTestFunctions.hpp
+	tests/cpp/CRM_KinematicsTestFunctions.cpp
 	${CRMSOURCES}
 	)
 add_executable(CRMDYNGirdSweep
-	main/CRMDYN_grid_sweep.cpp
-	main/CRMTest.h
-	main/CRM_KinematicsTestFunctions.hpp
-	main/CRM_KinematicsTestFunctions.cpp
+	tests/cpp/CRMDYN_grid_sweep.cpp
+	tests/cpp/CRMTest.h
+	tests/cpp/CRM_KinematicsTestFunctions.hpp
+	tests/cpp/CRM_KinematicsTestFunctions.cpp
 	${CRMSOURCES}
 	)
 
 add_executable(CRMTest
-		main/CRMTest.cpp
-		main/CRMTest.h
-		main/CRM_KinematicsTestFunctions.hpp
-		main/CRM_KinematicsTestFunctions.cpp
+		tests/cpp/CRMTest.cpp
+		tests/cpp/CRMTest.h
+		tests/cpp/CRM_KinematicsTestFunctions.hpp
+		tests/cpp/CRM_KinematicsTestFunctions.cpp
 		${CRMSOURCES}
 		)
 
@@ -87,22 +87,22 @@ target_link_libraries(CRMDYNGirdSweep PUBLIC
 
 target_include_directories(CRMTest PUBLIC
 	"${PROJECT_SOURCE_DIR}/src"
-	"${PROJECT_SOURCE_DIR}/numerical"
+	"${PROJECT_SOURCE_DIR}/src/numerical"
         )
 
 target_include_directories(CRMDYNTest PUBLIC
 		"${PROJECT_SOURCE_DIR}/src"
-		"${PROJECT_SOURCE_DIR}/numerical"
+		"${PROJECT_SOURCE_DIR}/src/numerical"
 		)
 target_include_directories(CRMDYNGirdSweep PUBLIC
 		"${PROJECT_SOURCE_DIR}/src"
-		"${PROJECT_SOURCE_DIR}/numerical"
+		"${PROJECT_SOURCE_DIR}/src/numerical"
 		)
 
 # ============================================================
 # Python Bindings (optional - requires pybind11)
 # ============================================================
-option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" OFF)
+option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)
 
 if(BUILD_PYTHON_BINDINGS)
     # Find Python and pybind11
@@ -133,7 +133,7 @@ if(BUILD_PYTHON_BINDINGS)
 
         target_include_directories(crm_python PUBLIC
             "${PROJECT_SOURCE_DIR}/src"
-            "${PROJECT_SOURCE_DIR}/numerical"
+            "${PROJECT_SOURCE_DIR}/src/numerical"
             "${PROJECT_SOURCE_DIR}/third_party/autodiff"
         )
 

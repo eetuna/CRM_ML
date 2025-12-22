@@ -33,13 +33,13 @@ from crm_ml_rl.wrappers import crm_python  # noqa: E402
 @dataclass(frozen=True)
 class Config:
     # Workspace cache (dense)
-    workspace_npz: str = "output_data/workspace_fk_ins94.3_b0.3_step0.01_int0.2.npz"
+    workspace_npz: str = "data/output/workspace_fk_ins94.3_b0.3_step0.01_int0.2.npz"
 
     # FK/IK settings
     insertion_length: float = 94.3
     integration_step_size: float = 0.2  # match MEX default
-    param_file: str = "catheterdata/CatheterParameterSet_1_dyn.txt"
-    config_file: str = "catheterdata/CatheterSpatialConfiguration_1.txt"
+    param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
+    config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
 
     # Desired circles
     radius_mm: float = 10.0
@@ -279,7 +279,7 @@ def main() -> None:
     summarize_err("Circle1 desired tracking ||des-fk||", e1_des_fk, thr=cfg.threshold_traj_mm)
     summarize_err("Circle2 desired tracking ||des-fk||", e2_des_fk, thr=cfg.threshold_traj_mm)
 
-    out_dir = Path("output_data")
+    out_dir = Path("data/output")
     out_dir.mkdir(parents=True, exist_ok=True)
     out_npz = out_dir / "fk_ik_test_dp_projection.npz"
     np.savez_compressed(

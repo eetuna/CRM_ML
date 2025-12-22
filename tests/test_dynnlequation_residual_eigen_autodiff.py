@@ -10,8 +10,8 @@ def test_dynnlequation_ad_jxx_close_to_fd():
 
     dyn = crm_python.CRMDynamics()
     ok = dyn.load_parameters(
-        "catheterdata/CatheterParameterSet_1_dyn.txt",
-        "catheterdata/CatheterSpatialConfiguration_1.txt",
+        "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        "data/catheter_params/CatheterSpatialConfiguration_1.txt",
     )
     if not ok:
         pytest.skip("C++ bindings not available")

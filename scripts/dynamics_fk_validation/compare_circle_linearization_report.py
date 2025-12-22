@@ -86,7 +86,7 @@ def run_one(
 
 
 def infer_circle_slice_for_ramp_then_circle1(currents_csv: Path) -> Tuple[int, int]:
-    # For these specific CSVs in output_data:
+    # For these specific CSVs in data/output:
     # - hold1: ramp 120 rows + circle 200 rows => total 320
     # - hold2: ramp 240 rows + circle 400 rows => total 640
     # We infer from total length.

@@ -66,9 +66,9 @@ void compute_dx(double *dx, double t, double *x, double *u, double **p,
     // *** Load parameters from file
     // This step would typically needs to be executed only once
     //   Physical Description of the Catheter
-    CRMCatheterModelParams CathParams = Load_CRMCatheterModelParams("catheterdata/CatheterParameterSet_1_new.txt");
+    CRMCatheterModelParams CathParams = Load_CRMCatheterModelParams("data/catheter_params/CatheterParameterSet_1_new.txt");
     //   Catheter Configuration in spatial coordinates
-    CatheterConfiguration CathConfig = Load_CatheterConfiguration("catheterdata/CatheterSpatialConfiguration_1.txt");
+    CatheterConfiguration CathConfig = Load_CatheterConfiguration("data/catheter_params/CatheterSpatialConfiguration_1.txt");
 
     size_t ix, jx;
 
@@ -124,7 +124,7 @@ void compute_dx(double *dx, double t, double *x, double *u, double **p,
 //    std::cout << "ActuationCurrents: " << ActuationCurrents[0][0] << " " << ActuationCurrents[0][1] << " " << ActuationCurrents[0][2] <<  std::endl;
 
 //    double InsertedLength = u[NUM_ACT_SET*3];
-    /** Retrieve model parameters. **/
+    /** Retrieve model.parameters. **/
     double damping[NUM_ACT_SET][6];
 
     for (int i = 0; i < NUM_ACT_SET; ++i) {
@@ -145,7 +145,7 @@ void compute_dx(double *dx, double t, double *x, double *u, double **p,
     }
 
 
-    // *** Numerical Computation Parameters
+    // *** Numerical Computation Params
     // Stepsize used in numerical integration along the length of the catheter during IVP - unit: mm
     double IntegrationStepSize = 0.2;
 

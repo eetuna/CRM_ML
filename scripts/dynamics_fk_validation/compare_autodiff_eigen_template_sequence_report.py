@@ -104,7 +104,7 @@ def main():
         "--template-so",
         default=".worktrees/autodiff_template/crm_ml_rl/wrappers/crm_python.cpython-310-x86_64-linux-gnu.so",
     )
-    ap.add_argument("--out-prefix", default="output_data/seq_bench")
+    ap.add_argument("--out-prefix", default="data/output/seq_bench")
     ap.add_argument("--seed", type=int, default=0)
     ap.add_argument("--dirs", type=int, default=6)
     ap.add_argument("--du-sigma", type=float, default=1e-4)

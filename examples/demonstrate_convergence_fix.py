@@ -1,7 +1,7 @@
 """
 Demonstrate the fix for dynamics convergence failures.
 
-This script loads the failing current combinations from `output_data/sweep_failures_cpp.json`
+This script loads the failing current combinations from `data/output/sweep_failures_cpp.json`
 and runs the dynamics with a proper initialization strategy. For each set of
 currents, it first calls `initialize_from_kinematics` to find a good
 starting point for the solver.
@@ -20,15 +20,15 @@ def run_convergence_fix_demonstration():
 
     # Load failing currents
     repo_root = Path(__file__).resolve().parents[1]
-    with (repo_root / "output_data" / "sweep_failures_cpp.json").open() as f:
+    with (repo_root / "data/output" / "sweep_failures_cpp.json").open() as f:
         failing_currents = json.load(f)
 
     insertion_length = 94.3
     dt = 0.05
 
     wrapper = CRMWrapper(
-        param_file="catheterdata/CatheterParameterSet_1_dyn.txt",
-        config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+        param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+        config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
         use_cpp=True,
     )
     if not wrapper.is_using_cpp:

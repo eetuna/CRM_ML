@@ -729,8 +729,8 @@ def test_rl_integration(results: TestResults, verbose: bool = False, quick: bool
     try:
         config = CatheterEnvConfig(
             use_cpp=True,
-            param_file="catheterdata/CatheterParameterSet_1_new.txt",
-            config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+            param_file="data/catheter_params/CatheterParameterSet_1_new.txt",
+            config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
             max_steps=50
         )
         env = CatheterEnv(config=config)
@@ -751,8 +751,8 @@ def test_rl_integration(results: TestResults, verbose: bool = False, quick: bool
         config = CatheterEnvConfig(
             use_hybrid_dynamics=True,
             use_cpp=True,
-            param_file="catheterdata/CatheterParameterSet_1_new.txt",
-            config_file="catheterdata/CatheterSpatialConfiguration_1.txt",
+            param_file="data/catheter_params/CatheterParameterSet_1_new.txt",
+            config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt",
             max_steps=50
         )
         env = CatheterEnv(config=config)

@@ -54,9 +54,9 @@ void compute_dx(double *dx, double t, double *x, double *u, double **p)
     /**
      * Note the matlab file should be under root folder
      */
-    CRMCatheterModelParams CathParams = Load_CRMCatheterModelParams("catheterdata/CatheterParameterSet_1_new.txt");
+    CRMCatheterModelParams CathParams = Load_CRMCatheterModelParams("data/catheter_params/CatheterParameterSet_1_new.txt");
     //   Catheter Configuration in spatial coordinates
-    CatheterConfiguration CathConfig = Load_CatheterConfiguration("catheterdata/CatheterSpatialConfiguration_1.txt");
+    CatheterConfiguration CathConfig = Load_CatheterConfiguration("data/catheter_params/CatheterSpatialConfiguration_1.txt");
 
     size_t ix, jx;
 
@@ -122,7 +122,7 @@ void compute_dx(double *dx, double t, double *x, double *u, double **p)
 //    std::cout << "after   CathParams.SegLengths: " << CathParams.SegLengths[0] << " " << CathParams.SegLengths[1] << " " << CathParams.SegLengths[2] <<  std::endl;
 
 //    double InsertedLength = u[NUM_ACT_SET*3];
-    /** Retrieve model parameters. **/
+    /** Retrieve model.parameters. **/
     double damping[NUM_ACT_SET][6];
 
     for (int i = 0; i < NUM_ACT_SET; ++i) {
@@ -136,7 +136,7 @@ void compute_dx(double *dx, double t, double *x, double *u, double **p)
 
     double DELTA_T = p[1][0];
 
-    // *** Numerical Computation Parameters
+    // *** Numerical Computation Params
     // Stepsize used in numerical integration along the length of the catheter during IVP - unit: mm
     double IntegrationStepSize = 0.2;
 
@@ -342,7 +342,7 @@ void mexFunction( int nlhs, mxArray *plhs[],
         x[Ncoilstate + i] = in_xf_pre[i];
     }
 
-   // parameters
+   // data/simulation_parameters
     double    p_damping[4*NUM_ACT_SET];
     for (int i = 0; i < 4*NUM_ACT_SET; ++i) {
         p_damping[i] = in_p_damping[i];
