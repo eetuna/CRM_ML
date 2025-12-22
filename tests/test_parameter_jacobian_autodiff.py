@@ -18,7 +18,7 @@ def test_parameter_jacobian_shape_and_finite():
     """Test that compute_parameter_jacobian returns correct shapes and finite values."""
     from crm_ml_rl.wrappers import crm_python
 
-    dyn = crm_python.CRMDynamics()
+    dyn = crm_python.CRMDynamics(1, 0, 1, 5)
     ok = dyn.load_parameters(
         "data/catheter_params/CatheterParameterSet_1_dyn.txt",
         "data/catheter_params/CatheterSpatialConfiguration_1.txt",
@@ -26,19 +26,21 @@ def test_parameter_jacobian_shape_and_finite():
     if not ok:
         pytest.skip("C++ bindings not available")
 
-    insertion = 94.3
+    insertion = 50.0
     dyn.set_damping(
         np.array([12.0, 12.0, 280.0, 0.03, 0.03, 0.005], dtype=np.float64)
     )
-    dyn.dt = 0.05
+    dyn.dt = 0.001
     dyn.integration_step_size = 0.1
 
     # Initialize from kinematics
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], insertion)
     seed = dyn.get_seed_state()
 
-    v = np.asarray(seed["v"], dtype=np.float64)
-    w = np.asarray(seed["w"], dtype=np.float64)
+    # INJECT NON-ZERO VELOCITY for damping gradient validation
+    # If v=0, then d(damping*v)/d(damping) = 0, which makes validation impossible.
+    v = np.array([0.01, 0.02, 0.03], dtype=np.float64)
+    w = np.array([0.04, 0.05, 0.06], dtype=np.float64)
     p = np.asarray(seed["p"], dtype=np.float64)
     R = np.asarray(seed["R"], dtype=np.float64)
     xf = np.asarray(seed["xf"], dtype=np.float64)
@@ -110,7 +112,7 @@ def test_parameter_jacobian_vs_finite_difference():
     """
     from crm_ml_rl.wrappers import crm_python
 
-    dyn = crm_python.CRMDynamics()
+    dyn = crm_python.CRMDynamics(1, 0, 1, 5)
     ok = dyn.load_parameters(
         "data/catheter_params/CatheterParameterSet_1_dyn.txt",
         "data/catheter_params/CatheterSpatialConfiguration_1.txt",
@@ -118,21 +120,18 @@ def test_parameter_jacobian_vs_finite_difference():
     if not ok:
         pytest.skip("C++ bindings not available")
 
-    insertion = 94.3
+    insertion = 50.0
     # Use the same damping values from other tests that are known to converge
     base_damping = np.array([
         12.1761626666366, 12.1761626666366, 284.429938756989,
         0.0304776127617393, 0.0304776127617393, 0.00502712804532508
     ], dtype=np.float64)
-    dyn.set_damping(base_damping)
-    dyn.dt = 0.05
-    dyn.integration_step_size = 0.1
-
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], insertion)
     seed = dyn.get_seed_state()
 
-    v = np.asarray(seed["v"], dtype=np.float64)
-    w = np.asarray(seed["w"], dtype=np.float64)
+    # INJECT NON-ZERO VELOCITY for damping gradient validation
+    v = np.array([0.01, 0.02, 0.03], dtype=np.float64)
+    w = np.array([0.04, 0.05, 0.06], dtype=np.float64)
     p = np.asarray(seed["p"], dtype=np.float64)
     R = np.asarray(seed["R"], dtype=np.float64)
     xf = np.asarray(seed["xf"], dtype=np.float64)
@@ -183,7 +182,7 @@ def test_parameter_jacobian_vs_finite_difference():
         damping_perturbed[i] += eps
 
         # Create new instance with perturbed damping
-        dyn2 = crm_python.CRMDynamics()
+        dyn2 = crm_python.CRMDynamics(1, 0, 1, 5)
         dyn2.load_parameters(
             "data/catheter_params/CatheterParameterSet_1_dyn.txt",
             "data/catheter_params/CatheterSpatialConfiguration_1.txt",
@@ -257,7 +256,7 @@ def test_parameter_jacobian_non_zero_for_active_dynamics():
     """
     from crm_ml_rl.wrappers import crm_python
 
-    dyn = crm_python.CRMDynamics()
+    dyn = crm_python.CRMDynamics(1, 0, 1, 5)
     ok = dyn.load_parameters(
         "data/catheter_params/CatheterParameterSet_1_dyn.txt",
         "data/catheter_params/CatheterSpatialConfiguration_1.txt",
@@ -265,7 +264,7 @@ def test_parameter_jacobian_non_zero_for_active_dynamics():
     if not ok:
         pytest.skip("C++ bindings not available")
 
-    insertion = 94.3
+    insertion = 50.0
     dyn.set_damping(
         np.array(
             [
@@ -279,7 +278,7 @@ def test_parameter_jacobian_non_zero_for_active_dynamics():
             dtype=np.float64,
         )
     )
-    dyn.dt = 0.05
+    dyn.dt = 0.001
     dyn.integration_step_size = 0.1
 
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], insertion)
