@@ -68,6 +68,24 @@ namespace CRMCatheterModel {
         }
 
         CRMCatheterModelParams CathParams(no_flex, no_rigid, no_act, no_loc);
+        // Initialize arrays to deterministic defaults before parsing.
+        for (int32_t i = 0; i < no_seg; ++i) {
+            CathParams.SegLengths[i] = 0.0;
+            CathParams.rho[i] = 0.0;
+        }
+        for (int32_t i = 0; i < no_flex; ++i) {
+            CathParams.InnerRadius[i] = 0.0;
+            CathParams.OuterRadius[i] = 0.0;
+            CathParams.YoungsModulus[i] = 0.0;
+            CathParams.ShearModulus[i] = 0.0;
+            for (int32_t j = 0; j < 3; ++j) CathParams.ustar[i][j] = 0.0;
+        }
+        for (int32_t i = 0; i < no_act; ++i) {
+            CathParams.ActMass[i] = 0.0;
+            for (int32_t j = 0; j < 2; ++j) CathParams.CoilAlignmentAngles[i][j] = 0.0;
+            for (int32_t j = 0; j < 9; ++j) CathParams.CoilTurnAreaMat[i][j] = 0.0;
+        }
+        for (int32_t i = 0; i < no_loc; ++i) CathParams.LocMarkers[i] = 0.0;
 
         // Let's fill in the SegmentTypes array
         std::istringstream line_(configline);
@@ -83,7 +101,9 @@ namespace CRMCatheterModel {
         // And, let's process the remaining data/simulation_parameters
         while (getline(File, line)) {  // we will ignore blank lines
             std::istringstream line_(line);
-            line_ >> var;
+            if (!(line_ >> var)) {
+                continue;
+            }
             if (var == oRlist_var) {
                 for (ix = 0; ix < no_flex; ix++) line_ >> CathParams.OuterRadius[ix];
             }
@@ -131,6 +151,16 @@ namespace CRMCatheterModel {
             }
         }
 
+        if (const char* debug = std::getenv("CRM_DEBUG_PARAM_LOAD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] SegLengths:";
+                for (int32_t i = 0; i < no_seg; ++i) std::cout << " " << CathParams.SegLengths[i];
+                std::cout << "\n[CRM_DEBUG_PARAM_LOAD] rho:";
+                for (int32_t i = 0; i < no_seg; ++i) std::cout << " " << CathParams.rho[i];
+                std::cout << "\n";
+            }
+        }
+
         File.close();
         return CathParams;
     }
@@ -148,7 +178,14 @@ namespace CRMCatheterModel {
 
         // *** Catheter Configuration in spatial coordinates
         // B0 field vector of the MRI scanner (in spatial coordinates) - unit: Tesla
-        double B0[3], gravity[3], p0[3], R0[9];
+        double B0[3] = {0.0, 0.0, 0.0};
+        double gravity[3] = {0.0, 0.0, 0.0};
+        double p0[3] = {0.0, 0.0, 0.0};
+        double R0[9] = {
+            1.0, 0.0, 0.0,
+            0.0, 1.0, 0.0,
+            0.0, 0.0, 1.0
+        };
 
         std::vector<double> input;
         std::ifstream File;
@@ -158,7 +195,9 @@ namespace CRMCatheterModel {
         }
         while (getline(File, line)) {
             std::istringstream line_(line);
-            line_ >> var;
+            if (!(line_ >> var)) {
+                continue;
+            }
             if (var == B0_var) {
                 for (double& i : B0) { line_ >> i; }
             }
@@ -172,10 +211,22 @@ namespace CRMCatheterModel {
                 for (double& i : R0) { line_ >> i; }
             }
 
-            mCopy_AB<3>(B0, CathConfig.B0);
-            mCopy_AB<3>(gravity, CathConfig.g);
-            mCopy_AB<3>(p0, CathConfig.p0);
-            mCopy_AB<9>(R0, CathConfig.R0);
+        }
+
+        mCopy_AB<3>(B0, CathConfig.B0);
+        mCopy_AB<3>(gravity, CathConfig.g);
+        mCopy_AB<3>(p0, CathConfig.p0);
+        mCopy_AB<9>(R0, CathConfig.R0);
+
+        if (const char* debug = std::getenv("CRM_DEBUG_PARAM_LOAD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] B0: " << CathConfig.B0[0] << " " << CathConfig.B0[1] << " " << CathConfig.B0[2] << "\n";
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] g: " << CathConfig.g[0] << " " << CathConfig.g[1] << " " << CathConfig.g[2] << "\n";
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] p0: " << CathConfig.p0[0] << " " << CathConfig.p0[1] << " " << CathConfig.p0[2] << "\n";
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] R0:";
+                for (int i = 0; i < 9; ++i) std::cout << " " << CathConfig.R0[i];
+                std::cout << "\n";
+            }
         }
 
         File.close();
@@ -184,4 +235,3 @@ namespace CRMCatheterModel {
     }
 
 }
-

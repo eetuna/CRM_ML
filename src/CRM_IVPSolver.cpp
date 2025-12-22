@@ -36,22 +36,67 @@ namespace CRMCatheterModel {
 		StateVector x_N;
 		double deltau_0[3];
 
-		// copy to local variable
-		double MagMoment[NUM_ACT_SET][3];
-		mCopy_ABm<NUM_ACT_SET, 3>(in_MagMoment, MagMoment);
+		std::vector<CatheterSegmentType> SegmentTypes(in_no_segments);
+		for (int i = 0; i < in_no_segments; i++) SegmentTypes[i] = in_SegmentTypes[i];
+
+		std::vector<double> SegEndLambdas(in_no_segments);
+		for (int i = 0; i < in_no_segments; i++) SegEndLambdas[i] = in_SegEndLambdas[i];
+
+		std::vector<double> LocMarkerLambdas(in_no_locmarkers);
+		for (int i = 0; i < in_no_locmarkers; i++) LocMarkerLambdas[i] = in_LocMarkerLambdas[i];
+
+		std::vector<double> rho(in_no_segments);
+		for (int i = 0; i < in_no_segments; i++) rho[i] = in_rho[i];
+
+		std::vector<Eigen::Matrix3d> K(in_no_flex_seg);
+		std::vector<Eigen::Matrix3d> Kinv(in_no_flex_seg);
+		std::vector<Eigen::Vector3d> ustar(in_no_flex_seg);
+		for (int i = 0; i < in_no_flex_seg; i++) {
+			for (int j = 0; j < 9; j++) {
+				K[i](j / 3, j % 3) = in_K[i][j];
+				Kinv[i](j / 3, j % 3) = in_Kinv[i][j];
+			}
+			for (int j = 0; j < 3; j++) {
+				ustar[i](j) = in_ustar[i][j];
+			}
+		}
+
+		std::vector<double> ActMass(in_no_act_set);
+		for (int i = 0; i < in_no_act_set; i++) ActMass[i] = in_ActMass[i];
+
+		std::vector<Eigen::Matrix3d> CoilAlignmentTurnAreaMatrix(in_no_act_set);
+		for (int i = 0; i < in_no_act_set; i++) {
+			for (int j = 0; j < 9; j++) {
+				CoilAlignmentTurnAreaMatrix[i](j / 3, j % 3) = in_CoilAlignmentTurnAreaMatrix[i][j];
+			}
+		}
+
+		std::vector<Eigen::Vector3d> MagMoment(in_no_act_set);
+		for (int i = 0; i < in_no_act_set; i++) {
+			for (int j = 0; j < 3; j++) {
+				MagMoment[i](j) = in_MagMoment[i][j];
+			}
+		}
+
+		std::vector<Eigen::Vector3d> fcumlambda(in_no_fcum_steps + 1);
+		for (int i = 0; i < in_no_fcum_steps + 1; i++) {
+			for (int j = 0; j < 3; j++) {
+				fcumlambda[i](j) = in_fcumlambda[i][j];
+			}
+		}
 		double Li = in_Li;
 
 		CRMSolverIVP_Prep(
 			in_no_flex_seg, in_no_rigid_seg, in_no_act_set, in_no_locmarkers, in_no_fcum_steps,
 			x_0, in_IntegrationStepSize,
 			Li, in_dlambdainv,
-			in_SegmentTypes, 
-			in_SegEndLambdas, in_LocMarkerLambdas,
-			in_rho,
-			in_K, in_Kinv, in_ustar,
-			in_ActMass,
-			in_CoilAlignmentTurnAreaMatrix,
-			MagMoment, in_fcumlambda,
+			SegmentTypes,
+			SegEndLambdas, LocMarkerLambdas,
+			rho,
+			K, Kinv, ustar,
+			ActMass,
+			CoilAlignmentTurnAreaMatrix,
+			MagMoment, fcumlambda,
 			in_B0, in_g,
 			in_CalculateEnergy,
 			in_FinalValueOnly,
@@ -60,7 +105,8 @@ namespace CRMCatheterModel {
 		// We need to pass deltau_0 as input argument as the u0 values in CoreParams will be overriden with the values provided in the input arguments - functionality needed for solving Boundary Value Problems (BVP)
 		// deltau0 = u0 - ustar0
 		if (CoreParams.SegmentTypes[CoreParams.StartSegmentIndex] == CatheterSegmentType::FLEXIBLE) {
-			for (int i = 0; i < 3; i++) deltau_0[i] = in_x_0[3 + 9 + i] - CoreParams.ustar[CoreParams.FlexActIndex[CoreParams.StartSegmentIndex]][i];
+			const auto& ustar_base = CoreParams.ustar[CoreParams.FlexActIndex[CoreParams.StartSegmentIndex]];
+			for (int i = 0; i < 3; i++) deltau_0[i] = in_x_0[3 + 9 + i] - ustar_base(i);
 		}
 		else { // rigid, or rigid with actuator, so ustar=0
 			for (int i = 0; i < 3; i++) deltau_0[i] = in_x_0[3 + 9 + i];
@@ -128,13 +174,13 @@ namespace CRMCatheterModel {
 		int32_t in_no_fcum_steps,
 		double in_x_0[NUM_STATES], double in_IntegrationStepSize,
 		double in_Li, double in_dlambdainv,
-		const CatheterSegmentType in_SegmentTypes[/*in_no_flex_seg+in_no_rigid_seg*/],
-		double in_SegEndLambdas[/*in_no_flex_seg+in_no_rigid_seg*/], double in_LocMarkerLambdas[/*no_locmarkers*/],
-		double in_rho[/*in_no_flex_seg+in_no_rigid_seg*/],
-		double in_K[/*in_no_flex_seg*/][9], double in_Kinv[/*in_no_flex_seg*/][9], double in_ustar[/*in_no_flex_seg*/][3],
-		double in_ActMass[/*in_no_act_set*/],
-		double in_CoilAlignmentTurnAreaMatrix[/*in_no_act_set*/][9],
-		double in_MagMoment[/*in_no_act_set*/][3], double in_fcumlambda[/*in_no_fcum_steps + 1*/][3],
+		const std::vector<CatheterSegmentType>& in_SegmentTypes,
+		const std::vector<double>& in_SegEndLambdas, const std::vector<double>& in_LocMarkerLambdas,
+		const std::vector<double>& in_rho,
+		const std::vector<Eigen::Matrix3d>& in_K, const std::vector<Eigen::Matrix3d>& in_Kinv, const std::vector<Eigen::Vector3d>& in_ustar,
+		const std::vector<double>& in_ActMass,
+		const std::vector<Eigen::Matrix3d>& in_CoilAlignmentTurnAreaMatrix,
+		const std::vector<Eigen::Vector3d>& in_MagMoment, const std::vector<Eigen::Vector3d>& in_fcumlambda,
 		double in_B0[3], double in_g[3],
 		bool in_CalculateEnergy, 
 		bool in_FinalValueOnly,
@@ -147,10 +193,6 @@ namespace CRMCatheterModel {
 		//   only u[0..2] components of xi --- other parameters should not change
 
 		int32_t in_no_segments = in_no_flex_seg + in_no_rigid_seg;
-		// local copies for variables accessed out-of-order
-		double *SegEndLambdas = new double[in_no_segments];
-		for (int i = 0; i < in_no_segments; i++) SegEndLambdas[i] = in_SegEndLambdas[i];
-
 		// create aliases for variables in CoreParams
 		auto& xi = out_CoreParams.xi;
 
@@ -197,7 +239,7 @@ namespace CRMCatheterModel {
 		FinalValueOnly = in_FinalValueOnly;		// Flag used to indicate if only final value (xf) is returned (true) or if Marker Locations are returned as well (false)
 		InsertedLength = in_Li;					// Inserted Length (length of the catheter from the entry point to the tip)
 		// If the catheter is inserted more than the length of the catheter, clamp it to catheter length
-		if (InsertedLength > SegEndLambdas[in_no_segments - 1]) InsertedLength = SegEndLambdas[in_no_segments - 1];
+		if (InsertedLength > in_SegEndLambdas[in_no_segments - 1]) InsertedLength = in_SegEndLambdas[in_no_segments - 1];
 
 		// WE ARE GOING TO REORDER SEGMENT AND ACTUATOR UNITS SO THAT THEY ARE ORDERED FROM THE INSERTION POINT TO THE TIP
 		//   I.E., SWITCH TO PROXIMAL TO DISTAL ORDERING
@@ -206,7 +248,7 @@ namespace CRMCatheterModel {
 		SegBounds[in_no_segments] = InsertedLength;	// End s value of last segment is s=InsertedLength
 												// Entry point has a value of s=0 -- we may not simulate full length of the most proximal segment in the chamber
 		for (int i = 0; i < in_no_segments; i++) {
-			tempdouble = InsertedLength - SegEndLambdas[i];
+			tempdouble = InsertedLength - in_SegEndLambdas[i];
 			if (tempdouble > 0.0) {
 				SegBounds[(in_no_segments - 1) - i] = tempdouble;
 				StartSegmentIndex--;				// Integration will start at the previous segment
@@ -231,7 +273,7 @@ namespace CRMCatheterModel {
 				LocMarkers[(in_no_locmarkers - 1) - i] = tempdouble;
 				if (tempdouble > 0.0) NextLocMarker--;
 				else {   // and assign (extrapolated) locations to markers which are still inside the sheath
-					LocMarkerUpdate(p_atLocMarkers[(in_no_locmarkers - 1) - i], xi, tempdouble);
+					LocMarkerUpdate(p_atLocMarkers[(in_no_locmarkers - 1) - i].data(), xi, tempdouble);
 				}
 			}
 		}
@@ -248,26 +290,19 @@ namespace CRMCatheterModel {
 			rho[(in_no_segments - 1) - i] = in_rho[i];
 		}
 		for (int i = 0; i < in_no_flex_seg; i++) {
-			for (int j = 0; j < 9; j++) {
-				K[(in_no_flex_seg - 1) - i][j] = in_K[i][j];
-				Kinv[(in_no_flex_seg - 1) - i][j] = in_Kinv[i][j];
-			}
-			for (int j = 0; j < 3; j++) {
-				ustar[(in_no_flex_seg - 1) - i][j] = in_ustar[i][j];
-			}
+			K[(in_no_flex_seg - 1) - i] = in_K[i];
+			Kinv[(in_no_flex_seg - 1) - i] = in_Kinv[i];
+			ustar[(in_no_flex_seg - 1) - i] = in_ustar[i];
 		}
 		for (int i = 0; i < in_no_act_set; i++) {
-			for (int j = 0; j < 3; j++) {
-				MagMoment[(in_no_act_set - 1) - i][j] = in_MagMoment[i][j];
-			}
+			MagMoment[(in_no_act_set - 1) - i] = in_MagMoment[i];
 			ActMass[(in_no_act_set - 1) - i] = in_ActMass[i];
-			mCopy_AB<9>(in_CoilAlignmentTurnAreaMatrix[i], CoilAlignmentTurnAreaMatrix[(in_no_act_set - 1) - i]);
+			CoilAlignmentTurnAreaMatrix[(in_no_act_set - 1) - i] = in_CoilAlignmentTurnAreaMatrix[i];
 		}
 
-		for (int i = 0; i < in_no_fcum_steps + 1; i++) for (int j = 0; j < 3; j++)
-			fcumlambda[i][j] = in_fcumlambda[i][j];
-
-		delete[] SegEndLambdas; // local variable
+		for (int i = 0; i < in_no_fcum_steps + 1; i++) {
+			fcumlambda[i] = in_fcumlambda[i];
+		}
 	}
 
 
@@ -279,9 +314,9 @@ namespace CRMCatheterModel {
 		double out_R_atActuators[/*in_params.no_act_set*/][9], double out_p_atActuators[/*in_params.no_act_set*/][3]) {
 
 		// convenience definitions
-		const double Identity3x3[9] = { 1,0,0,0,1,0,0,0,1 };
-		const double Zero3x3[9] = { 0,0,0,0,0,0,0,0,0 };
-		const double Zero3[3] = { 0,0,0 };
+		const Eigen::Matrix3d Identity3x3 = Eigen::Matrix3d::Identity();
+		const Eigen::Matrix3d Zero3x3 = Eigen::Matrix3d::Zero();
+		const Eigen::Vector3d Zero3 = Eigen::Vector3d::Zero();
 
 		double l_zero[3] = { 0.0,0.0,0.0 };
 		double h;							// integration stepsize
@@ -290,9 +325,12 @@ namespace CRMCatheterModel {
 		double deltau[3];					// intermediate variable
 		int   fsegno; 						// flexible segment no
 		int32_t  actno, fsegi, fsegip1;		// actuator no, flexible segment before, flexible segment after
-		const double *MMpoint, *CATAMpoint;	// pointer to current MagMoment[3] and CoilAlignmentTurnAreaMatrix[9];
-		const double *Kipoint, *usipoint;	// pointer to current K_i[9] and ustar_i[3]
-		const double *Kinvip1point, *usip1point;	// pointer to current K_ip1[9] and ustar_ip1[3]
+		const Eigen::Vector3d* MMpoint;			// pointer to current MagMoment
+		const Eigen::Matrix3d* CATAMpoint;			// pointer to current CoilAlignmentTurnAreaMatrix
+		const Eigen::Matrix3d* Kipoint;			// pointer to current K_i
+		const Eigen::Vector3d* usipoint;			// pointer to current ustar_i
+		const Eigen::Matrix3d* Kinvip1point;		// pointer to current K_ip1
+		const Eigen::Vector3d* usip1point;			// pointer to current ustar_ip1
 		bool  LastSegmentIsRigid = false;	// Flag indicating if the last segment processed is rigid (true) or not (false)
 											//    does not include the case where the segment at the entry port is rigid
 
@@ -360,7 +398,7 @@ namespace CRMCatheterModel {
 		IntegrandParams.Li = InsertedLength;
 		IntegrandParams.l = l_zero;  // we are assuming the distributed moment on the catheter body is zero
 		IntegrandParams.no_fcum_steps = no_fcum_steps;
-		IntegrandParams.fcumlambda = fcumlambda;
+		IntegrandParams.fcumlambda = &fcumlambda;
 		IntegrandParams.ftip = ftip;
 		IntegrandParams.g = g;
 
@@ -375,13 +413,17 @@ namespace CRMCatheterModel {
 			StartSegmentIndex++;  // move the start segment to the next segment
 			if (!FinalValueOnly) {
 				// are there any localization markers?  If so, calculate their positions
-				CalculateLocMarkers(NextLocMarker, xi, LocMarkers, SegBounds[StartSegmentIndex], p_atLocMarkers, no_locmarkers);  //	xi has already been updated
+				CalculateLocMarkers(NextLocMarker, xi, LocMarkers.data(), SegBounds[StartSegmentIndex],
+					reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()), no_locmarkers);  //	xi has already been updated
 			}
 		}
 
 		// if input is in_deltau, uncomment the following code, which will make input incremental over ustar 
-		if (StartSegmentIndex < no_segments) // we are making sure that all of the segments in the chamber are not rigid
-			mAdd_AB<3, 1>(in_deltau, ustar[FlexActIndex[StartSegmentIndex]], xi._u);
+		if (StartSegmentIndex < no_segments) { // we are making sure that all of the segments in the chamber are not rigid
+			Eigen::Map<Eigen::Vector3d> xi_u(xi._u);
+			const Eigen::Map<const Eigen::Vector3d> deltau(in_deltau);
+			xi_u = deltau + ustar[FlexActIndex[StartSegmentIndex]];
+		}
 		
 
 		// for iteration - the moment residual from the previous segment is zero
@@ -404,17 +446,17 @@ namespace CRMCatheterModel {
 				h = (SegBounds[i + 1] - SegBounds[i]) / (SegSteps[fsegno] * 1.0);
 
 				// assign the parameters that vary from segment to segment
-				IntegrandParams.K = K[fsegno];
-				IntegrandParams.Kinv = Kinv[fsegno];
-				IntegrandParams.ustar = ustar[fsegno];
+				IntegrandParams.K = &K[fsegno];
+				IntegrandParams.Kinv = &Kinv[fsegno];
+				IntegrandParams.ustar = &ustar[fsegno];
 				IntegrandParams.rho = rho[i];
 
 				// Integrate
 				ABM4(xi, SegBounds[i], SegSteps[fsegno], h,
 					IntegrandParams, no_locmarkers,
 					CalculateEnergy,
-					FinalValueOnly, LocMarkers, NextLocMarker,
-					xf, DeltaPE, p_atLocMarkers);
+					FinalValueOnly, LocMarkers.data(), NextLocMarker,
+					xf, DeltaPE, reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()));
 
 				// add strain and gravitational potential energy
 				if (CalculateEnergy) out_PotentialEnergy += DeltaPE;
@@ -422,20 +464,24 @@ namespace CRMCatheterModel {
 				LastSegmentIsRigid = false;
 
 				// residual = K (u1 - u1star)
-				mSub_AB<3, 1>(xf._u, ustar[fsegno], deltau);
-				mMult_AB<3, 3, 1>(K[fsegno], deltau, Residual);
+				{
+					const Eigen::Map<const Eigen::Vector3d> xf_u(xf._u);
+					const Eigen::Vector3d deltau_vec = xf_u - ustar[fsegno];
+					Eigen::Map<Eigen::Vector3d> residual_vec(Residual);
+					residual_vec = K[fsegno] * deltau_vec;
+				}
 
 			}
 			else {  // Need to do actuation/rigid segment calculations to transfer Initial Conditions to next flexible segment
 				RigidSegmentLength = (SegBounds[i + 1] - SegBounds[i]);
 				if (SegTypes[i] == CatheterSegmentType::RIGID) {  // not actuated rigid segment
-					MMpoint = Zero3;				// points to a zero vector
-					CATAMpoint = Zero3x3;			// points to a zero matrix
+					MMpoint = &Zero3;				// points to a zero vector
+					CATAMpoint = &Zero3x3;			// points to a zero matrix
 				}
 				else {  // this is a rigid link with an actuator coil
 					actno = FlexActIndex[i];		// actuator no
-					MMpoint = MagMoment[actno];		// points to MagMoment of the actuator
-					CATAMpoint = CoilAlignmentTurnAreaMatrix[actno];	// points to the CoilAlignmentTurnAreaMatrix of the actuator
+					MMpoint = &MagMoment[actno];		// points to MagMoment of the actuator
+					CATAMpoint = &CoilAlignmentTurnAreaMatrix[actno];	// points to the CoilAlignmentTurnAreaMatrix of the actuator
 					mCopy_AB<9>(xf._R, out_R_atActuators[(in_params.no_act_set - 1) - actno]);		// return the orientation of the actuation coil wrt the spatial frame (R_sc at coil)
 																									//    note that out_R_atActuators is ordered distal to proximal
 
@@ -444,31 +490,35 @@ namespace CRMCatheterModel {
                     }
 				}
 				if (LastSegmentIsRigid) {
-					usipoint = Zero3;				// points to a zero vector
-					Kipoint = Identity3x3;			// points to an identity matrix
+					usipoint = &Zero3;				// points to a zero vector
+					Kipoint = &Identity3x3;			// points to an identity matrix
 				}
 				else {
 					fsegi = FlexActIndex[i - 1];
-					usipoint = ustar[fsegi];		// points to ustar of previous link
-					Kipoint = K[fsegi];				// points to K of next link
+					usipoint = &ustar[fsegi];		// points to ustar of previous link
+					Kipoint = &K[fsegi];			// points to K of next link
 				}
 				if ( ((i+1) >= no_segments) || (SegTypes[i+1] != CatheterSegmentType::FLEXIBLE) ) { // next segment is not flexible or we are at the last segment
-					usip1point = Zero3;				// points to a zero vector
-					Kinvip1point = Identity3x3;		// points to an identity matrix
+					usip1point = &Zero3;				// points to a zero vector
+					Kinvip1point = &Identity3x3;		// points to an identity matrix
 				}
 				else {
 					fsegip1 = FlexActIndex[i + 1];
-					usip1point = ustar[fsegip1];	// points to ustar of next link
-					Kinvip1point = Kinv[fsegip1];	// points to Kinv of next link
+					usip1point = &ustar[fsegip1];	// points to ustar of next link
+					Kinvip1point = &Kinv[fsegip1];	// points to Kinv of next link
 				}
-				CRMSolverIVP_PropagateBCThroughRigidLink(xf, Residual, RigidSegmentLength, MMpoint, CATAMpoint, B0,
-					usipoint, Kipoint, usip1point, Kinvip1point, xi, Residual_im1);
+				CRMSolverIVP_PropagateBCThroughRigidLink(xf, Residual, RigidSegmentLength, *MMpoint, *CATAMpoint, B0,
+					*usipoint, *Kipoint, *usip1point, *Kinvip1point, xi, Residual_im1);
 
 				if ((CalculateEnergy) && (SegTypes[i] == CatheterSegmentType::RIGID_WITH_ACTUATOR)) {  
 					// Calculate and add coil magnetic potential energy if catheter potential energy needs to be calculated
-					mMult_ATB<3, 3, 1>(xi._R, B0, RscTB0);
-					mMult_ATB<3, 1, 1>(RscTB0, MMpoint, &DeltaPE);
-					out_PotentialEnergy -= DeltaPE;   // - Bo_c^T * \mu_c  // calculated in coil frame 
+					{
+						const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Rsc(xi._R);
+						const Eigen::Map<const Eigen::Vector3d> B0_vec(B0);
+						const Eigen::Vector3d RscTB0_vec = Rsc.transpose() * B0_vec;
+						DeltaPE = RscTB0_vec.dot(*MMpoint);
+						out_PotentialEnergy -= DeltaPE;   // - Bo_c^T * \mu_c  // calculated in coil frame
+					}
 					// Calculate and add gravitational potential energy if catheter potential energy needs to be calculated
 					gTpsum = 0.0;
 					for (int ix = 0; ix < 3; ix++) gTpsum += g[ix] * (xf._p[ix] + xi._p[ix]);
@@ -477,7 +527,8 @@ namespace CRMCatheterModel {
 				}
 				if (!FinalValueOnly) {
 					// are there any localization markers?  If so, calculate their positions
-					CalculateLocMarkers(NextLocMarker, xf, LocMarkers, SegBounds[i + 1], p_atLocMarkers, no_locmarkers);
+					CalculateLocMarkers(NextLocMarker, xf, LocMarkers.data(), SegBounds[i + 1],
+						reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()), no_locmarkers);
 				}
 
 				LastSegmentIsRigid = true;
@@ -493,7 +544,8 @@ namespace CRMCatheterModel {
 			// are there any localization markers left that need to be calculated?  If so, calculate their locations
 			if (NextLocMarker < no_locmarkers) {
 				// note that these markers would be beyond the last Segment bound, so we will use the last location marker lambda coordinate as the end point, and extrapolate from end state
-				CalculateLocMarkers(NextLocMarker, xf, LocMarkers, LocMarkers[no_locmarkers - 1], p_atLocMarkers, no_locmarkers); 
+				CalculateLocMarkers(NextLocMarker, xf, LocMarkers.data(), LocMarkers[no_locmarkers - 1],
+					reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()), no_locmarkers);
 			}
 			//then copy the marker locations to the output
 			for (int i = 0; i < no_locmarkers; i++) {
@@ -508,11 +560,11 @@ namespace CRMCatheterModel {
 
 
 	void CRMSolverIVP_PropagateBCThroughRigidLink(StateVector& xi_ip1, double Residual_ip1[3],
-		const double RigidSegmentLength, const double MagMoment[3], const double CoilAlignmentTurnAreaMatrix[9], const double B0[3],
-		const double ustar_i[3], const double K_i[9], const double ustar_ip1[3], const double Kinv_ip1[9],
+		const double RigidSegmentLength, const Eigen::Vector3d& MagMoment, const Eigen::Matrix3d& CoilAlignmentTurnAreaMatrix, const double B0[3],
+		const Eigen::Vector3d& ustar_i, const Eigen::Matrix3d& K_i, const Eigen::Vector3d& ustar_ip1, const Eigen::Matrix3d& Kinv_ip1,
 		const StateVector& xf_i, const double Residual_i[3]) {
 
-		double muhat[9], RscTB0[3], Tb[3], K2invResidual[3]; // intermediate variables
+		double RscTB0[3], K2invResidual[3]; // intermediate variables
 
 		// p
 		for (int j = 0; j < 3; j++) {
@@ -522,13 +574,19 @@ namespace CRMCatheterModel {
 		mCopy_AB<9>(xf_i._R, xi_ip1._R);
 		// u
 		// Tb=\mu_c \cross R_sc^T B0,s
-		wHat(MagMoment, muhat);
-		mMult_ATB<3, 3, 1>(xf_i._R, B0, RscTB0);
-		mMult_AB<3, 3, 1>(muhat, RscTB0, Tb);
+		const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Rsc(xf_i._R);
+		const Eigen::Map<const Eigen::Vector3d> B0_vec(B0);
+		const Eigen::Vector3d RscTB0_vec = Rsc.transpose() * B0_vec;
+		const Eigen::Vector3d Tb = MagMoment.cross(RscTB0_vec);
 		// u2=u2star + ( K2inv K1 (u1 - u1star ) - K2inv Tb )
-		mSub_AB<3, 1>(Residual_i, Tb, Residual_ip1);  // Residual_ip1 = K1 (u1 - u1star) - Tb = Residual_i - Tb
-		mMult_AB<3, 3, 1>(Kinv_ip1, Residual_ip1, K2invResidual);
-		mAdd_AB<3, 1>(ustar_ip1, K2invResidual, xi_ip1._u);
+		{
+			Eigen::Map<Eigen::Vector3d> residual_ip1(Residual_ip1);
+			const Eigen::Map<const Eigen::Vector3d> residual_i(Residual_i);
+			residual_ip1 = residual_i - Tb;  // Residual_ip1 = K1 (u1 - u1star) - Tb = Residual_i - Tb
+			const Eigen::Vector3d K2invResidual_vec = Kinv_ip1 * residual_ip1;
+			Eigen::Map<Eigen::Vector3d> xi_u(xi_ip1._u);
+			xi_u = ustar_ip1 + K2invResidual_vec;
+		}
 
 	}
 
@@ -565,27 +623,24 @@ namespace CRMCatheterModel {
 
 		double Length;
 		double deltalambdainv;
-		double fcum[3], ustardot[3];  //  We are assuming Kdot=0.0 (K=const)
 
 		// copy inputs and parameters to local variables
 		Length = in_Params.Li;
 		deltalambdainv = in_Params.dlambdainv;
-		auto& K = in_Params.K;
-		auto& Kinv = in_Params.Kinv;
-		auto& ustar = in_Params.ustar;
-		auto& l = in_Params.l;
-		for (int i = 0; i < 3; i++) {
-			ustardot[i] = 0.0; //in_ustardot[i]; // we assume ustardot=0.0 since our rest shape model is piecewise constant curvature
-		}
+		const auto& K = *in_Params.K;
+		const auto& Kinv = *in_Params.Kinv;
+		const auto& ustar = *in_Params.ustar;
+		const Eigen::Map<const Eigen::Vector3d> l(in_Params.l);
+		const Eigen::Map<const Eigen::Vector3d> ftip(in_Params.ftip);
+		const Eigen::Map<const Eigen::Vector3d> g(in_Params.g);
 
 		// for simplicity, create aliases
-		auto& u = in_x._u;
-		auto& R = in_x._R;
-		auto& udot = out_xdot._u;
+		const Eigen::Map<const Eigen::Vector3d> u(in_x._u);
+		const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> R(in_x._R);
+		Eigen::Map<Eigen::Vector3d> udot(out_xdot._u);
 #ifndef ANALYTICAL_SE3_STEP
-		auto& p = in_x._p;				// we will not need this for analytical calculation
-		auto& pdot = out_xdot._p;		// we will not need this for analytical calculation
-		auto& Rdot = out_xdot._R;		// we will not need this for analytical calculation
+		Eigen::Map<Eigen::Vector3d> pdot(out_xdot._p);		// we will not need this for analytical calculation
+		Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Rdot(out_xdot._R); // we will not need this for analytical calculation
 #endif	
 
 
@@ -600,49 +655,40 @@ namespace CRMCatheterModel {
 		int iru = (int)iru_f;	//    integer index
 		double ixmird = ix - ird;    // weight for interpolation
 		double irumix = iru - ix;	// weight for interpolation
-		for (int i = 0; i < 3; i++) {
-			fcum[i] = in_Params.fcumlambda[iru][i] * ixmird + in_Params.fcumlambda[ird][i] * irumix;
-		}
+		const auto& fcumlambda = *in_Params.fcumlambda;
+		Eigen::Vector3d fcum = fcumlambda[iru] * ixmird + fcumlambda[ird] * irumix;
 
 		// add the tip force to fcum
-		for (int i = 0; i < 3; i++) {
-			fcum[i] += in_Params.ftip[i];
-		}
+		fcum += ftip;
 
 		// calculate u_hat
-		double u_hat[9];
-		wHat(u, u_hat);
+		Eigen::Matrix3d u_hat;
+		u_hat << 0.0, -u(2), u(1),
+				 u(2), 0.0, -u(0),
+				 -u(1), u(0), 0.0;
 
 		// udot = ustardot - Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l); % udot
 		//
 		//   e3hat*R' = [ -r12 -r22 -r32; r11 r21 r31; 0 0 0];
-		double e3hatRT[9];
-		e3hatRT[0] = -R[1];   e3hatRT[1] = -R[4];   e3hatRT[2] = -R[7];
-		e3hatRT[3] = R[0];    e3hatRT[4] = R[3];    e3hatRT[5] = R[6];
-		e3hatRT[6] = 0.0;     e3hatRT[7] = 0.0;     e3hatRT[8] = 0.0;
-		double e3hatRTfcum[3];
-		mMult_AB<3, 3, 1>(e3hatRT, fcum, e3hatRTfcum);			//  e3m*R'*intf
-		double RTl[3];
-		mMult_ATB<3, 3, 1>(R, l, RTl);								// R'*l
-		double umustar[3];
-		mSub_AB<3, 1>(u, ustar, umustar);							// (u-ustar_s)
-		double Kumustar[3], uhatKumustar[3];
-		mMult_AB<3, 3, 1>(K, umustar, Kumustar);
-		mMult_AB<3, 3, 1>(u_hat, Kumustar, uhatKumustar); 		 	//(um*K+Kdot)*(u-ustar_s)  assuming Kdot=0
-		double sumterm[3];
-		mAdd_ABC<3, 1>(uhatKumustar, e3hatRTfcum, RTl, sumterm);	// ((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
-		double KinvSum[3];
-		mMult_AB<3, 3, 1>(Kinv, sumterm, KinvSum);					// Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
-		mSub_AB<3, 1>(ustardot, KinvSum, udot);					// udot = ustardot - Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l);
+		Eigen::Matrix3d e3hatRT;
+		e3hatRT << -R(0, 1), -R(1, 1), -R(2, 1),
+					R(0, 0), R(1, 0), R(2, 0),
+					0.0, 0.0, 0.0;
+		const Eigen::Vector3d e3hatRTfcum = e3hatRT * fcum;		//  e3m*R'*intf
+		const Eigen::Vector3d RTl = R.transpose() * l;			// R'*l
+		const Eigen::Vector3d umustar = u - ustar;				// (u-ustar_s)
+		const Eigen::Vector3d Kumustar = K * umustar;
+		const Eigen::Vector3d uhatKumustar = u_hat * Kumustar; 	//(um*K+Kdot)*(u-ustar_s)  assuming Kdot=0
+		const Eigen::Vector3d sumterm = uhatKumustar + e3hatRTfcum + RTl;	// ((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
+		const Eigen::Vector3d KinvSum = Kinv * sumterm;			// Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
+		udot = -KinvSum;											// udot = ustardot - Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l);
 
 #ifndef ANALYTICAL_SE3_STEP
 	// we will not need these for analytical calculation
 	// Rdot = R*u_hat
-		mMult_AB<3, 3, 3>(R, u_hat, Rdot);
+		Rdot = R * u_hat;
 		// pdot = R*e3,
-		for (int i = 0; i < 3; i++) {
-			pdot[i] = R[i * 3 + 2];
-		}
+		pdot = R.col(2);
 #endif
 
 		//xdot(1:3) = R*e3;             % pdot
@@ -844,70 +890,52 @@ namespace CRMCatheterModel {
 		for (int32_t ix = 0; ix < 3; ix++) g[ix] = t.g[ix];
 
 		allocate_memory();
-		for (int32_t ix = 0; ix < no_segments; ix++) SegmentTypes[ix] = t.SegmentTypes[ix];
-		for (int32_t ix = 0; ix < no_segments; ix++) FlexActIndex[ix] = t.FlexActIndex[ix];
+		SegmentTypes = t.SegmentTypes;
+		FlexActIndex = t.FlexActIndex;
 		StartSegmentIndex = t.StartSegmentIndex;
-		for (int32_t ix = 0; ix < no_segments + 1; ix++) SegBounds[ix] = t.SegBounds[ix];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) SegSteps[ix] = t.SegSteps[ix];
-		for (int32_t ix = 0; ix < no_segments; ix++) rho[ix] = t.rho[ix];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) for (int32_t jx = 0; jx < 9; jx++) K[ix][jx] = t.K[ix][jx];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) for (int32_t jx = 0; jx < 9; jx++) Kinv[ix][jx] = t.Kinv[ix][jx];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) for (int32_t jx = 0; jx < 3; jx++) ustar[ix][jx] = t.ustar[ix][jx];
-		for (int32_t ix = 0; ix < no_act_set; ix++) ActMass[ix] = t.ActMass[ix];
-		for (int32_t ix = 0; ix < no_act_set; ix++) for (int32_t jx = 0; jx < 3; jx++) MagMoment[ix][jx] = t.MagMoment[ix][jx];
-		for (int32_t ix = 0; ix < no_act_set; ix++) for (int32_t jx = 0; jx < 9; jx++) CoilAlignmentTurnAreaMatrix[ix][jx] = t.CoilAlignmentTurnAreaMatrix[ix][jx];
-		for (int32_t ix = 0; ix < no_act_set; ix++) for (int32_t jx = 0; jx < 9; jx++) R_atActuators[ix][jx] = t.R_atActuators[ix][jx];
-        for (int32_t ix = 0; ix < no_act_set; ix++) for (int32_t jx = 0; jx < 3; jx++) p_atActuators[ix][jx] = t.p_atActuators[ix][jx];
+		SegBounds = t.SegBounds;
+		SegSteps = t.SegSteps;
+		rho = t.rho;
+		K = t.K;
+		Kinv = t.Kinv;
+		ustar = t.ustar;
+		ActMass = t.ActMass;
+		MagMoment = t.MagMoment;
+		CoilAlignmentTurnAreaMatrix = t.CoilAlignmentTurnAreaMatrix;
+		R_atActuators = t.R_atActuators;
+        p_atActuators = t.p_atActuators;
 
         CalculateEnergy = t.CalculateEnergy;
 		FinalValueOnly = t.FinalValueOnly;
 		NextLocMarker = t.NextLocMarker;
-		for (int32_t ix = 0; ix < no_locmarkers; ix++) LocMarkers[ix] = t.LocMarkers[ix];
-		if (!FinalValueOnly)
-			for (int32_t ix = 0; ix < no_locmarkers; ix++) for (int32_t jx = 0; jx < 3; jx++) p_atLocMarkers[ix][jx] = t.p_atLocMarkers[ix][jx];
-		for (int32_t ix = 0; ix < no_fcum_steps + 1; ix++) for (int32_t jx = 0; jx < 3; jx++) fcumlambda[ix][jx] = t.fcumlambda[ix][jx];
+		LocMarkers = t.LocMarkers;
+		if (!FinalValueOnly) {
+			p_atLocMarkers = t.p_atLocMarkers;
+		}
+		fcumlambda = t.fcumlambda;
 
 	}
 
 	CRMIVPCoreParams::~CRMIVPCoreParams() {
-		if (memory_allocated) {
-			delete[] SegmentTypes;
-			delete[] FlexActIndex;
-			delete[] SegBounds;
-			delete[] SegSteps;
-			delete[] rho;
-			delete[] K;
-			delete[] Kinv;
-			delete[] ustar;
-			delete[] ActMass;
-			delete[] MagMoment;
-			delete[] CoilAlignmentTurnAreaMatrix;
-			delete[] R_atActuators;
-            delete[] p_atActuators;
-            delete[] LocMarkers;
-			delete[] p_atLocMarkers;
-			delete[] fcumlambda;
-		}
 	}
 
 	void CRMIVPCoreParams::allocate_memory() {
-		SegmentTypes = new CatheterSegmentType[no_segments];
-		FlexActIndex = new int32_t[no_segments];
-		SegBounds = new double[no_segments + 1];
-		SegSteps = new int32_t[no_flex_seg];
-		rho = new double[no_segments];
-		K = new double[no_flex_seg][9];
-		Kinv = new double[no_flex_seg][9];
-		ustar = new double[no_flex_seg][3];
-		ActMass = new double[no_act_set];
-		MagMoment = new double[no_act_set][3];
-		CoilAlignmentTurnAreaMatrix = new double[no_act_set][9];
-		R_atActuators = new double[no_act_set][9];
-        p_atActuators = new double[no_act_set][3];
-        LocMarkers = new double[no_locmarkers];
-		p_atLocMarkers = new double[no_locmarkers][3];
-		fcumlambda = new double[no_fcum_steps + 1][3];
-		memory_allocated = true;
+		SegmentTypes.resize(no_segments);
+		FlexActIndex.resize(no_segments);
+		SegBounds.resize(no_segments + 1);
+		SegSteps.resize(no_flex_seg);
+		rho.resize(no_segments);
+		K.resize(no_flex_seg);
+		Kinv.resize(no_flex_seg);
+		ustar.resize(no_flex_seg);
+		ActMass.resize(no_act_set);
+		MagMoment.resize(no_act_set);
+		CoilAlignmentTurnAreaMatrix.resize(no_act_set);
+		R_atActuators.resize(no_act_set);
+        p_atActuators.resize(no_act_set);
+        LocMarkers.resize(no_locmarkers);
+		p_atLocMarkers.resize(no_locmarkers);
+		fcumlambda.resize(no_fcum_steps + 1);
 	}
 
 

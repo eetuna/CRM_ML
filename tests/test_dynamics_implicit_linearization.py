@@ -4,7 +4,6 @@ import pytest
 import numpy as np
 
 
-@pytest.mark.skipif(os.environ.get("CRM_RUN_IMPLICIT_LINEARIZATION_TESTS", "0") != "1", reason="slow")
 def test_implicit_linearization_shapes_and_finiteness():
     from crm_ml_rl.wrappers import crm_python
 

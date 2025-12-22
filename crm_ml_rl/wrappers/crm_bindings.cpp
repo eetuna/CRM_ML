@@ -25,6 +25,7 @@
 #include <stdexcept>
 #include <memory>
 #include <limits>
+#include <cstdlib>
 
 // Include CRM headers
 #include "CRM.hpp"
@@ -56,6 +57,16 @@ public:
             params = std::make_unique<CRMCatheterModelParams>(loaded);
             config = Load_CatheterConfiguration(config_file.c_str());
             initialized = true;
+            if (const char* debug = std::getenv("CRM_DEBUG_PARAM_LOAD")) {
+                if (std::string(debug) == "1") {
+                    std::cout << "[CRM_DEBUG_PARAM_LOAD] PyCatheterParams seg_lengths:";
+                    for (int i = 0; i < params->no_segments; ++i) {
+                        std::cout << " " << params->SegLengths[i];
+                    }
+                    std::cout << "\n[CRM_DEBUG_PARAM_LOAD] PyCatheterParams g: "
+                              << config.g[0] << " " << config.g[1] << " " << config.g[2] << "\n";
+                }
+            }
             return true;
         } catch (const std::exception& e) {
             py::print("Error loading parameters:", e.what());
@@ -71,28 +82,32 @@ public:
     int getNumLocMarkers() const { return params->no_locmarkers; }
 
     py::array_t<double> getB0() const {
-        py::array_t<double> result(3);
-        auto buf = result.request();
-        double* ptr = static_cast<double*>(buf.ptr);
-        for (int i = 0; i < 3; i++) ptr[i] = config.B0[i];
+        py::array_t<double> result({3}, {static_cast<ssize_t>(sizeof(double))});
+        auto buf = result.mutable_unchecked<1>();
+        for (int i = 0; i < 3; i++) buf(i) = config.B0[i];
         return result;
     }
 
     py::array_t<double> getP0() const {
-        py::array_t<double> result(3);
-        auto buf = result.request();
-        double* ptr = static_cast<double*>(buf.ptr);
-        for (int i = 0; i < 3; i++) ptr[i] = config.p0[i];
+        py::array_t<double> result({3}, {static_cast<ssize_t>(sizeof(double))});
+        auto buf = result.mutable_unchecked<1>();
+        for (int i = 0; i < 3; i++) buf(i) = config.p0[i];
         return result;
     }
 
     py::array_t<double> getSegLengths() const {
         int n = params->no_segments;
-        py::array_t<double> result(n);
-        auto buf = result.request();
-        double* ptr = static_cast<double*>(buf.ptr);
+        py::array_t<double> result({n}, {static_cast<ssize_t>(sizeof(double))});
+        auto buf = result.mutable_unchecked<1>();
         for (int i = 0; i < n; i++) {
-            ptr[i] = params->SegLengths[i];
+            buf(i) = params->SegLengths[i];
+        }
+        if (const char* debug = std::getenv("CRM_DEBUG_PARAM_LOAD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] getSegLengths:";
+                for (int i = 0; i < n; ++i) std::cout << " " << params->SegLengths[i];
+                std::cout << "\n";
+            }
         }
         return result;
     }
@@ -117,6 +132,50 @@ public:
     bool loadParams(const std::string& param_file, const std::string& config_file) {
         initialized = catheter.loadFromFiles(param_file, config_file);
         return initialized;
+    }
+
+    py::dict get_config_snapshot() const {
+        py::dict out;
+        const CRMCatheterModelParams* cparams = catheter.getParams();
+        py::array_t<double> B0({3}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> g({3}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> p0({3}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> R0({9}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> seg_lengths({cparams ? cparams->no_segments : 0}, {static_cast<ssize_t>(sizeof(double))});
+
+        if (cparams) {
+            auto b = B0.mutable_unchecked<1>();
+            auto gg = g.mutable_unchecked<1>();
+            auto pp = p0.mutable_unchecked<1>();
+            auto rr = R0.mutable_unchecked<1>();
+            for (int i = 0; i < 3; i++) {
+                b(i) = catheter.config.B0[i];
+                gg(i) = catheter.config.g[i];
+                pp(i) = catheter.config.p0[i];
+            }
+            for (int i = 0; i < 9; i++) rr(i) = catheter.config.R0[i];
+            auto sl = seg_lengths.mutable_unchecked<1>();
+            for (int i = 0; i < cparams->no_segments; i++) sl(i) = cparams->SegLengths[i];
+        }
+
+        out["B0"] = B0;
+        out["g"] = g;
+        out["p0"] = p0;
+        out["R0"] = R0;
+        out["seg_lengths"] = seg_lengths;
+
+        if (const char* debug = std::getenv("CRM_DEBUG_PARAM_LOAD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] get_config_snapshot g: "
+                          << catheter.config.g[0] << " " << catheter.config.g[1] << " " << catheter.config.g[2] << "\n";
+                std::cout << "[CRM_DEBUG_PARAM_LOAD] get_config_snapshot R0:";
+                for (int i = 0; i < 9; ++i) std::cout << " " << catheter.config.R0[i];
+                std::cout << "\n[CRM_DEBUG_PARAM_LOAD] get_config_snapshot seg_lengths:";
+                for (int i = 0; i < cparams->no_segments; ++i) std::cout << " " << cparams->SegLengths[i];
+                std::cout << "\n";
+            }
+        }
+        return out;
     }
 
 private:
@@ -485,6 +544,8 @@ public:
     double xf[NUM_STATES];  // tip state
     double damping[NUM_ACT_SET][6];
     double actInertia[NUM_ACT_SET][9];
+    double last_fk_out[NUM_STATES];
+    bool have_last_fk = false;
 
     CRMDynamicsWrapper() {
         // Initialize state to zeros
@@ -507,18 +568,21 @@ public:
         for (int i = 0; i < NUM_STATES; i++) {
             xf[i] = 0.0;
         }
+        for (int i = 0; i < NUM_STATES; i++) {
+            last_fk_out[i] = 0.0;
+        }
     }
 
     py::dict get_seed_state() const {
         const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
 
-        py::array_t<double> v_out({num_sets, 3});
-        py::array_t<double> w_out({num_sets, 3});
-        py::array_t<double> p_out({num_sets, 3});
-        py::array_t<double> R_out({num_sets, 9});
-        py::array_t<double> xf_out({NUM_STATES});
-        py::array_t<double> mL_out({num_sets, 3});
-        py::array_t<double> nL_out({num_sets, 3});
+        py::array_t<double> v_out({num_sets, 3}, {static_cast<ssize_t>(3 * sizeof(double)), static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> w_out({num_sets, 3}, {static_cast<ssize_t>(3 * sizeof(double)), static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> p_out({num_sets, 3}, {static_cast<ssize_t>(3 * sizeof(double)), static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> R_out({num_sets, 9}, {static_cast<ssize_t>(9 * sizeof(double)), static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> xf_out({NUM_STATES}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> mL_out({num_sets, 3}, {static_cast<ssize_t>(3 * sizeof(double)), static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> nL_out({num_sets, 3}, {static_cast<ssize_t>(3 * sizeof(double)), static_cast<ssize_t>(sizeof(double))});
 
         auto v = v_out.mutable_unchecked<2>();
         auto w = w_out.mutable_unchecked<2>();
@@ -628,8 +692,50 @@ public:
                 actInertia[i][4] = I_xx;
                 actInertia[i][8] = I_zz;
             }
+            if (const char* debug = std::getenv("CRM_DEBUG_PARAM_LOAD")) {
+                if (std::string(debug) == "1") {
+                    std::cout << "[CRM_DEBUG_PARAM_LOAD] CRMDynamicsWrapper seg_lengths:";
+                    for (int i = 0; i < cparams->no_segments; ++i) {
+                        std::cout << " " << cparams->SegLengths[i];
+                    }
+                    std::cout << "\n[CRM_DEBUG_PARAM_LOAD] CRMDynamicsWrapper g: "
+                              << catheter.config.g[0] << " " << catheter.config.g[1] << " " << catheter.config.g[2] << "\n";
+                }
+            }
         }
         return initialized;
+    }
+
+    py::dict get_config_snapshot() const {
+        py::dict out;
+        const CRMCatheterModelParams* cparams = catheter.getParams();
+        py::array_t<double> B0({3}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> g({3}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> p0({3}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> R0({9}, {static_cast<ssize_t>(sizeof(double))});
+        py::array_t<double> seg_lengths({cparams ? cparams->no_segments : 0}, {static_cast<ssize_t>(sizeof(double))});
+
+        if (cparams) {
+            auto b = B0.mutable_unchecked<1>();
+            auto gg = g.mutable_unchecked<1>();
+            auto pp = p0.mutable_unchecked<1>();
+            auto rr = R0.mutable_unchecked<1>();
+            for (int i = 0; i < 3; i++) {
+                b(i) = catheter.config.B0[i];
+                gg(i) = catheter.config.g[i];
+                pp(i) = catheter.config.p0[i];
+            }
+            for (int i = 0; i < 9; i++) rr(i) = catheter.config.R0[i];
+            auto sl = seg_lengths.mutable_unchecked<1>();
+            for (int i = 0; i < cparams->no_segments; i++) sl(i) = cparams->SegLengths[i];
+        }
+
+        out["B0"] = B0;
+        out["g"] = g;
+        out["p0"] = p0;
+        out["R0"] = R0;
+        out["seg_lengths"] = seg_lengths;
+        return out;
     }
 
     /**
@@ -770,7 +876,9 @@ public:
         FKParams.deltau0_initialguess[0] = FKParams.deltau0_initialguess[1] = FKParams.deltau0_initialguess[2] = 0.0;
         FKParams.ftip_initialguess[0] = FKParams.ftip_initialguess[1] = FKParams.ftip_initialguess[2] = 0.0;
         FKParams.IntegrationStepSize = integrationStepSize;
-        FKParams.FinalValueOnly = false;  // Need intermediate values for coil states
+        // Match the kinematics wrapper path to avoid corrupt outputs.
+        // Coil orientation/position outputs are still populated during IVP.
+        FKParams.FinalValueOnly = true;
 
         // Allocate marker and coil storage
         std::vector<double> markerPosData(cparams->no_locmarkers * 3);
@@ -796,6 +904,19 @@ public:
             py::print("Warning: FK did not converge during dynamics initialization");
             return false;
         }
+
+        if (const char* debug = std::getenv("CRM_DEBUG_FK_INIT")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[CRM_DEBUG_FK_INIT] out_y:";
+                for (int i = 0; i < y_dim; ++i) std::cout << " " << out_y[i];
+                std::cout << "\n";
+            }
+        }
+
+        for (int i = 0; i < NUM_STATES; i++) {
+            last_fk_out[i] = out_y[i];
+        }
+        have_last_fk = true;
 
         // Initialize tip state (xf) from FK output
         // FK output layout: p[0..2], R[0..8], deltau0[0..2]
@@ -854,6 +975,16 @@ public:
         }
 
         return true;
+    }
+
+    py::array_t<double> get_last_fk_output() const {
+        if (!have_last_fk) {
+            return py::array_t<double>();
+        }
+        py::array_t<double> out({NUM_STATES}, {static_cast<ssize_t>(sizeof(double))});
+        auto acc = out.mutable_unchecked<1>();
+        for (int i = 0; i < NUM_STATES; i++) acc(i) = last_fk_out[i];
+        return out;
     }
 
     /**
@@ -2096,6 +2227,384 @@ public:
     }
 
     /**
+     * Compute parameter Jacobian: ∂F/∂θ (gradient of residual w.r.t learnable params)
+     */
+    py::dict compute_parameter_jacobian(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_in = py::array_t<double>(),
+        py::array_t<double> nL_in = py::array_t<double>()
+    ) {
+        using namespace CRMCatheterModel;
+
+        auto vbuf = v_in.request();
+        if (vbuf.ndim != 2 || vbuf.shape[1] != 3) {
+            throw std::runtime_error("v_in must have shape (num_act_set, 3)");
+        }
+        const int num_sets = static_cast<int>(vbuf.shape[0]);
+        if (num_sets != 1) {
+            throw std::runtime_error("compute_parameter_jacobian currently only supports NUM_ACT_SET=1");
+        }
+
+        auto wbuf = w_in.request();
+        auto pbuf = p_in.request();
+        auto Rbuf = R_in.request();
+        auto xfbuf = xf_in.request();
+        if (wbuf.ndim != 2 || wbuf.shape[0] != num_sets || wbuf.shape[1] != 3) {
+            throw std::runtime_error("w_in must have shape (num_act_set, 3)");
+        }
+        if (pbuf.ndim != 2 || pbuf.shape[0] != num_sets || pbuf.shape[1] != 3) {
+            throw std::runtime_error("p_in must have shape (num_act_set, 3)");
+        }
+        if (Rbuf.ndim != 2 || Rbuf.shape[0] != num_sets || Rbuf.shape[1] != 9) {
+            throw std::runtime_error("R_in must have shape (num_act_set, 9)");
+        }
+        if (xfbuf.ndim != 1 || xfbuf.shape[0] != NUM_STATES) {
+            throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
+        }
+
+        auto ensure_mn = [&](const py::array_t<double>& arr) {
+            if (arr.size() != 0) {
+                auto abuf = arr.request();
+                if (abuf.ndim != 2 || abuf.shape[0] != num_sets || abuf.shape[1] != 3) {
+                    throw std::runtime_error("mL/nL must have shape (num_act_set, 3) when provided");
+                }
+                return arr;
+            }
+            py::array_t<double> out({num_sets, 3});
+            auto o = out.mutable_unchecked<2>();
+            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) o(j, i) = 0.0;
+            return out;
+        };
+
+        py::array_t<double> mL_use = ensure_mn(mL_in);
+        py::array_t<double> nL_use = ensure_mn(nL_in);
+
+        py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
+        const bool ok = base["converged"].cast<bool>();
+        if (!ok) {
+            throw std::runtime_error("Dynamics did not converge; cannot compute parameter Jacobian");
+        }
+
+        auto mL_star_arr = base["next_mL"].cast<py::array_t<double>>();
+        auto nL_star_arr = base["next_nL"].cast<py::array_t<double>>();
+        auto mL_star = mL_star_arr.request();
+        auto nL_star = nL_star_arr.request();
+        const double* mL_star_ptr = static_cast<double*>(mL_star.ptr);
+        const double* nL_star_ptr = static_cast<double*>(nL_star.ptr);
+
+        const int x_dim = num_sets * 6;
+        Eigen::VectorXd x_star_scaled(x_dim);
+        for (int j = 0; j < num_sets; j++) {
+            for (int i = 0; i < 3; i++) {
+                x_star_scaled(j * 6 + i) = mL_star_ptr[j * 3 + i] / IVALUE_SCALE_M;
+                x_star_scaled(j * 6 + 3 + i) = nL_star_ptr[j * 3 + i] / IVALUE_SCALE_N;
+            }
+        }
+
+        Eigen::Vector3d curr0(0.0, 0.0, 0.0);
+        auto curr_buf = currents.request();
+        const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+        for (int i = 0; i < 3; i++) curr0(i) = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+
+        const double dt_local = dt;
+
+        double ActuationCurrents[NUM_ACT_SET][3];
+        for (int i = 0; i < NUM_ACT_SET; i++) for (int j = 0; j < 3; j++) ActuationCurrents[i][j] = 0.0;
+        for (int j = 0; j < 3; j++) ActuationCurrents[0][j] = curr0(j);
+
+        double v_L_local[NUM_ACT_SET][3]{};
+        double w_L_local[NUM_ACT_SET][3]{};
+        double p_L_local[NUM_ACT_SET][3]{};
+        double R_L_local[NUM_ACT_SET][9]{};
+
+        auto vv = v_in.unchecked<2>();
+        auto ww = w_in.unchecked<2>();
+        auto pp = p_in.unchecked<2>();
+        auto RR = R_in.unchecked<2>();
+
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                v_L_local[j][i] = vv(j, i);
+                w_L_local[j][i] = ww(j, i);
+                p_L_local[j][i] = pp(j, i);
+            }
+            for (int i = 0; i < 9; i++) R_L_local[j][i] = RR(j, i);
+        }
+
+        double actInertia_local[NUM_ACT_SET][9];
+        double damping_local[NUM_ACT_SET][6];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 9; i++) actInertia_local[j][i] = actInertia[j][i];
+            for (int i = 0; i < 6; i++) damping_local[j][i] = damping[j][i];
+        }
+
+        ContactModeType ContactMode = ContactModeType::FREE_TIP;
+        double TipForce[3] = {0.0, 0.0, 0.0};
+        double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
+
+        CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
+            *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+            ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+            actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+        );
+
+        const bool FinalValueOnly = true;
+        DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
+
+        double x_0[NUM_STATES];
+        for (int i = 0; i < NUM_STATES; i++) {
+            if (i < 3) x_0[i] = BVPParams.p0[i];
+            else if (i < 12) x_0[i] = BVPParams.R0[i - 3];
+            else x_0[i] = 0.0;
+        }
+
+        double mL_guess_local[NUM_ACT_SET][3]{};
+        double nL_guess_local[NUM_ACT_SET][3]{};
+        auto mLseed = mL_use.unchecked<2>();
+        auto nLseed = nL_use.unchecked<2>();
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) for (int i = 0; i < 3; i++) {
+            mL_guess_local[j][i] = mLseed(j, i);
+            nL_guess_local[j][i] = nLseed(j, i);
+        }
+
+        CRMDYNSolverIVP_Prep(
+            BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+            x_0, BVPParams.IntegrationStepSize,
+            BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+            BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+            BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+            BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+            BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
+            BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+            mL_guess_local, nL_guess_local,
+            FinalValueOnly, DYNNLEParams
+        );
+
+        DYNNLEParams.ContactMode = ContactModeType::FREE_TIP;
+        for (int i = 0; i < 3; i++) {
+            DYNNLEParams.TipForce[i] = 0.0;
+            DYNNLEParams.TipConstraintPoint[i] = 0.0;
+            DYNNLEParams.ftip_initialguess[i] = 0.0;
+        }
+
+        auto xfA = xf_in.unchecked<1>();
+        for (int i = 0; i < NUM_STATES; i++) {
+            DYNNLEParams.xf[i] = xfA(i);
+        }
+
+        Eigen::VectorXd residual;
+        Eigen::VectorXd theta;
+        Eigen::MatrixXd J_theta = DYNNLEquationParameterJacobianEigenAD(x_star_scaled, DYNNLEParams, &residual, &theta);
+
+        for (int i = 0; i < 6; i++) {
+            theta(dynnl_ad_eigen::THETA_OFFSET_DAMPING + i) = damping[0][i];
+        }
+
+        const int num_params = static_cast<int>(theta.size());
+        const int res_dim = static_cast<int>(residual.size());
+
+        py::array_t<double> J_theta_out({res_dim, num_params});
+        auto Jout = J_theta_out.mutable_unchecked<2>();
+        for (int i = 0; i < res_dim; i++) {
+            for (int j = 0; j < num_params; j++) {
+                Jout(i, j) = J_theta(i, j);
+            }
+        }
+
+        py::array_t<double> theta_out(num_params);
+        auto tout = theta_out.mutable_unchecked<1>();
+        for (int i = 0; i < num_params; i++) {
+            tout(i) = theta(i);
+        }
+
+        py::array_t<double> residual_out(res_dim);
+        auto rout = residual_out.mutable_unchecked<1>();
+        for (int i = 0; i < res_dim; i++) {
+            rout(i) = residual(i);
+        }
+
+        auto param_names = dynnl_ad_eigen::getLearnableParamNames();
+        py::list names_list;
+        for (const auto& name : param_names) {
+            names_list.append(py::str(name));
+        }
+
+        py::dict result;
+        result["J_theta"] = J_theta_out;
+        result["theta"] = theta_out;
+        result["residual"] = residual_out;
+        result["param_names"] = names_list;
+        result["converged"] = ok;
+        result["base"] = base;
+        return result;
+    }
+
+    /**
+     * Compute residual at a fixed state without re-solving.
+     */
+    py::dict compute_residual_at_state(
+        py::array_t<double> currents,
+        double insertion_length,
+        py::array_t<double> v_in,
+        py::array_t<double> w_in,
+        py::array_t<double> p_in,
+        py::array_t<double> R_in,
+        py::array_t<double> xf_in,
+        py::array_t<double> mL_fixed,
+        py::array_t<double> nL_fixed
+    ) {
+        using namespace CRMCatheterModel;
+
+        auto vbuf = v_in.request();
+        if (vbuf.ndim != 2 || vbuf.shape[1] != 3) {
+            throw std::runtime_error("v_in must have shape (num_act_set, 3)");
+        }
+        const int num_sets = static_cast<int>(vbuf.shape[0]);
+        if (num_sets != 1) {
+            throw std::runtime_error("compute_residual_at_state currently only supports NUM_ACT_SET=1");
+        }
+
+        auto mLbuf = mL_fixed.request();
+        auto nLbuf = nL_fixed.request();
+        if (mLbuf.ndim != 2 || mLbuf.shape[0] != num_sets || mLbuf.shape[1] != 3) {
+            throw std::runtime_error("mL_fixed must have shape (num_act_set, 3)");
+        }
+        if (nLbuf.ndim != 2 || nLbuf.shape[0] != num_sets || nLbuf.shape[1] != 3) {
+            throw std::runtime_error("nL_fixed must have shape (num_act_set, 3)");
+        }
+
+        const double* mL_ptr = static_cast<double*>(mLbuf.ptr);
+        const double* nL_ptr = static_cast<double*>(nLbuf.ptr);
+
+        const int x_dim = num_sets * 6;
+        Eigen::VectorXd x_scaled(x_dim);
+        for (int j = 0; j < num_sets; j++) {
+            for (int i = 0; i < 3; i++) {
+                x_scaled(j * 6 + i) = mL_ptr[j * 3 + i] / IVALUE_SCALE_M;
+                x_scaled(j * 6 + 3 + i) = nL_ptr[j * 3 + i] / IVALUE_SCALE_N;
+            }
+        }
+
+        Eigen::Vector3d curr0(0.0, 0.0, 0.0);
+        auto curr_buf = currents.request();
+        const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
+        for (int i = 0; i < 3; i++) curr0(i) = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+
+        const double dt_local = dt;
+
+        double ActuationCurrents[NUM_ACT_SET][3];
+        for (int i = 0; i < NUM_ACT_SET; i++) for (int j = 0; j < 3; j++) ActuationCurrents[i][j] = 0.0;
+        for (int j = 0; j < 3; j++) ActuationCurrents[0][j] = curr0(j);
+
+        double v_L_local[NUM_ACT_SET][3]{};
+        double w_L_local[NUM_ACT_SET][3]{};
+        double p_L_local[NUM_ACT_SET][3]{};
+        double R_L_local[NUM_ACT_SET][9]{};
+
+        auto vv = v_in.unchecked<2>();
+        auto ww = w_in.unchecked<2>();
+        auto pp = p_in.unchecked<2>();
+        auto RR = R_in.unchecked<2>();
+
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                v_L_local[j][i] = vv(j, i);
+                w_L_local[j][i] = ww(j, i);
+                p_L_local[j][i] = pp(j, i);
+            }
+            for (int i = 0; i < 9; i++) R_L_local[j][i] = RR(j, i);
+        }
+
+        double actInertia_local[NUM_ACT_SET][9];
+        double damping_local[NUM_ACT_SET][6];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 9; i++) actInertia_local[j][i] = actInertia[j][i];
+            for (int i = 0; i < 6; i++) damping_local[j][i] = damping[j][i];
+        }
+
+        ContactModeType ContactMode = ContactModeType::FREE_TIP;
+        double TipForce[3] = {0.0, 0.0, 0.0};
+        double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
+
+        CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
+            *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+            ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+            actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+        );
+
+        const bool FinalValueOnly = true;
+        DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps);
+
+        double x_0[NUM_STATES];
+        for (int i = 0; i < NUM_STATES; i++) {
+            if (i < 3) x_0[i] = BVPParams.p0[i];
+            else if (i < 12) x_0[i] = BVPParams.R0[i - 3];
+            else x_0[i] = 0.0;
+        }
+
+        double mL_guess_local[NUM_ACT_SET][3]{};
+        double nL_guess_local[NUM_ACT_SET][3]{};
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) for (int i = 0; i < 3; i++) {
+            mL_guess_local[j][i] = mL_ptr[j * 3 + i];
+            nL_guess_local[j][i] = nL_ptr[j * 3 + i];
+        }
+
+        CRMDYNSolverIVP_Prep(
+            BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+            x_0, BVPParams.IntegrationStepSize,
+            BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+            BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+            BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+            BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+            BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
+            BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+            mL_guess_local, nL_guess_local,
+            FinalValueOnly, DYNNLEParams
+        );
+
+        DYNNLEParams.ContactMode = ContactModeType::FREE_TIP;
+        for (int i = 0; i < 3; i++) {
+            DYNNLEParams.TipForce[i] = 0.0;
+            DYNNLEParams.TipConstraintPoint[i] = 0.0;
+            DYNNLEParams.ftip_initialguess[i] = 0.0;
+        }
+
+        auto xfA = xf_in.unchecked<1>();
+        for (int i = 0; i < NUM_STATES; i++) {
+            DYNNLEParams.xf[i] = xfA(i);
+        }
+
+        Eigen::VectorXd residual = DYNNLEquationResidualEigenDouble(x_scaled, DYNNLEParams);
+        Eigen::VectorXd theta = dynnl_ad_eigen::packLearnableParams(DYNNLEParams, 0);
+
+        const int num_params = static_cast<int>(theta.size());
+        const int res_dim = static_cast<int>(residual.size());
+
+        py::array_t<double> residual_out(res_dim);
+        auto rout = residual_out.mutable_unchecked<1>();
+        for (int i = 0; i < res_dim; i++) {
+            rout(i) = residual(i);
+        }
+
+        py::array_t<double> theta_out(num_params);
+        auto tout = theta_out.mutable_unchecked<1>();
+        for (int i = 0; i < num_params; i++) {
+            tout(i) = theta(i);
+        }
+
+        py::dict result;
+        result["residual"] = residual_out;
+        result["theta"] = theta_out;
+        return result;
+    }
+
+    /**
      * Get current tip position.
      */
     py::array_t<double> getTipPosition() const {
@@ -2165,6 +2674,8 @@ PYBIND11_MODULE(crm_python, m) {
         .def("set_damping", &CRMDynamicsWrapper::setDamping,
              py::arg("damping_values"),
              "Set damping coefficients")
+        .def("get_config_snapshot", &CRMDynamicsWrapper::get_config_snapshot,
+             "Debug: get config/segment snapshot used by dynamics")
         .def("set_timestep", &CRMDynamicsWrapper::setTimestep,
              py::arg("dt"),
              "Set simulation timestep")
@@ -2173,6 +2684,8 @@ PYBIND11_MODULE(crm_python, m) {
         .def("initialize_from_kinematics", &CRMDynamicsWrapper::initializeFromKinematics,
              py::arg("currents"), py::arg("insertion_length"),
              "Initialize dynamics from FK solution (MUST call before step)")
+        .def("get_last_fk_output", &CRMDynamicsWrapper::get_last_fk_output,
+             "Debug: get last FK output used during dynamics initialization")
         .def("initialize_from_seed", &CRMDynamicsWrapper::initializeFromSeed,
              py::arg("currents"), py::arg("insertion_length"),
              py::arg("p_in"), py::arg("R_in"), py::arg("xf_in"),
@@ -2228,6 +2741,17 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("eps_g_theta") = 1e-5,
              py::arg("return_debug") = false,
              "Implicit linearization scaffold: FD residual Jacobians + implicit sensitivity to compute A,B")
+        .def("compute_parameter_jacobian", &CRMDynamicsWrapper::compute_parameter_jacobian,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),
+             py::arg("mL") = py::array_t<double>(),
+             py::arg("nL") = py::array_t<double>(),
+             "Compute parameter Jacobian: gradient of residual w.r.t learnable physical parameters (damping, stiffness, etc.)")
+        .def("compute_residual_at_state", &CRMDynamicsWrapper::compute_residual_at_state,
+             py::arg("currents"), py::arg("insertion_length"),
+             py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),
+             py::arg("mL_fixed"), py::arg("nL_fixed"),
+             "Compute residual at a fixed state without re-solving (for FD validation)")
         .def("get_tip_position", &CRMDynamicsWrapper::getTipPosition,
              "Get current tip position")
         .def_readwrite("dt", &CRMDynamicsWrapper::dt)

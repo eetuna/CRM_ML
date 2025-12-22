@@ -22,6 +22,7 @@ namespace CRMCatheterModel {
         auto& Kinv = in_Params.Kinv;
         auto& ustar = in_Params.ustar;
         auto& l = in_Params.l;
+        const auto& fcumlambda = *in_Params.fcumlambda;
         for (int i = 0; i < 3; i++) {
             ustardot[i] = 0.0; //in_ustardot[i]; // we assume ustardot=0.0 since our rest shape model is piecewise constant curvature
         }
@@ -49,7 +50,7 @@ namespace CRMCatheterModel {
         double ixmird = ix - ird;    // weight for interpolation
         double irumix = iru - ix;	// weight for interpolation
         for (int i = 0; i < 3; i++) {
-            fcum[i] = in_Params.fcumlambda[iru][i] * ixmird + in_Params.fcumlambda[ird][i] * irumix;
+            fcum[i] = fcumlambda[iru](i) * ixmird + fcumlambda[ird](i) * irumix;
         }
 
         // add the tip force to fcum
@@ -81,14 +82,14 @@ namespace CRMCatheterModel {
         double RTl[3];
         mMult_ATB<3, 3, 1>(R, l, RTl);								// R'*l
         double umustar[3];
-        mSub_AB<3, 1>(u, ustar, umustar);							// (u-ustar_s)
+        mSub_AB<3, 1>(u, ustar->data(), umustar);					// (u-ustar_s)
         double Kumustar[3], uhatKumustar[3];
-        mMult_AB<3, 3, 1>(K, umustar, Kumustar);
+        mMult_AB<3, 3, 1>(K->data(), umustar, Kumustar);
         mMult_AB<3, 3, 1>(u_hat, Kumustar, uhatKumustar); 		 	//(um*K+Kdot)*(u-ustar_s)  assuming Kdot=0
         double sumterm[3];
         mAdd_ABC<3, 1>(uhatKumustar, e3hatRTfcum, RTl, sumterm);	// ((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
         double KinvSum[3];
-        mMult_AB<3, 3, 1>(Kinv, sumterm, KinvSum);					// Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
+        mMult_AB<3, 3, 1>(Kinv->data(), sumterm, KinvSum);			// Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
         mSub_AB<3, 1>(ustardot, KinvSum, udot);					// udot = ustardot - Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l);
 
 #ifndef ANALYTICAL_SE3_STEP
@@ -159,8 +160,8 @@ namespace CRMCatheterModel {
                 //
                 // Elastic Potential Energy: \int u^T K u \approx ( u_n^T K u_n + ( u_n^T K u_np1 + u_np1^T K u_n ) /2 + u_np1^T K u_np1 ) /3
                 //
-                mMult_AB<3, 3, 1>(in_Params.K, x_n._u, Kun);
-                mMult_AB<3, 3, 1>(in_Params.K, x_np1._u, Kunp1);
+                mMult_AB<3, 3, 1>(in_Params.K->data(), x_n._u, Kun);
+                mMult_AB<3, 3, 1>(in_Params.K->data(), x_np1._u, Kunp1);
                 mMult_ATB<3, 1, 1>(x_n._u, Kun, &unTKun);
                 mMult_ATB<3, 1, 1>(x_n._u, Kunp1, &unTKunp1);
                 mMult_ATB<3, 1, 1>(x_np1._u, Kun, &unp1TKun);

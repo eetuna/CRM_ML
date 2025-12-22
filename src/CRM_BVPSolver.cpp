@@ -78,9 +78,9 @@ namespace CRMCatheterModel {
 		for (int i = 0; i < NLEq_Dim; i++) x[i] = initialguessscaled[i];
 
 #if defined  (FK_TRUSTREGION_ANALYTICALJAC)
-		TrustRegionDogleg_GivenJacobian<NLEqnParams>(CRM_NLEquation, CRM_NLEquation_AnalyticalJac, 3, x, residual, tol, info, NLEParams);
+		TrustRegionDogleg_GivenJacobian<NLEqnParams*>(CRM_NLEquation, CRM_NLEquation_AnalyticalJac, 3, x, residual, tol, info, &NLEParams);
 #else 	
-		TrustRegionDogleg(CRM_NLEquation, NLEq_Dim, x, residual, tol, info, NLEParams);
+		TrustRegionDogleg<NLEqnParams*>(CRM_NLEquation, NLEq_Dim, x, residual, tol, info, &NLEParams);
 #endif
 
 		localmin = (info == 1) ? 0 : (info - 1);
@@ -170,7 +170,7 @@ namespace CRMCatheterModel {
 	}
 
 
-	void CRM_NLEquation(double in_x[], double out_y[], NLEqnParams Params) {
+	void CRM_NLEquation(double in_x[], double out_y[], NLEqnParams* Params) {
 
 		StateVector x_N;
 		double MomentResidual[3];
@@ -178,10 +178,10 @@ namespace CRMCatheterModel {
 
 		double deltau_0[3], ftip[3];
 		// don't forget to scale parameters before passing to the CRMSolverIVP
-		if (Params.ContactMode == ContactModeType::FREE_TIP) {
+		if (Params->ContactMode == ContactModeType::FREE_TIP) {
 			for (int i = 0; i < 3; i++) {
 				deltau_0[i] = IVALUE_SCALE_DU * in_x[i];
-				ftip[i] = Params.TipForce[i];  // for free-tip, this parameter is not given by the nonlinear equation solver, and hence, does not need to be scaled
+				ftip[i] = Params->TipForce[i];  // for free-tip, this parameter is not given by the nonlinear equation solver, and hence, does not need to be scaled
 			}
 		}
 		else { // FIXED_TIP
@@ -191,10 +191,13 @@ namespace CRMCatheterModel {
 			}
 		}
 		// We will only call the IVP_Core, since preprocessing is already done
-		CRMSolverIVP_Core(Params, deltau_0, ftip, x_N, MomentResidual, dummyPE, Params.p_atLocMarkers, Params.R_atActuators, Params.p_atActuators);
+		CRMSolverIVP_Core(*Params, deltau_0, ftip, x_N, MomentResidual, dummyPE,
+			reinterpret_cast<double (*)[3]>(Params->p_atLocMarkers.data()),
+			reinterpret_cast<double (*)[9]>(Params->R_atActuators.data()),
+			reinterpret_cast<double (*)[3]>(Params->p_atActuators.data()));
 
 		// don't forget to scale parameters before returning to the nonlinear equation solver
-		if (Params.ContactMode == ContactModeType::FREE_TIP) {
+		if (Params->ContactMode == ContactModeType::FREE_TIP) {
 			for (int i = 0; i < 3; i++) {
 				out_y[i] = RESIDUAL_SCALE_M * MomentResidual[i];
 			}
@@ -202,24 +205,24 @@ namespace CRMCatheterModel {
 		else { // FIXED_TIP
 			for (int i = 0; i < 3; i++) {
 				out_y[i] = RESIDUAL_SCALE_M * MomentResidual[i];
-				out_y[i + 3] = RESIDUAL_SCALE_P * (x_N._p[i] - Params.TipConstraintPoint[i]);
+				out_y[i + 3] = RESIDUAL_SCALE_P * (x_N._p[i] - Params->TipConstraintPoint[i]);
 			}
 		}
 
 	}
 
 
-	void CRM_NLEquation_AnalyticalJac(double in_x[], double out_y[], double out_fjac[], NLEqnParams Params) {
+	void CRM_NLEquation_AnalyticalJac(double in_x[], double out_y[], double out_fjac[], NLEqnParams* Params) {
 
 		AugmentedStateVector<IVPJacobiansMini> x_N;
 		double MomentResidual[3], kJuu0[9];
 
 		double deltau_0[3], ftip[3];
 		// don't forget to scale parameters before passing to the CRMSolverIVP
-		if (Params.ContactMode == ContactModeType::FREE_TIP) {
+		if (Params->ContactMode == ContactModeType::FREE_TIP) {
 			for (int i = 0; i < 3; i++) {
 				deltau_0[i] = IVALUE_SCALE_DU * in_x[i];
-				ftip[i] = Params.TipForce[i];  // for free-tip, this parameter is not given by the nonlinear equation solver, and hence, does not need to be scaled
+				ftip[i] = Params->TipForce[i];  // for free-tip, this parameter is not given by the nonlinear equation solver, and hence, does not need to be scaled
 			}
 		}
 		else { // FIXED_TIP
@@ -229,18 +232,23 @@ namespace CRMCatheterModel {
 			}
 		}
 		// We will only call the IVP_Core, since preprocessing is already done
-		CRMSolverIVP_CoreWithJacobian(Params, deltau_0, ftip, x_N, MomentResidual);
+		CRMSolverIVP_CoreWithJacobian(*Params, deltau_0, ftip, x_N, MomentResidual);
 
 		// don't forget to scale parameters before returning to the nonlinear equation solver
-		if (Params.ContactMode == ContactModeType::FREE_TIP) {
+		if (Params->ContactMode == ContactModeType::FREE_TIP) {
 			for (int i = 0; i < 3; i++) {
 				out_y[i] = RESIDUAL_SCALE_M * MomentResidual[i];
 			}
-			if ( Params.SegmentTypes[Params.no_segments - 1] == CatheterSegmentType::FLEXIBLE ) { // if last segment is flexible
-				mMult_AB<3, 3, 3>(Params.K[Params.no_flex_seg - 1], x_N._u_u0, kJuu0);
+			if (Params->SegmentTypes[Params->no_segments - 1] == CatheterSegmentType::FLEXIBLE) { // if last segment is flexible
+				const auto& K_last = Params->K[Params->no_flex_seg - 1];
+				const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> u_u0(x_N._u_u0);
+				Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> kJ(kJuu0);
+				kJ = K_last * u_u0;
 			}
 			else {  // if last segment is rigid
-				mCopy_AB<3 * 3>(x_N._u_u0, kJuu0);
+				const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> u_u0(x_N._u_u0);
+				Eigen::Map<Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> kJ(kJuu0);
+				kJ = u_u0;
 			}
 			for (int i = 0; i < 3; i++) for (int j = 0; j < 3; j++) out_fjac[i + j * 3] = RESIDUAL_SCALE_M * kJuu0[i * 3 + j] * IVALUE_SCALE_DU;  // Note that minpack uses Fortran style column-major ordering, not C sytle row-major ordering
 
@@ -248,7 +256,7 @@ namespace CRMCatheterModel {
 		else { // FIXED_TIP
 			for (int i = 0; i < 3; i++) {
 				out_y[i] = RESIDUAL_SCALE_M * MomentResidual[i];
-				out_y[i + 3] = RESIDUAL_SCALE_P * (x_N._p[i] - Params.TipConstraintPoint[i]);
+				out_y[i + 3] = RESIDUAL_SCALE_P * (x_N._p[i] - Params->TipConstraintPoint[i]);
 			}
 			std::cerr << "Functionality Not Implemented!...\n";
 			exit(1);
@@ -357,29 +365,35 @@ namespace CRMCatheterModel {
 			Kinv[0] = 1.0 / (E * mI);		Kinv[1] = 0.0;				Kinv[2] = 0.0;
 			Kinv[3] = 0.0;				Kinv[4] = 1.0 / (E * mI);		Kinv[5] = 0.0;
 			Kinv[6] = 0.0;				Kinv[7] = 0.0;				Kinv[8] = 1.0 / (G * pmI);
-			mCopy_AB<9>(K, ShootingParams.K[i]);
-			mCopy_AB<9>(Kinv, ShootingParams.Kinv[i]);
+			const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Kmat(K);
+			const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Kinvmat(Kinv);
+			ShootingParams.K[i] = Kmat;
+			ShootingParams.Kinv[i] = Kinvmat;
 		}
-		for (int i = 0; i < CathParams.no_flex_seg; i++) for (int j = 0; j < 3; j++) ShootingParams.ustar[i][j] = CathParams.ustar[i][j];
+		for (int i = 0; i < CathParams.no_flex_seg; i++) {
+			for (int j = 0; j < 3; j++) {
+				ShootingParams.ustar[i](j) = CathParams.ustar[i][j];
+			}
+		}
 		double CoilAlignMat[9], c0, s0, c1, s1;
-		double tempf[3];
 		for (int i = 0; i < CathParams.no_act_set; i++) {
 			ShootingParams.ActMass[i] = CathParams.ActMass[i];
 			c0 = cos(CathParams.CoilAlignmentAngles[i][0]);
 			s0 = sin(CathParams.CoilAlignmentAngles[i][0]);
 			c1 = cos(CathParams.CoilAlignmentAngles[i][1]);
 			s1 = sin(CathParams.CoilAlignmentAngles[i][1]);
-			mMult_AB<3, 3, 1>(CathParams.CoilTurnAreaMat[i], ActuationCurrents[i], tempf);
+			const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> turn_mat(CathParams.CoilTurnAreaMat[i]);
+			const Eigen::Map<const Eigen::Vector3d> currents(ActuationCurrents[i]);
+			const Eigen::Vector3d tempf = turn_mat * currents;
 			CoilAlignMat[0] = c0;	CoilAlignMat[1] = -s1;	CoilAlignMat[2] = 0.0;
 			CoilAlignMat[3] = s0;	CoilAlignMat[4] = c1;	CoilAlignMat[5] = 0.0;
 			CoilAlignMat[6] = 0.0;	CoilAlignMat[7] = 0.0;	CoilAlignMat[8] = 1.0;
-			mMult_AB<3, 3, 1>(CoilAlignMat, tempf, ShootingParams.MagMoment[i]);
-			mMult_AB<3, 3, 3>(CoilAlignMat, CathParams.CoilTurnAreaMat[i], ShootingParams.CoilAlignmentTurnAreaMatrix[i]);
+			const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> coil_align(CoilAlignMat);
+			ShootingParams.MagMoment[i] = coil_align * tempf;
+			ShootingParams.CoilAlignmentTurnAreaMatrix[i] = coil_align * turn_mat;
 		}
 
-		ShootingParams.fcumlambda[0][0] = 0.0;
-		ShootingParams.fcumlambda[0][1] = 0.0;
-		ShootingParams.fcumlambda[0][2] = 0.0;
+		ShootingParams.fcumlambda[0].setZero();
 		double cumpos = 0.0, lastpos = 0.0, mass = 0.0, segstart, segend, currpos;
 		int32_t curr_segment = 0, last_segment = 0;
 		// calculation loop
@@ -399,7 +413,8 @@ namespace CRMCatheterModel {
 				lastpos = currpos;
 			}
 			last_segment = curr_segment;
-			mMult_sA<3, 1>(mass, CathConfig.g, ShootingParams.fcumlambda[i]);
+			const Eigen::Map<const Eigen::Vector3d> gravity(CathConfig.g);
+			ShootingParams.fcumlambda[i] = mass * gravity;
 		}
 
 		delete[] ActNos;
@@ -415,7 +430,8 @@ namespace CRMCatheterModel {
 		double ActuationCurrents[NUM_ACT_SET][3]) {
 
 		for (int i = 0; i < ShootingParams.no_act_set; i++) {
-			mMult_AB<3, 3, 1>(ShootingParams.CoilAlignmentTurnAreaMatrix[i], ActuationCurrents[i], ShootingParams.MagMoment[i]);
+			const Eigen::Map<const Eigen::Vector3d> currents(ActuationCurrents[i]);
+			ShootingParams.MagMoment[i] = ShootingParams.CoilAlignmentTurnAreaMatrix[i] * currents;
 		}
 
 	}
@@ -529,48 +545,34 @@ namespace CRMCatheterModel {
 		Li = t.Li;
 
 		allocate_memory();
-		for (int32_t ix = 0; ix < no_segments; ix++) SegmentTypes[ix] = t.SegmentTypes[ix];
-		for (int32_t ix = 0; ix < no_segments; ix++) SegEndLambdas[ix] = t.SegEndLambdas[ix];
-		for (int32_t ix = 0; ix < no_segments; ix++) rho[ix] = t.rho[ix];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) for (int32_t jx = 0; jx < 9; jx++) K[ix][jx] = t.K[ix][jx];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) for (int32_t jx = 0; jx < 9; jx++) Kinv[ix][jx] = t.Kinv[ix][jx];
-		for (int32_t ix = 0; ix < no_flex_seg; ix++) for (int32_t jx = 0; jx < 3; jx++) ustar[ix][jx] = t.ustar[ix][jx];
-		for (int32_t ix = 0; ix < no_act_set; ix++) ActMass[ix] = t.ActMass[ix];
-		for (int32_t ix = 0; ix < no_act_set; ix++) for (int32_t jx = 0; jx < 3; jx++) MagMoment[ix][jx] = t.MagMoment[ix][jx];
-		for (int32_t ix = 0; ix < no_act_set; ix++) for (int32_t jx = 0; jx < 9; jx++) CoilAlignmentTurnAreaMatrix[ix][jx] = t.CoilAlignmentTurnAreaMatrix[ix][jx];
-		for (int32_t ix = 0; ix < no_locmarkers; ix++) LocMarkerLambdas[ix] = t.LocMarkerLambdas[ix];
-		for (int32_t ix = 0; ix < no_fcum_steps + 1; ix++) for (int32_t jx = 0; jx < 3; jx++) fcumlambda[ix][jx] = t.fcumlambda[ix][jx];
+		SegmentTypes = t.SegmentTypes;
+		SegEndLambdas = t.SegEndLambdas;
+		rho = t.rho;
+		K = t.K;
+		Kinv = t.Kinv;
+		ustar = t.ustar;
+		ActMass = t.ActMass;
+		MagMoment = t.MagMoment;
+		CoilAlignmentTurnAreaMatrix = t.CoilAlignmentTurnAreaMatrix;
+		LocMarkerLambdas = t.LocMarkerLambdas;
+		fcumlambda = t.fcumlambda;
 	}
 
 	CRMShootingMethodParams::~CRMShootingMethodParams() {
-		if (memory_allocated) {
-			delete[] SegmentTypes;
-			delete[] SegEndLambdas;
-			delete[] rho;
-			delete[] K;
-			delete[] Kinv;
-			delete[] ustar;
-			delete[] ActMass;
-			delete[] MagMoment;
-			delete[] CoilAlignmentTurnAreaMatrix;
-			delete[] LocMarkerLambdas;
-			delete[] fcumlambda;
-		}
 	}
 
 	void CRMShootingMethodParams::allocate_memory() {
-		SegmentTypes = new CatheterSegmentType[no_segments];
-		SegEndLambdas = new double[no_segments];
-		rho = new double[no_segments];
-		K = new double[no_flex_seg][9];
-		Kinv = new double[no_flex_seg][9];
-		ustar = new double[no_flex_seg][3];
-		ActMass = new double[no_act_set];
-		MagMoment = new double[no_act_set][3];
-		CoilAlignmentTurnAreaMatrix = new double[no_act_set][9];
-		LocMarkerLambdas = new double[no_locmarkers];
-		fcumlambda = new double[no_fcum_steps + 1][3];
-		memory_allocated = true;
+		SegmentTypes.resize(no_segments);
+		SegEndLambdas.resize(no_segments);
+		rho.resize(no_segments);
+		K.resize(no_flex_seg);
+		Kinv.resize(no_flex_seg);
+		ustar.resize(no_flex_seg);
+		ActMass.resize(no_act_set);
+		MagMoment.resize(no_act_set);
+		CoilAlignmentTurnAreaMatrix.resize(no_act_set);
+		LocMarkerLambdas.resize(no_locmarkers);
+		fcumlambda.resize(no_fcum_steps + 1);
 	}
 
 

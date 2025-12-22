@@ -1,4 +1,5 @@
 #pragma once
+#include <Eigen/Dense>
 
 //
 // ---------------------------------------------------------
@@ -30,8 +31,8 @@ namespace CRMCatheterModel {
 	// support function to Propagate Boundary Condition through a Rigid Link - used by CRMSolverIVP_CoreWithJacobian
 	template<typename IVPJacobians>
 	void CRMSolverIVP_PropagateBCThroughRigidLink(AugmentedStateVector<IVPJacobians>& xi_ip1, double Residual_ip1[3],
-		const double RigidSegmentLength, const unsigned int ActNo, const double MagMoment[3], const double CoilAlignmentTurnAreaMatrix[9], const double B0[3], 
-		const double ustar_i[3], const double K_i[9], const double ustar_ip1[3], const double Kinv_ip1[9],
+		const double RigidSegmentLength, const unsigned int ActNo, const Eigen::Vector3d& MagMoment, const Eigen::Matrix3d& CoilAlignmentTurnAreaMatrix, const double B0[3],
+		const Eigen::Vector3d& ustar_i, const Eigen::Matrix3d& K_i, const Eigen::Vector3d& ustar_ip1, const Eigen::Matrix3d& Kinv_ip1,
 		const AugmentedStateVector<IVPJacobians>& xf_i, const double Residual_i[3]);
 
 

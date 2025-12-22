@@ -466,7 +466,7 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
         }
 
         for (int i = 0; i <3 ; ++i) {
-            MagMoment[j][i] = Params.MagMoment[j][i];
+            MagMoment[j][i] = Params.MagMoment[j](i);
         }
         for (int i = 0; i < 3; ++i) {
             mu[i] =  MagMoment[j][i];
@@ -516,8 +516,8 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 
             if(segi == NUM_SEGMENTS-1){ //last segment is flexible
                 // assume free tip no torque tau_0 = [0,0,0]
-                mMult_AB<3,3,1>( Kinv[fsegi], tau_0, K2invResidual );
-                mAdd_AB<3,1>( ustar[fsegi], K2invResidual, u_t );
+                mMult_AB<3,3,1>( Kinv[fsegi].data(), tau_0, K2invResidual );
+                mAdd_AB<3,1>( ustar[fsegi].data(), K2invResidual, u_t );
 
                 for (int i = 0; i < 3; ++i) {
                     p_t[i] = Params.xf[i];
@@ -528,8 +528,8 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
                 CRMFlexible_IVP_Back ( segi, p_t, R_t, Params, u_t , n_0,
                                        u_tau, p_, R_);
 
-                mSub_AB<3,1>( u_tau, ustar[fsegi], du);
-                mMult_AB<3,3,1>( K[fsegi], du, tau ); // moment at upper side of the coil
+                mSub_AB<3,1>( u_tau, ustar[fsegi].data(), du);
+                mMult_AB<3,3,1>( K[fsegi].data(), du, tau ); // moment at upper side of the coil
 
                 actno = fsegi - 1;
 
@@ -543,8 +543,8 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
             }else{ // the non-free tip flexible segments with coils on top
 
                 actno = fsegi;
-                mMult_AB<3,3,1>( Kinv[fsegi], m_L[actno], K2invResidual );
-                mAdd_AB<3,1>( ustar[fsegi], K2invResidual, u_L );
+                mMult_AB<3,3,1>( Kinv[fsegi].data(), m_L[actno], K2invResidual );
+                mAdd_AB<3,1>( ustar[fsegi].data(), K2invResidual, u_L );
 
                 actseg = segi + 1; //should be the upper actuator
 
@@ -565,8 +565,8 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 //                std::cout << "p_f: " << p_f[0] << " " << p_f[1] << " " << p_f[2] <<  std::endl;
 
                 if(actno > -1){ //if there is a coil linked below, we need to calculate the net torque again
-                    mSub_AB<3,1>( u_f, ustar[fsegi], du);
-                    mMult_AB<3,3,1>( K[fsegi], du, tau ); // calculate moment at upper side of the coil
+                    mSub_AB<3,1>( u_f, ustar[fsegi].data(), du);
+                    mMult_AB<3,3,1>( K[fsegi].data(), du, tau ); // calculate moment at upper side of the coil
 
                     mSub_AB<3,1>( m_L[actno], tau, net_mL); // net torque applied at the downwards coil
 
@@ -776,22 +776,22 @@ void CRMFlexible_IVP_Back ( int SegmentIndex, const double in_p[3], const double
     IntegrandParams.Li = InsertedLength;
     IntegrandParams.l = l_zero;  // we are assuming the distributed moment on the catheter body is zero
     IntegrandParams.no_fcum_steps = no_fcum_steps;
-    IntegrandParams.fcumlambda = fcumlambda;
+    IntegrandParams.fcumlambda = &fcumlambda;
 
     IntegrandParams.ftip = ftip;
     IntegrandParams.g = g;
 
     // assign the parameters that vary from segment to segment
-    IntegrandParams.K = K[fsegno];
-    IntegrandParams.Kinv = Kinv[fsegno];
-    IntegrandParams.ustar = ustar[fsegno];
+    IntegrandParams.K = &K[fsegno];
+    IntegrandParams.Kinv = &Kinv[fsegno];
+    IntegrandParams.ustar = &ustar[fsegno];
     IntegrandParams.rho = rho[SegmentIndex];
 
     // Integrate
     ABM4_dyn(xi_statevec, SegBounds[SegmentIndex+1], SegSteps[fsegno], h,
          IntegrandParams, n_L, no_locmarkers, CalculateEnergy,
-         FinalValueOnly, LocMarkers, NextLocMarker,
-         xf_statevec, DeltaPE, p_atLocMarkers);
+         FinalValueOnly, LocMarkers.data(), NextLocMarker,
+         xf_statevec, DeltaPE, reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()));
 
     for (int j=0; j < 3; j++) {
         out_p[j]= xf_statevec._p[j];
@@ -867,22 +867,22 @@ void CRMFlexForward_pass (  int SegmentIndex, const double in_p[3], const double
     IntegrandParams.Li = InsertedLength;
     IntegrandParams.l = l_zero;  // we are assuming the distributed moment on the catheter body is zero
     IntegrandParams.no_fcum_steps = no_fcum_steps;
-    IntegrandParams.fcumlambda = fcumlambda;
+    IntegrandParams.fcumlambda = &fcumlambda;
     IntegrandParams.ftip = ftip;
     IntegrandParams.g = g;
 
     // assign the parameters that vary from segment to segment
-    IntegrandParams.K = K[fsegno];
-    IntegrandParams.Kinv = Kinv[fsegno];
-    IntegrandParams.ustar = ustar[fsegno];
+    IntegrandParams.K = &K[fsegno];
+    IntegrandParams.Kinv = &Kinv[fsegno];
+    IntegrandParams.ustar = &ustar[fsegno];
     IntegrandParams.rho = rho[SegmentIndex];
 
 
     // Integrate
     ABM4_dyn(xi_statevec, SegBounds[SegmentIndex], SegSteps[fsegno], h,
          IntegrandParams, n_L, no_locmarkers, CalculateEnergy,
-         FinalValueOnly, LocMarkers, NextLocMarker,
-         xf_statevec, DeltaPE, p_atLocMarkers);
+         FinalValueOnly, LocMarkers.data(), NextLocMarker,
+         xf_statevec, DeltaPE, reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()));
 
 
     //then copy the marker locations to the output
@@ -929,7 +929,7 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
         }
 
         for (int i = 0; i <3 ; ++i) {
-            MagMoment[j][i] = CoreParams.MagMoment[j][i];
+            MagMoment[j][i] = CoreParams.MagMoment[j](i);
         }
         for (int i = 0; i < 3; ++i) {
             mu[i] =  MagMoment[j][i];
@@ -991,7 +991,8 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
                     n_f[i] =  n_L[actno][i];
                 }
             }
-            CRMFlexForward_pass (  SegmentIndex, p0, R0,  CoreParams, u_0 , n_f, u_new, p_new, R_new, p_atLocMarkers);
+            CRMFlexForward_pass(SegmentIndex, p0, R0, CoreParams, u_0, n_f, u_new, p_new, R_new,
+                                reinterpret_cast<double (*)[3]>(p_atLocMarkers.data()));
         }else{
             RigidSegmentLength=(SegBounds[SegmentIndex+1]-SegBounds[SegmentIndex]);
 
@@ -1025,8 +1026,8 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
             mSub_AB<3,1>( Tb, m_L[actno], Tb_ml);
             mSub_AB<3,1>( Tb_ml, w_terms, Residual);
 
-            mMult_AB<3,3,1>( Kinv[fsegip1], tau[actno], K2invResidual );
-            mAdd_AB<3,1>( ustar[fsegip1], K2invResidual, u_0 );
+            mMult_AB<3,3,1>( Kinv[fsegip1].data(), tau[actno], K2invResidual );
+            mAdd_AB<3,1>( ustar[fsegip1].data(), K2invResidual, u_0 );
 
             for (int i = 0; i < 3; ++i) {
                 p0[i] = update_coil_state[i+6] + 0.5*RigidSegmentLength * update_coil_state[9+ i*3+2 ];
@@ -1264,12 +1265,12 @@ void CRMDYNSolverIVP_Prep (
         int32_t in_no_fcum_steps,
         double in_x_0[NUM_STATES], double in_IntegrationStepSize,
         double in_Li, double in_dlambdainv,
-        double in_rho[/*in_no_flex_seg+in_no_rigid_seg*/],
-        const CatheterSegmentType in_SegmentTypes[/*in_no_flex_seg+in_no_rigid_seg*/],
-        double in_SegEndLambdas[/*no_segments=no_flex_seg+no_rigid_seg*/], double in_LocMarkerLambdas[/*no_locmarkers*/],
-        double in_K[][9], double in_Kinv[][9], double in_ustar[][3],
-        double in_MagMoment[][3], double in_fcumlambda[][3], 		double in_CoilAlignmentTurnAreaMatrix[/*in_no_act_set*/][9],
-        double in_B0[3], double in_g[3], const double in_actMass[], double in_actInertia[][9],
+        const std::vector<double>& in_rho,
+        const std::vector<CatheterSegmentType>& in_SegmentTypes,
+        const std::vector<double>& in_SegEndLambdas, const std::vector<double>& in_LocMarkerLambdas,
+        const std::vector<Eigen::Matrix3d>& in_K, const std::vector<Eigen::Matrix3d>& in_Kinv, const std::vector<Eigen::Vector3d>& in_ustar,
+        const std::vector<Eigen::Vector3d>& in_MagMoment, const std::vector<Eigen::Vector3d>& in_fcumlambda, const std::vector<Eigen::Matrix3d>& in_CoilAlignmentTurnAreaMatrix,
+        double in_B0[3], double in_g[3], const std::vector<double>& in_actMass, double in_actInertia[][9],
         double in_damping[NUM_ACT_SET][6], double in_delta_t,
         double in_v_L_pre[NUM_ACT_SET][3], double in_w_L_pre[NUM_ACT_SET][3], double in_p_pre[NUM_ACT_SET][3], double in_R_pre[NUM_ACT_SET][9],
         double in_mL[NUM_ACT_SET][3], double in_nL[NUM_ACT_SET][3],
@@ -1283,9 +1284,6 @@ void CRMDYNSolverIVP_Prep (
     //   only u[0..2] components of xi --- other parameters should not change
 
     int32_t in_no_segments = in_no_flex_seg + in_no_rigid_seg;
-
-    double *SegEndLambdas = new double[in_no_segments];
-    for (int i = 0; i < in_no_segments; i++) SegEndLambdas[i] = in_SegEndLambdas[i];
 
     // create aliases for variables in CoreParams
     auto & xi = out_CoreParams.xi;
@@ -1328,7 +1326,7 @@ void CRMDYNSolverIVP_Prep (
     InsertedLength=in_Li;					// Inserted Length (length of the catheter from the entry point to the tip)
 
     // If the catheter is inserted more than the length of the catheter, clamp it to catheter length
-    if (InsertedLength > SegEndLambdas[in_no_segments - 1]) InsertedLength = SegEndLambdas[in_no_segments - 1];
+    if (InsertedLength > in_SegEndLambdas[in_no_segments - 1]) InsertedLength = in_SegEndLambdas[in_no_segments - 1];
 
     // WE ARE GOING TO REORDER SEGMENT AND ACTUATOR UNITS SO THAT THEY ARE ORDERED FROM THE INSERTION POINT TO THE TIP
     // *  I.E., SWITCH TO PROXIMAL TO DISTAL ORDERING
@@ -1337,7 +1335,7 @@ void CRMDYNSolverIVP_Prep (
     SegBounds[in_no_segments] = InsertedLength;	// End s value of last segment is s=InsertedLength
     // Entry point has a value of s=0 -- we may not simulate full length of the most proximal segment in the chamber
     for (int i = 0; i < in_no_segments; i++) {
-        tempdouble = InsertedLength - SegEndLambdas[i];
+        tempdouble = InsertedLength - in_SegEndLambdas[i];
         if (tempdouble > 0.0) {
             SegBounds[(in_no_segments - 1) - i] = tempdouble;
             StartSegmentIndex--;				// Integration will start at the previous segment
@@ -1361,7 +1359,7 @@ void CRMDYNSolverIVP_Prep (
             LocMarkers[(in_no_locmarkers - 1) - i] = tempdouble;
             if (tempdouble > 0.0) NextLocMarker--;
             else {   // and assign (extrapolated) locations to markers which are still inside the sheath
-                LocMarkerUpdate(p_atLocMarkers[(in_no_locmarkers - 1) - i], xi, tempdouble);
+                LocMarkerUpdate(p_atLocMarkers[(in_no_locmarkers - 1) - i].data(), xi, tempdouble);
             }
         }
     }
@@ -1377,24 +1375,19 @@ void CRMDYNSolverIVP_Prep (
         rho[(in_no_segments - 1) - i] = in_rho[i];
     }
     for (int i = 0; i < in_no_flex_seg; i++) {
-        for (int j = 0; j < 9; j++) {
-            K[(in_no_flex_seg - 1) - i][j] = in_K[i][j];
-            Kinv[(in_no_flex_seg - 1) - i][j] = in_Kinv[i][j];
-        }
-        for (int j = 0; j < 3; j++) {
-            ustar[(in_no_flex_seg - 1) - i][j] = in_ustar[i][j];
-        }
+        K[(in_no_flex_seg - 1) - i] = in_K[i];
+        Kinv[(in_no_flex_seg - 1) - i] = in_Kinv[i];
+        ustar[(in_no_flex_seg - 1) - i] = in_ustar[i];
     }
     for (int i = 0; i < in_no_act_set; i++) {
-        for (int j = 0; j < 3; j++) {
-            MagMoment[(in_no_act_set - 1) - i][j] = in_MagMoment[i][j];
-        }
+        MagMoment[(in_no_act_set - 1) - i] = in_MagMoment[i];
         ActMass[(in_no_act_set - 1) - i] = in_actMass[i];
-        mCopy_AB<9>(in_CoilAlignmentTurnAreaMatrix[i], CoilAlignmentTurnAreaMatrix[(in_no_act_set - 1) - i]);
+        CoilAlignmentTurnAreaMatrix[(in_no_act_set - 1) - i] = in_CoilAlignmentTurnAreaMatrix[i];
     }
 
-    for (int i = 0; i < in_no_fcum_steps + 1; i++) for (int j = 0; j < 3; j++)
-            fcumlambda[i][j] = in_fcumlambda[i][j];
+    for (int i = 0; i < in_no_fcum_steps + 1; i++) {
+        fcumlambda[i] = in_fcumlambda[i];
+    }
 
     /*
      * The params for dynamics
@@ -1498,24 +1491,32 @@ CRMShootingMethodParams CRMDYNConstructShootingMethodParamSet(	CRMCatheterModelP
         Kinv[0] = 1.0 / (E * mI);		Kinv[1] = 0.0;				Kinv[2] = 0.0;
         Kinv[3] = 0.0;				Kinv[4] = 1.0 / (E * mI);		Kinv[5] = 0.0;
         Kinv[6] = 0.0;				Kinv[7] = 0.0;				Kinv[8] = 1.0 / (G * pmI);
-        mCopy_AB<9>(K, ShootingParams.K[i]);
-        mCopy_AB<9>(Kinv, ShootingParams.Kinv[i]);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Kmat(K);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> Kinvmat(Kinv);
+        ShootingParams.K[i] = Kmat;
+        ShootingParams.Kinv[i] = Kinvmat;
     }
-    for (int i = 0; i < CathParams.no_flex_seg; i++) for (int j = 0; j < 3; j++) ShootingParams.ustar[i][j] = CathParams.ustar[i][j];
+    for (int i = 0; i < CathParams.no_flex_seg; i++) {
+        for (int j = 0; j < 3; j++) {
+            ShootingParams.ustar[i](j) = CathParams.ustar[i][j];
+        }
+    }
     double CoilAlignMat[9], c0, s0, c1, s1;
-    double tempf[3];
     for (int i = 0; i < CathParams.no_act_set; i++) {
         ShootingParams.ActMass[i] = CathParams.ActMass[i];
         c0 = cos(CathParams.CoilAlignmentAngles[i][0]);
         s0 = sin(CathParams.CoilAlignmentAngles[i][0]);
         c1 = cos(CathParams.CoilAlignmentAngles[i][1]);
         s1 = sin(CathParams.CoilAlignmentAngles[i][1]);
-        mMult_AB<3, 3, 1>(CathParams.CoilTurnAreaMat[i], ActuationCurrents[i], tempf);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> turn_mat(CathParams.CoilTurnAreaMat[i]);
+        const Eigen::Map<const Eigen::Vector3d> currents(ActuationCurrents[i]);
+        const Eigen::Vector3d tempf = turn_mat * currents;
         CoilAlignMat[0] = c0;	CoilAlignMat[1] = -s1;	CoilAlignMat[2] = 0.0;
         CoilAlignMat[3] = s0;	CoilAlignMat[4] = c1;	CoilAlignMat[5] = 0.0;
         CoilAlignMat[6] = 0.0;	CoilAlignMat[7] = 0.0;	CoilAlignMat[8] = 1.0;
-        mMult_AB<3, 3, 1>(CoilAlignMat, tempf, ShootingParams.MagMoment[i]);
-        mMult_AB<3, 3, 3>(CoilAlignMat, CathParams.CoilTurnAreaMat[i], ShootingParams.CoilAlignmentTurnAreaMatrix[i]);
+        const Eigen::Map<const Eigen::Matrix<double, 3, 3, Eigen::RowMajor>> coil_align(CoilAlignMat);
+        ShootingParams.MagMoment[i] = coil_align * tempf;
+        ShootingParams.CoilAlignmentTurnAreaMatrix[i] = coil_align * turn_mat;
 
 
         for (int j = 0; j < 9; ++j) {
@@ -1539,9 +1540,7 @@ CRMShootingMethodParams CRMDYNConstructShootingMethodParamSet(	CRMCatheterModelP
     ShootingParams.DELTA_T = in_DELTA_T;
 
 
-    ShootingParams.fcumlambda[0][0] = 0.0;
-    ShootingParams.fcumlambda[0][1] = 0.0;
-    ShootingParams.fcumlambda[0][2] = 0.0;
+    ShootingParams.fcumlambda[0].setZero();
     double cumpos = 0.0, lastpos = 0.0, mass = 0.0, segstart, segend, currpos;
     int32_t curr_segment = 0, last_segment = 0;
     // calculation loop
@@ -1561,7 +1560,8 @@ CRMShootingMethodParams CRMDYNConstructShootingMethodParamSet(	CRMCatheterModelP
             lastpos = currpos;
         }
         last_segment = curr_segment;
-        mMult_sA<3, 1>(mass, CathConfig.g, ShootingParams.fcumlambda[i]);
+        const Eigen::Map<const Eigen::Vector3d> gravity(CathConfig.g);
+        ShootingParams.fcumlambda[i] = mass * gravity;
     }
 
     delete[] ActNos;

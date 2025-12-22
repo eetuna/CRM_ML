@@ -1,5 +1,7 @@
 #pragma once
 #include <cmath>
+#include <vector>
+#include <Eigen/Dense>
 #include "CRM_MatrixOperations.hpp"
 #include "CRM_StateVector_Definitions.hpp"
 //#include "CRM.hpp"
@@ -63,17 +65,17 @@ namespace CRMCatheterModel {
 
 		//	For all parameters below, segments and actuator units are numbered/ordered from the tip of the catheter towards the base
 		//  DISTAL TO PROXIMAL ORDERING
-		CatheterSegmentType* SegmentTypes;						// [no_segments]
-		double 	(*SegEndLambdas);								// [no_segments]
-		double	(*rho);											// [no_segments]
-		double 	(*K)[9];										// [no_flex_seg]
-		double 	(*Kinv)[9];										// [no_flex_seg]
-		double 	(*ustar)[3];									// [no_flex_seg]
-		double	(*ActMass);										// [no_act_set]
-		double 	(*MagMoment)[3];								// [no_act_set]
-		double  (*CoilAlignmentTurnAreaMatrix)[9];				// [no_act_set]
-		double	*LocMarkerLambdas;								// [no_locmarkers]
-		double 	(*fcumlambda)[3];								// [no_fcum_steps+1]
+		std::vector<CatheterSegmentType> SegmentTypes;			// [no_segments]
+		std::vector<double> SegEndLambdas;						// [no_segments]
+		std::vector<double> rho;								// [no_segments]
+		std::vector<Eigen::Matrix3d> K;							// [no_flex_seg]
+		std::vector<Eigen::Matrix3d> Kinv;						// [no_flex_seg]
+		std::vector<Eigen::Vector3d> ustar;						// [no_flex_seg]
+		std::vector<double> ActMass;							// [no_act_set]
+		std::vector<Eigen::Vector3d> MagMoment;					// [no_act_set]
+		std::vector<Eigen::Matrix3d> CoilAlignmentTurnAreaMatrix; // [no_act_set]
+		std::vector<double> LocMarkerLambdas;					// [no_locmarkers]
+		std::vector<Eigen::Vector3d> fcumlambda;				// [no_fcum_steps+1]
 
         //Dynamics data/simulation_parameters
         double v_L_pre[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
@@ -86,7 +88,6 @@ namespace CRMCatheterModel {
 
 	protected:
 		void allocate_memory();
-		bool memory_allocated = false;							// true if memory for the dynamic array were allocate by the class constructor
 	};
 
 	// Construct Shooting Method Parameter Set from Catheter Model and Configuration Params
@@ -204,27 +205,27 @@ namespace CRMCatheterModel {
 		double g[3];								// gravity vector (in spatial coordinates)
 		//	For all parameters below, segments and actuator units are numbered/ordered from the base of the catheter towards the tip (proximal to distal)
 		//     Note that this ordering is the REVERSE of the ordering used in catheter specifications etc.
-		CatheterSegmentType* SegmentTypes;			//[no_segments] List of Segment Types for each of the catheter segments
-		int32_t *FlexActIndex;						//[no_segments] For each of the flexible and actuator segments, index of the corresponding entry in the related flex segment (e.g., K)  and actuation (e.g., MagMoment) arrays are stored here
+		std::vector<CatheterSegmentType> SegmentTypes; // [no_segments] List of Segment Types for each of the catheter segments
+		std::vector<int32_t> FlexActIndex;			//[no_segments] For each of the flexible and actuator segments, index of the corresponding entry in the related flex segment (e.g., K)  and actuation (e.g., MagMoment) arrays are stored here
 		int32_t StartSegmentIndex;					// Index of the segment where the integration to solve IVP will start -- the segment located at the entry point; note that segment indices start at 0
-		double *SegBounds;							//[no_segments + 1] The s values as each of the segment boundaries  (For no_segments segments, there are no_segments+1 boundaries)
-		int32_t *SegSteps;							//[no_flex_seg] Number of integration steps in each flexible catheter segment
-		double	*rho;								//[no_segments] Length Density (mass per unit length) of the flexible catheter substrate (tubing), excludes actuator mass but includes everything else
-		double (*K)[9]; 							//[no_flex_seg] Catheter Rigidity Matrices;
-		double (*Kinv)[9];							//[no_flex_seg] Inverses of K Matrices
-		double (*ustar)[3];							//[no_flex_seg] Local curvature in unloaded configuration for each of the flexible segments
-		double (*ActMass); 							//[no_act_set] Actuator masses (Na*1 long array)
-		double (*MagMoment)[3]; 					//[no_act_set] Actuator magnetization moments in body coordinates; Na*3 long array, Na 3x1 vectors; MagMoment = CoilAlignMat * CoilTurnAreaMat * ActuationCurrentVector
-		double (*CoilAlignmentTurnAreaMatrix)[9];	//[no_act_set] The product CoilAlignMat * CoilTurnAreaMat for each of the actuators; Na long array of 3x3 matrices (stored in row major order)
-		double (*R_atActuators)[9];					//[no_act_set] no_act_set x 9 array for temporary storage of coil orientations - this is dummy storage to avoid dynamic memory allocation during CRM_NLEquations evaluations, values stored here will not be used
-        double (*p_atActuators)[3];					//[no_act_set] no_act_set x 3 array for temporary storage of coil position - this is dummy storage to avoid dynamic memory allocation during CRM_NLEquations evaluations, values stored here will not be used
+		std::vector<double> SegBounds;				//[no_segments + 1] The s values as each of the segment boundaries  (For no_segments segments, there are no_segments+1 boundaries)
+		std::vector<int32_t> SegSteps;				//[no_flex_seg] Number of integration steps in each flexible catheter segment
+		std::vector<double> rho;					//[no_segments] Length Density (mass per unit length) of the flexible catheter substrate (tubing), excludes actuator mass but includes everything else
+		std::vector<Eigen::Matrix3d> K;				//[no_flex_seg] Catheter Rigidity Matrices;
+		std::vector<Eigen::Matrix3d> Kinv;			//[no_flex_seg] Inverses of K Matrices
+		std::vector<Eigen::Vector3d> ustar;			//[no_flex_seg] Local curvature in unloaded configuration for each of the flexible segments
+		std::vector<double> ActMass;				//[no_act_set] Actuator masses (Na*1 long array)
+		std::vector<Eigen::Vector3d> MagMoment;		//[no_act_set] Actuator magnetization moments in body coordinates; Na*3 long array, Na 3x1 vectors; MagMoment = CoilAlignMat * CoilTurnAreaMat * ActuationCurrentVector
+		std::vector<Eigen::Matrix3d> CoilAlignmentTurnAreaMatrix; // [no_act_set] The product CoilAlignMat * CoilTurnAreaMat for each of the actuators
+		std::vector<Eigen::Matrix3d> R_atActuators; // [no_act_set] no_act_set x 9 array for temporary storage of coil orientations - this is dummy storage to avoid dynamic memory allocation during CRM_NLEquations evaluations, values stored here will not be used
+        std::vector<Eigen::Vector3d> p_atActuators;	//[no_act_set] no_act_set x 3 array for temporary storage of coil position - this is dummy storage to avoid dynamic memory allocation during CRM_NLEquations evaluations, values stored here will not be used
         bool   CalculateEnergy;						// Falg used to indicate that the catheter potential energy (strain+magnetic+gravitational) should to be calculated
 		bool   FinalValueOnly;						// Flag used to indicate if only final value (xf) is returned (true) or if Marker Locations are returned as well (false)
 		int	   NextLocMarker;						// Next Localization Marker to be computed
-		double *LocMarkers;							// no_locmarkers long array of the s values of each of the localization markers (markers not yet inserted into the catheter would have a negative s value
-		double (*p_atLocMarkers)[3];				// no_locmarkers x 3 array for positions of markers (ordered proximal to distal)
+		std::vector<double> LocMarkers;			// no_locmarkers long array of the s values of each of the localization markers (markers not yet inserted into the catheter would have a negative s value
+		std::vector<Eigen::Vector3d> p_atLocMarkers; // no_locmarkers x 3 array for positions of markers (ordered proximal to distal)
 													//   only the entries 0..NextLocMarker-1 are filled
-		double (*fcumlambda)[3];					// 3*(no_fcum_steps+1) by 1 array (grouped by 3 doubles) storing cumulative external force (excluding tip force) integrated from \lambda = index * \Delta\lambda to the catheter tip (\lambda=0) - in spatial (catheter base frame) coordinates
+		std::vector<Eigen::Vector3d> fcumlambda;	// 3*(no_fcum_steps+1) by 1 array (grouped by 3 doubles) storing cumulative external force (excluding tip force) integrated from \lambda = index * \Delta\lambda to the catheter tip (\lambda=0) - in spatial (catheter base frame) coordinates
 
         //Dynamics data/simulation_parameters
         double v_L_pre[NUM_ACT_SET][3];                                  // The linear velocity at the coil (L)
@@ -239,7 +240,6 @@ namespace CRMCatheterModel {
 
 	protected:
 		void allocate_memory();
-		bool memory_allocated = false;				// true if memory for the dynamic array were allocate by the class constructor
 	};
 
 
@@ -252,13 +252,13 @@ namespace CRMCatheterModel {
 		int32_t in_no_fcum_steps,
 		double in_x_0[NUM_STATES], double in_IntegrationStepSize,
 		double in_Li, double in_dlambdainv,
-		const CatheterSegmentType in_SegmentTypes[/*no_segments=no_flex_seg+no_rigid_seg*/],
-		double in_SegEndLambdas[/*no_segments=no_flex_seg+no_rigid_seg*/], double in_LocMarkerLambdas[/*no_locmarkers*/],
-		double in_rho[/*in_no_flex_seg+in_no_rigid_seg*/],
-		double in_K[/*in_no_flex_seg*/][9], double in_Kinv[/*in_no_flex_seg*/][9], double in_ustar[/*in_no_flex_seg*/][3],
-		double in_ActMass[/*in_no_act_set*/],
-		double in_CoilAlignmentTurnAreaMatrix[/*in_no_act_set*/][9],
-		double in_MagMoment[/*in_no_act_set*/][3], double in_fcumlambda[/*in_no_fcum_steps + 1*/][3],
+		const std::vector<CatheterSegmentType>& in_SegmentTypes,
+		const std::vector<double>& in_SegEndLambdas, const std::vector<double>& in_LocMarkerLambdas,
+		const std::vector<double>& in_rho,
+		const std::vector<Eigen::Matrix3d>& in_K, const std::vector<Eigen::Matrix3d>& in_Kinv, const std::vector<Eigen::Vector3d>& in_ustar,
+		const std::vector<double>& in_ActMass,
+		const std::vector<Eigen::Matrix3d>& in_CoilAlignmentTurnAreaMatrix,
+		const std::vector<Eigen::Vector3d>& in_MagMoment, const std::vector<Eigen::Vector3d>& in_fcumlambda,
 		double in_B0[3], double in_g[3],
 		bool in_CalculateEnergy,
 		bool in_FinalValueOnly, 
@@ -279,8 +279,8 @@ namespace CRMCatheterModel {
 
 	// support function to Propagate Boundary Condition through a Rigid Link - used by CRMSolverIVP_Core
 	void CRMSolverIVP_PropagateBCThroughRigidLink(StateVector& xi_ip1, double Residual_ip1[3],
-		const double RigidSegmentLength, const double MagMoment[3], const double CoilAlignmentTurnAreaMatrix[9], const double B0[3],
-		const double ustar_i[3], const double K_i[9], const double ustar_ip1[3], const double Kinv_ip1[9], 
+		const double RigidSegmentLength, const Eigen::Vector3d& MagMoment, const Eigen::Matrix3d& CoilAlignmentTurnAreaMatrix, const double B0[3],
+		const Eigen::Vector3d& ustar_i, const Eigen::Matrix3d& K_i, const Eigen::Vector3d& ustar_ip1, const Eigen::Matrix3d& Kinv_ip1,
 		const StateVector& xf_i, const double Residual_i[3]);
 	//StateVector xi_ip1;			//  Initial value (xi) of the state for the next segment (i+1) to be integrated
 	//double Residual_ip1[3];		//  Residual at the end of the rigid link -- will be returned
@@ -313,16 +313,16 @@ namespace CRMCatheterModel {
 		int32_t no_fcum_steps;						// Number of steps used in calculating fcumlambda (cumulative forces); number of entries in fcumlambda is (no_fcum_steps+1)
 		double Li;									// Inserted length of the catheter (from s=0 to the tip)
 		double dlambdainv;							// Reciprocal of \Delta \lambda (= \Delta s) used in discretizing fcum  ( dlambdainv = 1 / (Lf/NUM_FCUM_LAMBDA) = NUM_FCUM_LAMBDA/Lf ), Lf: functional (full) length of the catheter
-		double* K;									// Catheter Rigidity Matrix at current s (3x3 matrix stored in row major order)
-		double* Kinv;								// Inverse of K at current s (3x3 matrix stored in row major order)
+		const Eigen::Matrix3d* K;					// Catheter Rigidity Matrix at current s
+		const Eigen::Matrix3d* Kinv;				// Inverse of K at current s
 	// -UNUSED- double *Kdot;   					// Derivative of K at current s (3x3 matrix stored in row major order);  we assume Kdot=0.0
-		double* l;									// External moment at current s (world coordinates) (3x1 array)
-		double* ustar;								// Local curvature in unloaded configuration at current s (3x1 array)
+		const double* l;							// External moment at current s (world coordinates) (3x1 array)
+		const Eigen::Vector3d* ustar;				// Local curvature in unloaded configuration at current s (3x1 array)
 	// -UNUSED- double *ustardot;					// Derivative of local curvature in unloaded configuration at current s; we assume ustardot=0.0 since our rest shape model is piecewise constant curvature (3x1 array)
 		double rho;									// Mass per length of the segment
-		double(*fcumlambda)[3];						// (NUM_FCUM_LAMBDA+1)x3 array storing cumulative external force (exluding tip force) integrated from \lambda = index * \Delta\lambda to the catheter tip (\lambda=0)
-		double* ftip;								// External point force (in spatial coordinates) applied at the tip of the catheter (\lambda = 0) (3x1 array)
-		double* g;									// Gravity vector (in spatial coordinates) (3x1 array)
+		const std::vector<Eigen::Vector3d>* fcumlambda; // (NUM_FCUM_LAMBDA+1)x3 array storing cumulative external force (exluding tip force) integrated from \lambda = index * \Delta\lambda to the catheter tip (\lambda=0)
+		const double* ftip;							// External point force (in spatial coordinates) applied at the tip of the catheter (\lambda = 0) (3x1 array)
+		const double* g;							// Gravity vector (in spatial coordinates) (3x1 array)
 	};
 
 
@@ -410,9 +410,9 @@ namespace CRMCatheterModel {
 		double			TipForce[3];			// External point force (in spatial coordinates) applied at the tip of the catheter (\lambda = 0) (used if ContactMode == FREE_TIP)
 	};
 
-	void CRM_NLEquation(double in_x[], double out_y[], NLEqnParams Params);
+	void CRM_NLEquation(double in_x[], double out_y[], NLEqnParams* Params);
 
-	void CRM_NLEquation_AnalyticalJac(double in_x[], double out_y[], double out_fjac[], NLEqnParams Params);
+	void CRM_NLEquation_AnalyticalJac(double in_x[], double out_y[], double out_fjac[], NLEqnParams* Params);
 
 	//
 	// Numerical Integration Support Functions

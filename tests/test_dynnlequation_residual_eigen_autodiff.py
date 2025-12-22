@@ -4,7 +4,6 @@ import numpy as np
 import pytest
 
 
-@pytest.mark.skipif(os.environ.get("CRM_RUN_DYNNLEQUATION_AD_TESTS", "0") != "1", reason="slow")
 def test_dynnlequation_ad_jxx_close_to_fd():
     from crm_ml_rl.wrappers import crm_python
 
@@ -72,4 +71,3 @@ def test_dynnlequation_ad_jxx_close_to_fd():
 
     rel = np.linalg.norm(J - Jfd) / (np.linalg.norm(Jfd) + 1e-12)
     assert rel < 0.3
-

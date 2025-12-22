@@ -57,8 +57,8 @@ namespace CRMCatheterModel {
 				//
 				// Elastic Potential Energy: \int u^T K u \approx ( u_n^T K u_n + ( u_n^T K u_np1 + u_np1^T K u_n ) /2 + u_np1^T K u_np1 ) /3
 				//
-				mMult_AB<3, 3, 1>(in_Params.K, x_n._u, Kun);
-				mMult_AB<3, 3, 1>(in_Params.K, x_np1._u, Kunp1);
+				mMult_AB<3, 3, 1>(in_Params.K->data(), x_n._u, Kun);
+				mMult_AB<3, 3, 1>(in_Params.K->data(), x_np1._u, Kunp1);
 				mMult_ATB<3, 1, 1>(x_n._u, Kun, &unTKun);
 				mMult_ATB<3, 1, 1>(x_n._u, Kunp1, &unTKunp1);
 				mMult_ATB<3, 1, 1>(x_np1._u, Kun, &unp1TKun);

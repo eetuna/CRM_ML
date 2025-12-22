@@ -1,0 +1,13 @@
+CatheterConfig A
+NumLocalizationMarkers 1
+oRlist
+iRlist
+YoungModlist
+ShearModlist
+CoilAlignmentAngles -0.119 -3.076
+CoilTurnAreaMat 1.8367 0 0 0 2.8032 0 0 0 1.8448
+SegmentLengths 18.3
+ActMass 8.2859e-06
+MarkerLoc 2.18
+rho 2.8814e-07
+ustarlist
