@@ -31,7 +31,7 @@ def test_parameter_jacobian_shape_and_finite():
         np.array([12.0, 12.0, 280.0, 0.03, 0.03, 0.005], dtype=np.float64)
     )
     dyn.dt = 0.05
-    dyn.integration_step_size = 0.01
+    dyn.integration_step_size = 0.1
 
     # Initialize from kinematics
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], insertion)
@@ -91,7 +91,6 @@ def test_parameter_jacobian_shape_and_finite():
     print("Basic sanity checks passed!")
 
 
-@pytest.mark.skip(reason="Requires debugging of parameter passing through DYNNLEqnParams - see TODO")
 @pytest.mark.skipif(
     os.environ.get("CRM_RUN_DYNNLEQUATION_AD_TESTS", "0") != "1",
     reason="slow - set CRM_RUN_DYNNLEQUATION_AD_TESTS=1 to run"
@@ -127,7 +126,7 @@ def test_parameter_jacobian_vs_finite_difference():
     ], dtype=np.float64)
     dyn.set_damping(base_damping)
     dyn.dt = 0.05
-    dyn.integration_step_size = 0.01
+    dyn.integration_step_size = 0.1
 
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], insertion)
     seed = dyn.get_seed_state()
@@ -281,7 +280,7 @@ def test_parameter_jacobian_non_zero_for_active_dynamics():
         )
     )
     dyn.dt = 0.05
-    dyn.integration_step_size = 0.01
+    dyn.integration_step_size = 0.1
 
     dyn.initialize_from_kinematics([0.0, 0.0, 0.2], insertion)
     seed = dyn.get_seed_state()
