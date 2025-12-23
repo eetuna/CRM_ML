@@ -13,17 +13,13 @@ template <typename Scalar>
 LearnableParamsAD<Scalar>::LearnableParamsAD(const DYNNLEqnParams& params, int flex_seg_idx)
     : actMass(Scalar(0.0))
 {
-    // Extract actuator parameters from actuator[0]
-    for (int i = 0; i < 6; ++i) {
-        damping(i) = Scalar(params.damping[0][i]);
-    }
-    actMass = Scalar(params.ActMass[0]);
-    for (int i = 0; i < 3; ++i) {
-        MagMoment(i) = Scalar(params.MagMoment[0](i));
-    }
-
-    // Extract flexible segment parameters from flex_seg[flex_seg_idx]
-    if (params.no_flex_seg > flex_seg_idx) {
+    // Validate flex_seg_idx bounds
+    if (flex_seg_idx < 0 || flex_seg_idx >= params.no_flex_seg) {
+        // Zero-initialize K_diag and ustar if out of range
+        K_diag.setZero();
+        ustar.setZero();
+    } else {
+        // Extract flexible segment parameters from flex_seg[flex_seg_idx]
         K_diag(0) = Scalar(params.K[flex_seg_idx](0, 0));
         K_diag(1) = Scalar(params.K[flex_seg_idx](1, 1));
         K_diag(2) = Scalar(params.K[flex_seg_idx](2, 2));
@@ -31,10 +27,15 @@ LearnableParamsAD<Scalar>::LearnableParamsAD(const DYNNLEqnParams& params, int f
         for (int i = 0; i < 3; ++i) {
             ustar(i) = Scalar(params.ustar[flex_seg_idx](i));
         }
-    } else {
-        // If flex_seg_idx out of range, zero-initialize
-        K_diag.setZero();
-        ustar.setZero();
+    }
+
+    // Extract actuator parameters from actuator[0]
+    for (int i = 0; i < 6; ++i) {
+        damping(i) = Scalar(params.damping[0][i]);
+    }
+    actMass = Scalar(params.ActMass[0]);
+    for (int i = 0; i < 3; ++i) {
+        MagMoment(i) = Scalar(params.MagMoment[0](i));
     }
 }
 

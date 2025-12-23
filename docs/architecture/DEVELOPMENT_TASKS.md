@@ -76,13 +76,13 @@ To permanently resolve this without relying on the bindings sync, the following 
     *   `std::vector<Eigen::Vector3d>` for moments/positions.
     *   `std::vector<Eigen::Matrix<double, 6, 1>>` for damping.
 *   **Benefit:** Eliminates memory aliasing/corruption (the "Ghost Value" bug) and simplifies initialization.
-*   **Status (2025-01-14):** Implemented in `task/1.7-core-refactor`. Validation tests passed; see `docs/architecture/TASK_1_7_STATUS.md` for verification context.
+*   **Status (2025-12-22):** Implemented and re-validated on `docs/phase2-verification`. Tests passed (`pytest -q`, `pytest tests/test_parameter_jacobian_autodiff.py -v`); see `docs/architecture/TASK_1_7_CHECKLIST.md` for current verification context.
 
 ### Phase 2: Solver Templatization
 *   **Target:** `CoilDynamics`, `CRMIntegrand`, and the `BVP/IVP` solvers.
 *   **Action:** Fully templatize these functions on `<typename Scalar>` to support `autodiff::real` natively.
 *   **Benefit:** Removes the need for "Shadow Structs" and ensures the same verified math flows through both simulation and gradient calculation.
-*   **Status (2025-01-14):** Deferred (Phase 2.1 scaffolding exists; full templating not completed).
+*   **Status (2025-12-22):** Completed for the parameter-gradient AD path (context refactor + residual updates) and validated via `pytest -q` and `pytest tests/test_parameter_jacobian_autodiff.py -v`. Remaining residual/control wrapper signature cleanup is optional.
 
 ### Phase 3: Integrator Stabilization
 *   **Target:** `CoilDynamics_Defs.cpp`.

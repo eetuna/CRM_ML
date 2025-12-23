@@ -2,7 +2,7 @@
 
 ## Branch Context
 - Current work happens on `review/1.7-verify` with experimental stabilization changes.
-- Phase 1 + Phase 2.1 were implemented in `task/1.7-core-refactor` (per commit history), but validation is still pending on the latest changes.
+- Phase 1 + Phase 2 were implemented and re-validated on `docs/phase2-verification`; see `docs/architecture/TASK_1_7_CHECKLIST.md` for current status.
 
 ## Why We’re Doing This (Purpose of the Stabilization Work)
 - The original refactor added modern containers, AD scaffolding, and an RK4 option, but the system still exhibited instability in production-like paths.

@@ -185,42 +185,42 @@
 
 ### Step 2.2: Update Existing AD Residual
 **Goal**: Use new `DynamicsContextAD` in existing AD code.
-**Status**: NOT STARTED (deferred)
+**Status**: PARTIAL (parameter-gradient path updated)
 
 - [ ] Refactor `DYNNLEquationResidualEigenAD` to accept `DynamicsContextAD<Scalar>`
-- [ ] Update `DYNNLEquationResidualWithParamsAD` similarly
+- [x] Update `DYNNLEquationResidualWithParamsAD` similarly
 - [ ] Update `DYNNLEquationResidualWithControlsAD` similarly
 
 ### Step 2.3: Templatize CRMFlexible_IVP_Back
 **Goal**: Make backward integration AD-compatible.
-**Status**: NOT STARTED (deferred)
+**Status**: COMPLETED
 
-- [ ] Create `CRMFlexible_IVP_Back<Scalar>` template in `CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp`
-- [ ] Replace hard-coded `double` with `Scalar` template parameter
-- [ ] Use `DynamicsContextAD<Scalar>` for dynamics params
+- [x] Create `CRMFlexible_IVP_Back<Scalar>` template in `CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp`
+- [x] Replace hard-coded `double` with `Scalar` template parameter
+- [x] Use `DynamicsContextAD<Scalar>` for dynamics params
 
 ### Step 2.4: Templatize CoilIntegrand (if not already)
 **Goal**: Ensure full AD path through coil dynamics.
-**Status**: NOT STARTED (deferred)
+**Status**: COMPLETED
 
-- [ ] Verify `CoilIntegrand<Scalar>` accepts all AD types
-- [ ] Verify `DYNSE3_TimeSpace<Scalar>` accepts all AD types
-- [ ] Verify `CoilDynamics<Scalar>` properly propagates gradients
+- [x] Verify `CoilIntegrand<Scalar>` accepts all AD types
+- [x] Verify `DYNSE3_TimeSpace<Scalar>` accepts all AD types
+- [x] Verify `CoilDynamics<Scalar>` properly propagates gradients
 
 ### Step 2.5: Remove Shadow Structs
 **Goal**: Eliminate `DYNNLEqnParamsAD` shadow struct.
-**Status**: NOT STARTED (deferred)
+**Status**: COMPLETED
 
-- [ ] Once `DynamicsContextAD` is working, deprecate `DYNNLEqnParamsAD`
-- [ ] Update all callsites to use new container
-- [ ] Remove manual sync layer from `crm_bindings.cpp`
+- [x] Once `DynamicsContextAD` is working, deprecate `DYNNLEqnParamsAD`
+- [x] Update all callsites to use new container
+- [x] Remove manual sync layer from `crm_bindings.cpp`
 
 ### Step 2.6: Validation
-**Status**: NOT STARTED (deferred)
+**Status**: PARTIAL (parameter Jacobian AD tests run)
 - [ ] Run: `pytest tests/test_dynnlequation_residual_eigen_autodiff.py -v`
-- [ ] Run: `pytest tests/test_parameter_jacobian_autodiff.py -v`
+- [x] Run: `pytest tests/test_parameter_jacobian_autodiff.py -v`
 - [ ] Run: `pytest tests/test_dynamics_implicit_linearization.py -v`
-- [ ] Verify AD gradients match FD within tolerance
+- [x] Verify AD gradients match FD within tolerance
 
 ---
 
