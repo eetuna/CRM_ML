@@ -565,9 +565,14 @@ public:
                 R_L[j][i] = (i == 0 || i == 4 || i == 8) ? 1.0 : 0.0;  // Identity
                 actInertia[j][i] = 0.0;
             }
-            for (int i = 0; i < 6; i++) {
-                damping[j][i] = 10.0;  // Default damping
-            }
+            // Default damping values tuned for stable coil dynamics (Task A1.7)
+            // [linear_x, linear_y, linear_z, angular_x, angular_y, angular_z]
+            damping[j][0] = 12.1761626666366;
+            damping[j][1] = 12.1761626666366;
+            damping[j][2] = 284.429938756989;
+            damping[j][3] = 0.0304776127617393;
+            damping[j][4] = 0.0304776127617393;
+            damping[j][5] = 0.00502712804532508;
         }
         for (int i = 0; i < NUM_STATES; i++) {
             xf[i] = 0.0;
