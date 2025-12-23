@@ -1,5 +1,7 @@
 # Task 1.7 Handoff Summary (Review/Diagnostics)
 
+**Status Note (2025-12-23):** Task A1.7 is complete and validated. This handoff is retained for historical context; use `docs/archive/TASK_1_7_CHECKLIST.md` and `docs/archive/TASK_1_7_STATUS.md` for current status.
+
 ## ✅ ROOT CAUSE FOUND AND FIXED (bugfix/damping-defaults branch)
 
 **Problem**: C++ bindings initialized all damping coefficients to 10.0, but coil dynamics require physically-tuned damping for stability.
@@ -99,9 +101,9 @@ PY
 - Non-finite fallback returns before populating marker outputs.
 
 ## What To Read Next
-- `docs/architecture/TASK_1_7_STATUS.md` for full chronology.
-- `docs/architecture/TASK_1_7_PLAN.md` for remaining steps.
-- `docs/architecture/TASK_1_7_CHECKLIST.md` for checklist alignment.
+- `docs/archive/TASK_1_7_STATUS.md` for full chronology.
+- `docs/archive/TASK_1_7_PLAN_2025-01-14.md` for the historical plan and remaining-step context.
+- `docs/archive/TASK_1_7_CHECKLIST.md` for checklist alignment.
 
 ## Suggested Next Agent Actions
 1) Decide whether default damping should be loaded from config or explicitly set in Python.
@@ -198,7 +200,7 @@ Finally, propose a **real fix** (e.g., load damping from config or adjust defaul
   Files Changed: 1 file (+205 lines)
   - New: src/CRM_DynamicsContext_AD.hpp
 
-  Purpose: Foundation for native AD through dynamics parameters (Phase 2.2+ deferred)
+  Purpose: Foundation for native AD through dynamics parameters (Phase 2.2+ completed)
 
   ---
   ✅ Commit 3: Phase 3 - Integrator Stabilization (6ce9b26)
@@ -401,10 +403,8 @@ Changed `crm_ml_rl/wrappers/crm_bindings.cpp` line 568-575 from hardcoded 10.0 t
 - ABM4 vs RK4 micro-benchmark (50 runs on failing case): ABM4 ~108.46 ms avg, RK4 ~131.42 ms avg (RK4 ~1.21x slower).
 - ABM4 vs RK4 on 10 random cases (currents ∈ [-0.05, 0.05], insertion ∈ [30, 100]): no convergence mismatches; max tip position diff 1.8212, max tip velocity diff 38.8616.
 - Debug-only instrumentation/clamps removed from core solver paths (no `CRM_DEBUG_BVP_SCALE`, `CRM_DEBUG_BVP`, `CRM_CLAMP_*`, or `CRM_DEBUG_BVP_SOLVER` in core).
-- Full validation: `cmake --build build` OK; `pytest -q` OK; `ctest` not configured (no test config file).
+- Full validation (2025-12-23): `cmake --build build` OK; `pytest -q` OK; `ctest --output-on-failure` OK.
 
-### Recommended Next Steps
-1. Merge `bugfix/damping-defaults` to main (fixes the persistent instability)
-2. Optional: Consider loading damping from parameter file instead of hardcoding
-3. Document why damping values are tuned (small coil inertia + magnetic torque coupling)
-4. Benchmark RK4 vs ABM4 now that damping is correct (was unfair before)
+### Recommended Next Steps (Historical)
+1. Optional productization: load damping from parameter file instead of hardcoding
+2. Document why damping values are tuned (small coil inertia + magnetic torque coupling)

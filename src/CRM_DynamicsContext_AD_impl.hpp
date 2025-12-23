@@ -31,7 +31,7 @@ LearnableParamsAD<Scalar>::LearnableParamsAD(const DYNNLEqnParams& params, int f
 
     // Extract actuator parameters from actuator[0]
     for (int i = 0; i < 6; ++i) {
-        damping(i) = Scalar(params.damping[0][i]);
+        damping(i) = Scalar(params.dynamics.actuators[0].damping(i));
     }
     actMass = Scalar(params.ActMass[0]);
     for (int i = 0; i < 3; ++i) {
@@ -41,7 +41,7 @@ LearnableParamsAD<Scalar>::LearnableParamsAD(const DYNNLEqnParams& params, int f
 
 template <typename Scalar>
 DynamicsContextAD<Scalar>::DynamicsContextAD(const DYNNLEqnParams& params, int flex_seg_idx)
-    : DELTA_T(params.DELTA_T),
+    : DELTA_T(params.dynamics.DELTA_T),
       integrator_type(params.dynamics.integrator_type),
       learnable(params, flex_seg_idx),
       geometry(&params)
@@ -53,7 +53,7 @@ DynamicsContextAD<Scalar>::DynamicsContextAD(const DYNNLEqnParams& params, int f
     }
     for (int r = 0; r < 3; ++r) {
         for (int c = 0; c < 3; ++c) {
-            actInertia(r, c) = params.actInertia[0][r * 3 + c];
+            actInertia(r, c) = params.dynamics.actuators[0].inertia(r, c);
         }
     }
 

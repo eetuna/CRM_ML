@@ -117,6 +117,11 @@ target_include_directories(TestDynamicsContext PUBLIC
 		)
 
 # ============================================================
+# CTest (optional)
+enable_testing()
+add_test(NAME TestDynamicsContext COMMAND TestDynamicsContext)
+
+# ============================================================
 # Python Bindings (optional - requires pybind11)
 # ============================================================
 option(BUILD_PYTHON_BINDINGS "Build Python bindings using pybind11" ON)

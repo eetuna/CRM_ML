@@ -21,6 +21,11 @@ namespace dynnl_ad_eigen {
 inline constexpr double kCoilTStep = 0.001;
 inline constexpr double kEps = 1.0e-12;
 
+// Phase 3.4: Adaptive stepping thresholds for RK4 integrator
+// Threshold: 1000 rad/s² (2.5x above critical acceleration for typical actuator inertia ~2.4e-4)
+inline constexpr double kAngularAccelThreshold = 1000.0;  // rad/s²
+inline constexpr int kMaxSubdivisionLevels = 4;           // 2^4 = 16x refinement max
+
 template <typename Scalar>
 using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
 
@@ -29,6 +34,14 @@ using Vec6 = Eigen::Matrix<Scalar, 6, 1>;
 
 template <typename Scalar>
 using Mat3 = Eigen::Matrix<Scalar, 3, 3, Eigen::RowMajor>;
+
+// Phase 3.4: Check if angular acceleration is within safe bounds for adaptive stepping
+template <typename Scalar>
+inline bool is_acceleration_safe(const Vec6<Scalar>& xdot) {
+    const Vec3<Scalar> wdot = xdot.template tail<3>();  // Angular acceleration (last 3 components)
+    const double wdot_mag = std::sqrt(static_cast<double>(wdot.squaredNorm()));
+    return std::isfinite(wdot_mag) && wdot_mag < kAngularAccelThreshold;
+}
 
 // ============================================================================
 // Parameter Gradient Support (Task A1)
@@ -320,11 +333,119 @@ inline void CoilDynamics(const Vec6<Scalar>& v0w0,
 }
 
 /**
+ * @brief Recursive RK4 step with adaptive subdivision (Phase 3.4)
+ *
+ * Performs a single RK4 integration step. If angular acceleration exceeds
+ * the threshold, recursively subdivides the step into two half-steps.
+ *
+ * @return true if step succeeded, false if max subdivisions exceeded with unsafe acceleration
+ */
+template <typename Scalar>
+inline bool rk4_step_adaptive(
+    const Vec6<Scalar>& twist_in,
+    const Mat3<Scalar>& R_in,
+    const Vec3<Scalar>& p_in,
+    const Vec3<Scalar>& n_L,
+    const Eigen::Vector3d& g,
+    const Scalar actMass,
+    const Eigen::Matrix3d& actInertia,
+    const Eigen::Matrix<Scalar, 6, 1>& damping,
+    const Eigen::Vector3d& B0,
+    const Mat3<Scalar>& muhat,
+    const Vec3<Scalar>& m_L,
+    const Scalar h,              // Step size
+    int subdivision_level,       // Current recursion depth
+    Vec6<Scalar>& twist_out,     // Output state
+    Mat3<Scalar>& R_out,
+    Vec3<Scalar>& p_out,
+    Vec6<Scalar>& xdot_final)    // Output derivative
+{
+    // Compute RK4 stage 1
+    Vec6<Scalar> k1;
+    CoilIntegrand(twist_in, n_L, g, R_in, actMass, actInertia, damping, B0, muhat, m_L, k1);
+
+    // Check acceleration magnitude - subdivide if needed
+    if (!is_acceleration_safe(k1) && subdivision_level < kMaxSubdivisionLevels) {
+        // Subdivide: two half-steps
+        const Scalar h_half = h * Scalar(0.5);
+
+        // First half-step
+        Vec6<Scalar> twist_mid, xdot_mid;
+        Mat3<Scalar> R_mid;
+        Vec3<Scalar> p_mid;
+        if (!rk4_step_adaptive(twist_in, R_in, p_in, n_L, g, actMass, actInertia,
+                               damping, B0, muhat, m_L, h_half, subdivision_level + 1,
+                               twist_mid, R_mid, p_mid, xdot_mid)) {
+            return false;  // Subdivision failed
+        }
+
+        // Second half-step
+        if (!rk4_step_adaptive(twist_mid, R_mid, p_mid, n_L, g, actMass, actInertia,
+                               damping, B0, muhat, m_L, h_half, subdivision_level + 1,
+                               twist_out, R_out, p_out, xdot_final)) {
+            return false;  // Subdivision failed
+        }
+
+        return true;  // Successful subdivision
+    }
+
+    // If acceleration is safe OR max subdivisions reached, proceed with normal RK4
+
+    // RK4 Stage 2
+    const Vec6<Scalar> twist_2 = twist_in + h * k1 * Scalar(0.5);
+    Mat3<Scalar> R_2;
+    Vec3<Scalar> p_2;
+    DYNSE3_TimeSpace(R_in, p_in, h * Scalar(0.5), twist_in, R_2, p_2);
+
+    Vec6<Scalar> k2;
+    CoilIntegrand(twist_2, n_L, g, R_2, actMass, actInertia, damping, B0, muhat, m_L, k2);
+
+    // RK4 Stage 3 - use twist_for_R3 for SE3 update to match original implementation
+    const Vec6<Scalar> twist_3 = twist_in + h * k2 * Scalar(0.5);
+    Mat3<Scalar> R_3;
+    Vec3<Scalar> p_3;
+    const Vec6<Scalar> twist_for_R3 = twist_in + h * k1 * Scalar(0.5);
+    DYNSE3_TimeSpace(R_in, p_in, h * Scalar(0.5), twist_for_R3, R_3, p_3);
+
+    Vec6<Scalar> k3;
+    CoilIntegrand(twist_3, n_L, g, R_3, actMass, actInertia, damping, B0, muhat, m_L, k3);
+
+    // RK4 Stage 4 - use twist_for_R4 for SE3 update to match original implementation
+    const Vec6<Scalar> twist_4 = twist_in + h * k3;
+    Mat3<Scalar> R_4;
+    Vec3<Scalar> p_4;
+    const Vec6<Scalar> twist_for_R4 = twist_in + h * k2;
+    DYNSE3_TimeSpace(R_in, p_in, h, twist_for_R4, R_4, p_4);
+
+    Vec6<Scalar> k4;
+    CoilIntegrand(twist_4, n_L, g, R_4, actMass, actInertia, damping, B0, muhat, m_L, k4);
+
+    // RK4 update
+    twist_out = twist_in + h * (k1 + Scalar(2.0)*k2 + Scalar(2.0)*k3 + k4) / Scalar(6.0);
+
+    // SE3 update using weighted average twist (midpoint rule for stability)
+    const Vec6<Scalar> twist_avg = (twist_in + twist_out) * Scalar(0.5);
+    DYNSE3_TimeSpace(R_in, p_in, h, twist_avg, R_out, p_out);
+
+    xdot_final = k1;  // Return initial derivative for diagnostics
+
+    // Check if max subdivisions reached but still unsafe
+    if (!is_acceleration_safe(k1) && subdivision_level >= kMaxSubdivisionLevels) {
+        return false;  // Max subdivisions exceeded with unsafe acceleration
+    }
+
+    return true;  // Success
+}
+
+/**
  * @brief RK4 integrator for coil dynamics (Task A1.7 Phase 3)
  *
  * This is a more stable alternative to the ABM4 integrator above. RK4 has no
  * history dependence and is more robust to stiff systems and large perturbations
  * (e.g., during AutoDiff parameter sweeps).
+ *
+ * Phase 3.4: Now includes adaptive step-size subdivision when angular acceleration
+ * exceeds threshold (1000 rad/s²). Subdivision recurses up to 4 levels (16x refinement).
  *
  * Interface matches CoilDynamics exactly for drop-in replacement.
  *
@@ -358,57 +479,47 @@ inline void CoilDynamicsRK4(const Vec6<Scalar>& v0w0,
     Vec3<Scalar> p_n = p0;
     Mat3<Scalar> R_n = R0;
 
-    Vec6<Scalar> xdot_n = Vec6<Scalar>::Zero();
+    Vec6<Scalar> twist_np1 = twist_n;
+    Vec3<Scalar> p_np1 = p_n;
+    Mat3<Scalar> R_np1 = R_n;
 
     for (int idx = 0; idx < N; ++idx) {
-        // RK4 Stage 1
-        Vec6<Scalar> k1;
-        CoilIntegrand(twist_n, n_L, g, R_n, actMass, actInertia, damping, B0, muhat, m_L, k1);
-        out_xdot_n = k1;  // Save for output
+        // Phase 3.4: Adaptive RK4 step with subdivision if angular acceleration exceeds threshold
+        Vec6<Scalar> xdot_final;
+        bool step_success = rk4_step_adaptive(
+            twist_n, R_n, p_n,
+            n_L, g, actMass, actInertia, damping, B0, muhat, m_L,
+            h,          // Step size
+            0,          // Initial subdivision level
+            twist_np1, R_np1, p_np1,
+            xdot_final
+        );
 
-        // RK4 Stage 2
-        const Vec6<Scalar> twist_2 = twist_n + h * k1 * Scalar(0.5);
-        Mat3<Scalar> R_2;
-        Vec3<Scalar> p_2;
-        DYNSE3_TimeSpace(R_n, p_n, h * Scalar(0.5), twist_n, R_2, p_2);
-        Vec6<Scalar> k2;
-        CoilIntegrand(twist_2, n_L, g, R_2, actMass, actInertia, damping, B0, muhat, m_L, k2);
+        out_xdot_n = xdot_final;  // Save for output
 
-        // RK4 Stage 3
-        const Vec6<Scalar> twist_3 = twist_n + h * k2 * Scalar(0.5);
-        Mat3<Scalar> R_3;
-        Vec3<Scalar> p_3;
-        const Vec6<Scalar> twist_for_R3 = twist_n + h * k1 * Scalar(0.5);
-        DYNSE3_TimeSpace(R_n, p_n, h * Scalar(0.5), twist_for_R3, R_3, p_3);
-        Vec6<Scalar> k3;
-        CoilIntegrand(twist_3, n_L, g, R_3, actMass, actInertia, damping, B0, muhat, m_L, k3);
+        if (!step_success) {
+            // Adaptive stepping failed - max subdivisions exceeded with unsafe acceleration
+            if (out_diverged != nullptr) {
+                *out_diverged = true;
+            }
+            return;  // Early exit
+        }
 
-        // RK4 Stage 4
-        const Vec6<Scalar> twist_4 = twist_n + h * k3;
-        Mat3<Scalar> R_4;
-        Vec3<Scalar> p_4;
-        const Vec6<Scalar> twist_for_R4 = twist_n + h * k2;
-        DYNSE3_TimeSpace(R_n, p_n, h, twist_for_R4, R_4, p_4);
-        Vec6<Scalar> k4;
-        CoilIntegrand(twist_4, n_L, g, R_4, actMass, actInertia, damping, B0, muhat, m_L, k4);
-
-        // RK4 Update
-        twist_n = twist_n + h * (k1 + Scalar(2.0) * k2 + Scalar(2.0) * k3 + k4) / Scalar(6.0);
-
-        // SE3 update using weighted average twist (midpoint rule for stability)
-        const Vec6<Scalar> twist_avg = (twist_n + (twist_n - h * (k1 + Scalar(2.0) * k2 + Scalar(2.0) * k3 + k4) / Scalar(6.0))) * Scalar(0.5);
-        DYNSE3_TimeSpace(R_n, p_n, h, twist_avg, R_n, p_n);
-
-        // Phase 3: Check for divergence (soft failure mode)
+        // Phase 3: Check for divergence (soft failure mode - magnitude check)
         if (out_diverged != nullptr) {
-            const double twist_mag = std::sqrt(static_cast<double>(twist_n.squaredNorm()));
-            const double p_mag = std::sqrt(static_cast<double>(p_n.squaredNorm()));
+            const double twist_mag = std::sqrt(static_cast<double>(twist_np1.squaredNorm()));
+            const double p_mag = std::sqrt(static_cast<double>(p_np1.squaredNorm()));
             if (!std::isfinite(twist_mag) || !std::isfinite(p_mag) ||
                 twist_mag > kDivergenceThreshold || p_mag > kDivergenceThreshold) {
                 *out_diverged = true;
                 return;  // Early exit on divergence
             }
         }
+
+        // Update state for next iteration
+        twist_n = twist_np1;
+        R_n = R_np1;
+        p_n = p_np1;
     }
 
     v1w1 = twist_n;
@@ -833,12 +944,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
     Vec6<Scalar> vw_coil0;
     Vec3<Scalar> p_coil0;
     Mat3<Scalar> R_coil0;
+    const auto& act0 = Params.dynamics.actuators[0];
     for (int i = 0; i < 3; ++i) {
-        vw_coil0(i) = Scalar(Params.v_L_pre[0][i]);
-        vw_coil0(3 + i) = Scalar(Params.w_L_pre[0][i]);
-        p_coil0(i) = Scalar(Params.p_pre[0][i]);
+        vw_coil0(i) = Scalar(act0.v_L_pre(i));
+        vw_coil0(3 + i) = Scalar(act0.w_L_pre(i));
+        p_coil0(i) = Scalar(act0.p_pre(i));
     }
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(act0.R_pre(r, c));
 
     // Extract learnable parameters from context
     const Scalar& actMass = ctx.learnable.actMass;
@@ -997,12 +1109,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     Vec6<Scalar> vw_coil0;
     Vec3<Scalar> p_coil0;
     Mat3<Scalar> R_coil0;
+    const auto& act0 = Params.dynamics.actuators[0];
     for (int i = 0; i < 3; ++i) {
-        vw_coil0(i) = Scalar(Params.v_L_pre[0][i]);
-        vw_coil0(3 + i) = Scalar(Params.w_L_pre[0][i]);
-        p_coil0(i) = Scalar(Params.p_pre[0][i]);
+        vw_coil0(i) = Scalar(act0.v_L_pre(i));
+        vw_coil0(3 + i) = Scalar(act0.w_L_pre(i));
+        p_coil0(i) = Scalar(act0.p_pre(i));
     }
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(act0.R_pre(r, c));
 
     // Extract learnable parameters from context
     const Scalar& actMass = ctx.learnable.actMass;
@@ -1157,12 +1270,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
     Vec6<Scalar> vw_coil0;
     Vec3<Scalar> p_coil0;
     Mat3<Scalar> R_coil0;
+    const auto& act0 = Params.dynamics.actuators[0];
     for (int i = 0; i < 3; ++i) {
-        vw_coil0(i) = Scalar(Params.v_L_pre[0][i]);
-        vw_coil0(3 + i) = Scalar(Params.w_L_pre[0][i]);
-        p_coil0(i) = Scalar(Params.p_pre[0][i]);
+        vw_coil0(i) = Scalar(act0.v_L_pre(i));
+        vw_coil0(3 + i) = Scalar(act0.w_L_pre(i));
+        p_coil0(i) = Scalar(act0.p_pre(i));
     }
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
+    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(act0.R_pre(r, c));
 
     // Extract learnable parameters from context
     const Scalar& actMass = ctx.learnable.actMass;

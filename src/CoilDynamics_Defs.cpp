@@ -592,22 +592,27 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 
     double x_coil[NUM_ACT_SET][NUM_COIL_STATES], out_x_coil[NUM_ACT_SET][NUM_COIL_STATES];
     double MagMoment[NUM_ACT_SET][3], muhat[NUM_ACT_SET][9], actMass[NUM_ACT_SET], actInertia[NUM_ACT_SET][9];
+    double damping[NUM_ACT_SET][6];
 
     double mu[3], muhattemp[9];
 
-    for (int j = 0; j < NUM_ACT_SET; ++j) {
+    for (int j = 0; j < Params.no_act_set; ++j) {
+        const auto& act = Params.dynamics.actuators[j];
         for (int i = 0; i < 3; ++i) {
-            x_coil[j][i] = Params.v_L_pre[j][i];
-            x_coil[j][i+3] = Params.w_L_pre[j][i];
-            x_coil[j][i+6] = Params.p_pre[j][i];
+            x_coil[j][i] = act.v_L_pre(i);
+            x_coil[j][i+3] = act.w_L_pre(i);
+            x_coil[j][i+6] = act.p_pre(i);
         }
         for (int i = 0; i < 9; ++i) {
-            x_coil[j][i+9] = Params.R_pre[j][i];
+            x_coil[j][i+9] = act.R_pre(i / 3, i % 3);
         }
 
-        actMass[j] = Params.ActMass[j];
+        actMass[j] = act.mass;
         for (int i = 0; i < 9; ++i) {
-            actInertia[j][i] = Params.actInertia[j][i];
+            actInertia[j][i] = act.inertia(i / 3, i % 3);
+        }
+        for (int i = 0; i < 6; ++i) {
+            damping[j][i] = act.damping(i);
         }
 
         for (int i = 0; i <3 ; ++i) {
@@ -781,7 +786,7 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 
             bool diverged = false;
             CoilDynamicsDispatchLegacy(Params.dynamics.integrator_type, x_coil[actno], net_nL, Params.g, actMass[actno], actInertia[actno],
-                                       Params.damping[actno], Params.DELTA_T, Params.B0,
+                                       damping[actno], Params.dynamics.DELTA_T, Params.B0,
                                        muhat[actno], net_mL, out_x_coil[actno], out_xdot, &diverged);
             if (diverged) {
                 Params.dynamics.last_diverged = true;
@@ -1092,21 +1097,26 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
     CoreParams.dynamics.last_diverged = false;
     double x_coil[NUM_ACT_SET][NUM_COIL_STATES];
     double MagMoment[NUM_ACT_SET][3], muhat[NUM_ACT_SET][9], actMass[NUM_ACT_SET], actInertia[NUM_ACT_SET][9];
+    double damping[NUM_ACT_SET][6];
 
     double mu[3], muhattemp[9];
-    for (int j = 0; j < NUM_ACT_SET; ++j) {
+    for (int j = 0; j < CoreParams.no_act_set; ++j) {
+        const auto& act = CoreParams.dynamics.actuators[j];
         for (int i = 0; i < 3; ++i) {
-            x_coil[j][i] = CoreParams.v_L_pre[j][i];
-            x_coil[j][i+3] = CoreParams.w_L_pre[j][i];
-            x_coil[j][i+6] = CoreParams.p_pre[j][i];
+            x_coil[j][i] = act.v_L_pre(i);
+            x_coil[j][i+3] = act.w_L_pre(i);
+            x_coil[j][i+6] = act.p_pre(i);
         }
         for (int i = 0; i < 9; ++i) {
-            x_coil[j][i+9] = CoreParams.R_pre[j][i];
+            x_coil[j][i+9] = act.R_pre(i / 3, i % 3);
         }
 
-        actMass[j] = CoreParams.ActMass[j];
+        actMass[j] = act.mass;
         for (int i = 0; i < 9; ++i) {
-            actInertia[j][i] = CoreParams.actInertia[j][i];
+            actInertia[j][i] = act.inertia(i / 3, i % 3);
+        }
+        for (int i = 0; i < 6; ++i) {
+            damping[j][i] = act.damping(i);
         }
 
         for (int i = 0; i <3 ; ++i) {
@@ -1189,7 +1199,7 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
 
             bool diverged = false;
             CoilDynamicsDispatchLegacy(CoreParams.dynamics.integrator_type, x_coil[actno], net_nL, CoreParams.g, actMass[actno], actInertia[actno],
-                                       CoreParams.damping[actno], CoreParams.DELTA_T, CoreParams.B0, muhat[actno], net_mL,
+                                       damping[actno], CoreParams.dynamics.DELTA_T, CoreParams.B0, muhat[actno], net_mL,
                                        update_coil_state, out_xdot, &diverged);
             if (diverged) {
                 CoreParams.dynamics.last_diverged = true;
@@ -1279,14 +1289,37 @@ void DynamicsBVP(	CRMShootingMethodParams& in_Params, const double xf[NUM_STATES
     DYNNLEqnParams DYNNLEParams(in_Params.no_flex_seg, in_Params.no_rigid_seg, in_Params.no_act_set, in_Params.no_locmarkers, in_Params.no_fcum_steps);
 
 
-    CRMDYNSolverIVP_Prep(in_Params.no_flex_seg,in_Params.no_rigid_seg, in_Params.no_act_set, in_Params.no_locmarkers, in_Params.no_fcum_steps,
+    double actInertia_local[NUM_ACT_SET][9]{};
+    double damping_local[NUM_ACT_SET][6]{};
+    double v_L_pre_local[NUM_ACT_SET][3]{};
+    double w_L_pre_local[NUM_ACT_SET][3]{};
+    double p_pre_local[NUM_ACT_SET][3]{};
+    double R_pre_local[NUM_ACT_SET][9]{};
+
+    for (int j = 0; j < in_Params.no_act_set; ++j) {
+        const auto& act = in_Params.dynamics.actuators[j];
+        for (int i = 0; i < 3; ++i) {
+            v_L_pre_local[j][i] = act.v_L_pre(i);
+            w_L_pre_local[j][i] = act.w_L_pre(i);
+            p_pre_local[j][i] = act.p_pre(i);
+        }
+        for (int i = 0; i < 9; ++i) {
+            actInertia_local[j][i] = act.inertia(i / 3, i % 3);
+            R_pre_local[j][i] = act.R_pre(i / 3, i % 3);
+        }
+        for (int i = 0; i < 6; ++i) {
+            damping_local[j][i] = act.damping(i);
+        }
+    }
+
+    CRMDYNSolverIVP_Prep(in_Params.no_flex_seg, in_Params.no_rigid_seg, in_Params.no_act_set, in_Params.no_locmarkers, in_Params.no_fcum_steps,
                          x_0, in_Params.IntegrationStepSize,
                          in_Params.Li, in_Params.dlambdainv, in_Params.rho, in_Params.SegmentTypes,
                          in_Params.SegEndLambdas, in_Params.LocMarkerLambdas,
                          in_Params.K, in_Params.Kinv, in_Params.ustar,
                          in_Params.MagMoment, in_Params.fcumlambda, in_Params.CoilAlignmentTurnAreaMatrix,
-                         in_Params.B0, in_Params.g, in_Params.ActMass, in_Params.actInertia, in_Params.damping, in_Params.DELTA_T,
-                         in_Params.v_L_pre, in_Params.w_L_pre, in_Params.p_pre, in_Params.R_pre,
+                         in_Params.B0, in_Params.g, in_Params.ActMass, actInertia_local, damping_local, in_Params.dynamics.DELTA_T,
+                         v_L_pre_local, w_L_pre_local, p_pre_local, R_pre_local,
                          in_mL_initialguess, in_nL_initialguess, FinalValueOnly, DYNNLEParams);
 
     DYNNLEParams.dynamics.integrator_type = in_Params.dynamics.integrator_type;
@@ -1418,14 +1451,37 @@ void DYNSolverIVP(	CRMShootingMethodParams& in_Params, const double in_u0[3],
 //    std::cout << "damping_: " << DYNNLEParams.damping[0][0] << " " << DYNNLEParams.damping[0][1] << " " << DYNNLEParams.damping[0][2] <<  std::endl;
 //    std::cout << "ActMass: " <<  DYNNLEParams.ActMass[0] <<  std::endl;
 
-    CRMDYNSolverIVP_Prep(in_Params.no_flex_seg,in_Params.no_rigid_seg, in_Params.no_act_set, in_Params.no_locmarkers, in_Params.no_fcum_steps,
+    double actInertia_local[NUM_ACT_SET][9]{};
+    double damping_local[NUM_ACT_SET][6]{};
+    double v_L_pre_local[NUM_ACT_SET][3]{};
+    double w_L_pre_local[NUM_ACT_SET][3]{};
+    double p_pre_local[NUM_ACT_SET][3]{};
+    double R_pre_local[NUM_ACT_SET][9]{};
+
+    for (int j = 0; j < in_Params.no_act_set; ++j) {
+        const auto& act = in_Params.dynamics.actuators[j];
+        for (int i = 0; i < 3; ++i) {
+            v_L_pre_local[j][i] = act.v_L_pre(i);
+            w_L_pre_local[j][i] = act.w_L_pre(i);
+            p_pre_local[j][i] = act.p_pre(i);
+        }
+        for (int i = 0; i < 9; ++i) {
+            actInertia_local[j][i] = act.inertia(i / 3, i % 3);
+            R_pre_local[j][i] = act.R_pre(i / 3, i % 3);
+        }
+        for (int i = 0; i < 6; ++i) {
+            damping_local[j][i] = act.damping(i);
+        }
+    }
+
+    CRMDYNSolverIVP_Prep(in_Params.no_flex_seg, in_Params.no_rigid_seg, in_Params.no_act_set, in_Params.no_locmarkers, in_Params.no_fcum_steps,
                          x_0, in_Params.IntegrationStepSize,
                          in_Params.Li, in_Params.dlambdainv, in_Params.rho, in_Params.SegmentTypes,
                          in_Params.SegEndLambdas, in_Params.LocMarkerLambdas,
                          in_Params.K, in_Params.Kinv, in_Params.ustar,
                          in_Params.MagMoment, in_Params.fcumlambda, in_Params.CoilAlignmentTurnAreaMatrix,
-                         in_Params.B0, in_Params.g, in_Params.ActMass, in_Params.actInertia, in_Params.damping, in_Params.DELTA_T,
-                         in_Params.v_L_pre, in_Params.w_L_pre, in_Params.p_pre, in_Params.R_pre,
+                         in_Params.B0, in_Params.g, in_Params.ActMass, actInertia_local, damping_local, in_Params.dynamics.DELTA_T,
+                         v_L_pre_local, w_L_pre_local, p_pre_local, R_pre_local,
                          m_L, n_L, in_FinalValueOnly, CoreParams);
 
     CoreParams.dynamics.integrator_type = in_Params.dynamics.integrator_type;
@@ -1588,37 +1644,28 @@ void CRMDYNSolverIVP_Prep (
      * */
     auto & g = out_CoreParams.g;
     mCopy_AB<3>(in_g, g);               // gravitational vector
-    auto & v_L_pre = out_CoreParams.v_L_pre;
-    auto & w_L_pre = out_CoreParams.w_L_pre;
-    auto & p_pre = out_CoreParams.p_pre;
-    auto & R_pre = out_CoreParams.R_pre;
-    auto & actInertia = out_CoreParams.actInertia;
-    auto & m_L = out_CoreParams.m_L;
-    auto & n_L = out_CoreParams.n_L;
-    auto & damping = out_CoreParams.damping;
-    auto & delta_t = out_CoreParams.DELTA_T;
-    delta_t = in_delta_t;
+
+    auto & dynamics = out_CoreParams.dynamics;
+    dynamics.DELTA_T = in_delta_t;
 
     for (int i = 0; i < in_no_act_set; ++i) {
+        auto & act = dynamics.actuators[i];
         for (int j = 0; j < 3; ++j) {
-            v_L_pre[i][j] = in_v_L_pre[i][j];
-            w_L_pre[i][j] = in_w_L_pre[i][j];
-            p_pre[i][j] = in_p_pre[i][j];
-            m_L[i][j] = in_mL[i][j];
-            n_L[i][j] = in_nL[i][j];
+            act.v_L_pre(j) = in_v_L_pre[i][j];
+            act.w_L_pre(j) = in_w_L_pre[i][j];
+            act.p_pre(j) = in_p_pre[i][j];
+            act.m_L(j) = in_mL[i][j];
+            act.n_L(j) = in_nL[i][j];
         }
         for (int j = 0; j < 9; ++j) {
-            actInertia[i][j] = in_actInertia[i][j];
-            R_pre[i][j] = in_R_pre[i][j];
+            act.inertia(j / 3, j % 3) = in_actInertia[i][j];
+            act.R_pre(j / 3, j % 3) = in_R_pre[i][j];
         }
         for (int j = 0; j < 6; ++j) {
-            damping[i][j] = in_damping[i][j];
+            act.damping(j) = in_damping[i][j];
         }
+        act.mass = out_CoreParams.ActMass[i];
     }
-
-    // NEW (Task A1.7): Synchronize legacy arrays to modern DynamicsContext
-    // This ensures the new container is populated with the same data as legacy arrays
-    out_CoreParams.sync_dynamics_context();
 
 }
 
@@ -1715,26 +1762,23 @@ CRMShootingMethodParams CRMDYNConstructShootingMethodParamSet(	CRMCatheterModelP
         ShootingParams.MagMoment[i] = coil_align * tempf;
         ShootingParams.CoilAlignmentTurnAreaMatrix[i] = coil_align * turn_mat;
 
-
+        auto & act = ShootingParams.dynamics.actuators[i];
         for (int j = 0; j < 9; ++j) {
-            ShootingParams.actInertia[i][j] = ActInertia[i][j];
+            act.inertia(j / 3, j % 3) = ActInertia[i][j];
+            act.R_pre(j / 3, j % 3) = in_R_pre[i][j];
         }
-
         for (int j = 0; j < 3; ++j) {
-            ShootingParams.v_L_pre[i][j] = in_v_L_pre[i][j];
-            ShootingParams.w_L_pre[i][j] = in_w_L_pre[i][j];
-            ShootingParams.p_pre[i][j] = in_p_pre[i][j];
-        }
-        for (int j = 0; j < 9; ++j) {
-            ShootingParams.R_pre[i][j] = in_R_pre[i][j];
+            act.v_L_pre(j) = in_v_L_pre[i][j];
+            act.w_L_pre(j) = in_w_L_pre[i][j];
+            act.p_pre(j) = in_p_pre[i][j];
         }
         for (int j = 0; j < 6; ++j) {
-            ShootingParams.damping[i][j] = in_damping[i][j];
+            act.damping(j) = in_damping[i][j];
         }
-
+        act.mass = ShootingParams.ActMass[i];
     }
 
-    ShootingParams.DELTA_T = in_DELTA_T;
+    ShootingParams.dynamics.DELTA_T = in_DELTA_T;
 
 
     ShootingParams.fcumlambda[0].setZero();
@@ -1764,10 +1808,6 @@ CRMShootingMethodParams CRMDYNConstructShootingMethodParamSet(	CRMCatheterModelP
     delete[] ActNos;
 
     for (int i = 0; i < CathParams.no_locmarkers; i++) ShootingParams.LocMarkerLambdas[i] = CathParams.LocMarkers[i];
-
-    // NEW (Task A1.7): Synchronize legacy arrays to modern DynamicsContext
-    // This ensures the new container is populated with the same data as legacy arrays
-    ShootingParams.sync_dynamics_context();
 
     return ShootingParams;
 

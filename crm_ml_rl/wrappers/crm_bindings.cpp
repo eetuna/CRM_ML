@@ -2152,6 +2152,29 @@ public:
                 nL_guess_local[j][i] = nLseed(j, i);
             }
 
+            double actInertia_local[NUM_ACT_SET][9]{};
+            double damping_local[NUM_ACT_SET][6]{};
+            double v_L_pre_local[NUM_ACT_SET][3]{};
+            double w_L_pre_local[NUM_ACT_SET][3]{};
+            double p_pre_local[NUM_ACT_SET][3]{};
+            double R_pre_local[NUM_ACT_SET][9]{};
+
+            for (int j = 0; j < BVPParams.no_act_set; ++j) {
+                const auto& act = BVPParams.dynamics.actuators[j];
+                for (int i = 0; i < 3; ++i) {
+                    v_L_pre_local[j][i] = act.v_L_pre(i);
+                    w_L_pre_local[j][i] = act.w_L_pre(i);
+                    p_pre_local[j][i] = act.p_pre(i);
+                }
+                for (int i = 0; i < 9; ++i) {
+                    actInertia_local[j][i] = act.inertia(i / 3, i % 3);
+                    R_pre_local[j][i] = act.R_pre(i / 3, i % 3);
+                }
+                for (int i = 0; i < 6; ++i) {
+                    damping_local[j][i] = act.damping(i);
+                }
+            }
+
             CRMDYNSolverIVP_Prep(
                 BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
                 x_0, BVPParams.IntegrationStepSize,
@@ -2159,8 +2182,8 @@ public:
                 BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
                 BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
                 BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
-                BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
-                BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+                BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_local, damping_local, BVPParams.dynamics.DELTA_T,
+                v_L_pre_local, w_L_pre_local, p_pre_local, R_pre_local,
                 mL_guess_local, nL_guess_local,
                 FinalValueOnly, DYNNLEParams
             );
@@ -2284,6 +2307,29 @@ public:
                     nL_guess_local[j][i] = nLseed(j, i);
                 }
 
+                double actInertia_local[NUM_ACT_SET][9]{};
+                double damping_local[NUM_ACT_SET][6]{};
+                double v_L_pre_local[NUM_ACT_SET][3]{};
+                double w_L_pre_local[NUM_ACT_SET][3]{};
+                double p_pre_local[NUM_ACT_SET][3]{};
+                double R_pre_local[NUM_ACT_SET][9]{};
+
+                for (int j = 0; j < BVPParams.no_act_set; ++j) {
+                    const auto& act = BVPParams.dynamics.actuators[j];
+                    for (int i = 0; i < 3; ++i) {
+                        v_L_pre_local[j][i] = act.v_L_pre(i);
+                        w_L_pre_local[j][i] = act.w_L_pre(i);
+                        p_pre_local[j][i] = act.p_pre(i);
+                    }
+                    for (int i = 0; i < 9; ++i) {
+                        actInertia_local[j][i] = act.inertia(i / 3, i % 3);
+                        R_pre_local[j][i] = act.R_pre(i / 3, i % 3);
+                    }
+                    for (int i = 0; i < 6; ++i) {
+                        damping_local[j][i] = act.damping(i);
+                    }
+                }
+
                 CRMDYNSolverIVP_Prep(
                     BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
                     x_0, BVPParams.IntegrationStepSize,
@@ -2291,8 +2337,8 @@ public:
                     BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
                     BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
                     BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
-                    BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
-                    BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+                    BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_local, damping_local, BVPParams.dynamics.DELTA_T,
+                    v_L_pre_local, w_L_pre_local, p_pre_local, R_pre_local,
                     mL_guess_local, nL_guess_local,
                     FinalValueOnly, DYNNLEParams
                 );
@@ -2373,6 +2419,29 @@ public:
                     nL_guess_local[j][i] = nLseed(j, i);
                 }
 
+                double actInertia_local[NUM_ACT_SET][9]{};
+                double damping_local[NUM_ACT_SET][6]{};
+                double v_L_pre_local[NUM_ACT_SET][3]{};
+                double w_L_pre_local[NUM_ACT_SET][3]{};
+                double p_pre_local[NUM_ACT_SET][3]{};
+                double R_pre_local[NUM_ACT_SET][9]{};
+
+                for (int j = 0; j < BVPParams.no_act_set; ++j) {
+                    const auto& act = BVPParams.dynamics.actuators[j];
+                    for (int i = 0; i < 3; ++i) {
+                        v_L_pre_local[j][i] = act.v_L_pre(i);
+                        w_L_pre_local[j][i] = act.w_L_pre(i);
+                        p_pre_local[j][i] = act.p_pre(i);
+                    }
+                    for (int i = 0; i < 9; ++i) {
+                        actInertia_local[j][i] = act.inertia(i / 3, i % 3);
+                        R_pre_local[j][i] = act.R_pre(i / 3, i % 3);
+                    }
+                    for (int i = 0; i < 6; ++i) {
+                        damping_local[j][i] = act.damping(i);
+                    }
+                }
+
                 CRMDYNSolverIVP_Prep(
                     BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
                     x_0, BVPParams.IntegrationStepSize,
@@ -2380,8 +2449,8 @@ public:
                     BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
                     BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
                     BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
-                    BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
-                    BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+                    BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_local, damping_local, BVPParams.dynamics.DELTA_T,
+                    v_L_pre_local, w_L_pre_local, p_pre_local, R_pre_local,
                     mL_guess_local, nL_guess_local,
                     FinalValueOnly, DYNNLEParams
                 );
@@ -2690,6 +2759,29 @@ public:
             nL_guess_local[j][i] = nLseed(j, i);
         }
 
+        double actInertia_dyn[NUM_ACT_SET][9]{};
+        double damping_dyn[NUM_ACT_SET][6]{};
+        double v_L_pre_dyn[NUM_ACT_SET][3]{};
+        double w_L_pre_dyn[NUM_ACT_SET][3]{};
+        double p_pre_dyn[NUM_ACT_SET][3]{};
+        double R_pre_dyn[NUM_ACT_SET][9]{};
+
+        for (int j = 0; j < BVPParams.no_act_set; ++j) {
+            const auto& act = BVPParams.dynamics.actuators[j];
+            for (int i = 0; i < 3; ++i) {
+                v_L_pre_dyn[j][i] = act.v_L_pre(i);
+                w_L_pre_dyn[j][i] = act.w_L_pre(i);
+                p_pre_dyn[j][i] = act.p_pre(i);
+            }
+            for (int i = 0; i < 9; ++i) {
+                actInertia_dyn[j][i] = act.inertia(i / 3, i % 3);
+                R_pre_dyn[j][i] = act.R_pre(i / 3, i % 3);
+            }
+            for (int i = 0; i < 6; ++i) {
+                damping_dyn[j][i] = act.damping(i);
+            }
+        }
+
         CRMDYNSolverIVP_Prep(
             BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
             x_0, BVPParams.IntegrationStepSize,
@@ -2697,8 +2789,8 @@ public:
             BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
             BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
             BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
-            BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
-            BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+            BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_dyn, damping_dyn, BVPParams.dynamics.DELTA_T,
+            v_L_pre_dyn, w_L_pre_dyn, p_pre_dyn, R_pre_dyn,
             mL_guess_local, nL_guess_local,
             FinalValueOnly, DYNNLEParams
         );
@@ -2718,10 +2810,6 @@ public:
         Eigen::VectorXd residual;
         Eigen::VectorXd theta;
         Eigen::MatrixXd J_theta = DYNNLEquationParameterJacobianEigenAD(x_star_scaled, DYNNLEParams, &residual, &theta);
-
-        for (int i = 0; i < 6; i++) {
-            theta(dynnl_ad_eigen::THETA_OFFSET_DAMPING + i) = damping[0][i];
-        }
 
         const int num_params = static_cast<int>(theta.size());
         const int res_dim = static_cast<int>(residual.size());
@@ -2892,6 +2980,29 @@ public:
             nL_guess_local[j][i] = nL_ptr[j * 3 + i];
         }
 
+        double actInertia_dyn[NUM_ACT_SET][9]{};
+        double damping_dyn[NUM_ACT_SET][6]{};
+        double v_L_pre_dyn[NUM_ACT_SET][3]{};
+        double w_L_pre_dyn[NUM_ACT_SET][3]{};
+        double p_pre_dyn[NUM_ACT_SET][3]{};
+        double R_pre_dyn[NUM_ACT_SET][9]{};
+
+        for (int j = 0; j < BVPParams.no_act_set; ++j) {
+            const auto& act = BVPParams.dynamics.actuators[j];
+            for (int i = 0; i < 3; ++i) {
+                v_L_pre_dyn[j][i] = act.v_L_pre(i);
+                w_L_pre_dyn[j][i] = act.w_L_pre(i);
+                p_pre_dyn[j][i] = act.p_pre(i);
+            }
+            for (int i = 0; i < 9; ++i) {
+                actInertia_dyn[j][i] = act.inertia(i / 3, i % 3);
+                R_pre_dyn[j][i] = act.R_pre(i / 3, i % 3);
+            }
+            for (int i = 0; i < 6; ++i) {
+                damping_dyn[j][i] = act.damping(i);
+            }
+        }
+
         CRMDYNSolverIVP_Prep(
             BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set, BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
             x_0, BVPParams.IntegrationStepSize,
@@ -2899,8 +3010,8 @@ public:
             BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
             BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
             BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
-            BVPParams.B0, BVPParams.g, BVPParams.ActMass, BVPParams.actInertia, BVPParams.damping, BVPParams.DELTA_T,
-            BVPParams.v_L_pre, BVPParams.w_L_pre, BVPParams.p_pre, BVPParams.R_pre,
+            BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_dyn, damping_dyn, BVPParams.dynamics.DELTA_T,
+            v_L_pre_dyn, w_L_pre_dyn, p_pre_dyn, R_pre_dyn,
             mL_guess_local, nL_guess_local,
             FinalValueOnly, DYNNLEParams
         );

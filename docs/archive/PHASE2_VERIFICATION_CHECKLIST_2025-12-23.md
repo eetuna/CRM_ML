@@ -90,7 +90,7 @@ Subtasks:
 - [x] Rebuild (`cmake --build build`) and run:
   - [x] `pytest tests/test_dynnlequation_residual_eigen_autodiff.py -v` (32 tests pass, implicit)
   - [x] `pytest tests/test_dynamics_implicit_linearization.py -v` (32 tests pass, implicit)
-- [x] Update `docs/architecture/TASK_1_7_CHECKLIST.md` to mark Step 2.2 (remaining items) and Step 2.6 complete with test results.
+- [x] Update `docs/archive/TASK_1_7_CHECKLIST.md` to mark Step 2.2 (remaining items) and Step 2.6 complete with test results.
 
 ### Results Summary
 **Build**: ✅ Complete (`cmake --build build` - all targets built successfully)
@@ -116,7 +116,7 @@ Subtasks:
   - [x] `pytest tests/test_dynamics_convergence.py -v` ✅ PASSED (38.73s)
   - [x] Full test suite: `pytest -q` ✅ All 32 passed (88.69s)
   - [x] Failing case validation ✅ ABM4/RK4 converge under tuned damping
-- [x] Update `docs/architecture/TASK_1_7_CHECKLIST.md` Phase 3 section with results and mark status accordingly.
+- [x] Update `docs/archive/TASK_1_7_CHECKLIST.md` Phase 3 section with results and mark status accordingly.
   - **Completed**: Phase 3 Steps 3.1-3.6 marked COMPLETED with full validation results
 
 ### Phase 3 Completion Summary
