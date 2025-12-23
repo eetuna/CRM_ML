@@ -98,6 +98,22 @@ Subtasks:
 **Parameter Jacobian Tests**: ✅ All 3 pass (11.37s)
 **Architecture**: ✅ Consistent use of `DynamicsContextAD<Scalar>` across all AD residuals
 
+## Claude Plan (Phase 3 Integrator Stabilization)
+Goal: Complete Phase 3 by documenting instability sources, adding soft-failure propagation, and validating RK4 vs ABM4 behavior.
+
+Subtasks:
+- [x] Create `docs/architecture/INTEGRATOR_STABILITY.md` with current findings and reproduction steps.
+- [ ] Add a concise table of known stable vs unstable parameter regimes (damping/mass) with references to failing cases.
+- [ ] Implement divergence propagation from `CoilDynamics` (legacy path) to callers:
+- [ ] Thread `out_diverged` flags through `CoilDynamicsDispatchLegacy` call sites (e.g., `DYNNLEquation`, `DYNSolverIVP`).
+- [ ] On divergence, return finite penalty residuals and propagate an error flag up to Python.
+- [ ] Update `crm_bindings.cpp` to surface divergence in return dicts (e.g., `converged=false`, `diverged=true`).
+- [ ] Add a small test harness or script to reproduce a known failing case and compare ABM4 vs RK4 (store input in docs or `data/`).
+- [ ] Validate and record:
+- [ ] `pytest tests/test_dynamics_convergence.py -v` (if present)
+- [ ] Known failing case: RK4 stability vs ABM4 instability (or document if none found).
+- [ ] Update `docs/architecture/TASK_1_7_CHECKLIST.md` Phase 3 section with results and mark status accordingly.
+
 ## Update Log
 - [x] Initial checklist and plan created; validation not run on this branch yet.
 - [x] Build succeeded via `cmake --build build`.
