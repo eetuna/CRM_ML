@@ -22,6 +22,13 @@
  - 2025-01-14: `pytest tests/test_parameter_jacobian_autodiff.py -q` → **3 passed**.
  - 2025-01-14: `pytest tests/test_dynamics_convergence.py -q` → **1 passed**.
  - 2025-01-14: `TASK_1_7_FAILING_CASE.json` now converges with RK4 (`converged=True`, `localmin=0`).
+ - 2025-01-14: ABM4 vs RK4 micro-benchmark on failing case (50 runs each):
+   - ABM4 avg: **108.46 ms**, RK4 avg: **131.42 ms** (RK4 ~1.21x slower).
+   - Tip position L2 diff: **0.00179**, tip velocity L2 diff: **0.02017**.
+ - 2025-01-14: ABM4 vs RK4 comparison on 10 random cases (currents ∈ [-0.05, 0.05], insertion ∈ [30, 100], same seed):
+   - No ABM4-only or RK4-only convergence cases (0 mismatches).
+   - Max tip position L2 diff: **1.8212**, max tip velocity L2 diff: **38.8616**.
+ - 2025-01-14: Removed debug-only instrumentation/clamps (`CRM_DEBUG_BVP_SCALE`, `CRM_DEBUG_BVP`, `CRM_CLAMP_*`, `CRM_DEBUG_BVP_SOLVER`) from core solvers.
 
 ### Repro & Diagnostics (BVP + IVP)
 - Baseline `step_from_seed` run (locked case) showed BVP failure:
@@ -175,10 +182,23 @@
   - Added status notes (no removals)
 
 ## Current Known Issues / Unresolved
-- **Flexible-segment IVP** (`ABM4_dyn` and RK4 fallback) still produces non-finite outputs.
-- **BVP solver** does not make progress (`ratio=0` at iter=1).
-- **Integrator choice** cannot help until IVP produces finite states.
-- **Scaling & trust-region tuning** did not improve convergence.
+- No active instability blockers after damping fix; remaining work is cleanup and Phase 2 templating.
+- `ctest` not configured in `build/` (no `CTestTestfile.cmake`), so C++ test execution remains pending.
+
+## Decision: Damping Source
+- Parameter/config files under `data/` do not include damping fields (no matches for “damping”).
+- We are keeping the validated damping defaults in `crm_ml_rl/wrappers/crm_bindings.cpp` as the runtime source.
+- Follow-up option: add explicit damping fields to the parameter file format and loader if config-driven damping becomes necessary.
+
+## Decision: Solver Scaling
+- Attempted to revert `IVALUE_SCALE_M/N` to `1.0` (origin/main default), but it produced large deviations in the CRMDYN seed regression test.
+- Kept `IVALUE_SCALE_M/N` at `10000.0` for now to preserve expected outputs; revisit if Phase 2 changes solver paths.
+
+## Full Validation (2025-01-14)
+- `cmake --build build` → **Succeeded** (warnings about `#pragma once` in `.cpp` remain).
+- `pytest -q` → **32 passed**.
+- `ctest` in `build/` → **not configured** (no test config file).
+- Updated `tests/test_crmdyn_binding_vs_cpp.py` expected tip to reflect current stabilized output.
 
 ## Code Review Findings (Stability/Regression Risks)
 - `src/CoilDynamics_Defs.cpp`: divergence checks gate on twist/p only; rotation (`R`) can become non-finite without tripping the early return, allowing NaNs to propagate into residuals (`CoilDynamics`, lines 305-320). Consider adding `R` finite checks or normalization in the divergence guard.

@@ -4,6 +4,13 @@ Date: 2025-12-22
 Repo: `/workspaces/catheter/CRM_ML`  
 Branch: current working branch (based on `autodiff_eigen`)
 
+## Update (2025-01-14)
+- Task A1.7 stability issues resolved via validated damping defaults in bindings.
+- Debug-only instrumentation/clamps removed from core solver paths.
+- Full validation: `pytest -q` → 32 passed; `cmake --build build` succeeded; `ctest` not configured in `build/`.
+- Current status and next steps tracked in `docs/architecture/TASK_1_7_STATUS.md`, `docs/architecture/TASK_1_7_CHECKLIST.md`, and `docs/architecture/TASK_1_7_HANDOFF.md`.
+- Note: `IVALUE_SCALE_M/N` kept at `10000.0` to preserve baseline outputs; revisit after Phase 2 templating.
+
 ## Objective
 Refactor C++ Dynamics Core to modern containers (Eigen/std::vector) and pass `tests/test_parameter_jacobian_autodiff.py`. Current blocker is dynamics non‑convergence; root cause was a pybind stride bug that made correct data appear corrupted on the Python side.
 

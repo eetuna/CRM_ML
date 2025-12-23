@@ -322,9 +322,9 @@
 ### Step 3.6: Validation
 **Status**: PARTIAL (targeted tests + failing case validation done)
 - [x] Run stability test across parameter sweep (failing case now converges with new damping defaults)
-- [ ] Verify RK4 produces same results as ABM4 for stable regimes
+- [~] Verify RK4 produces same results as ABM4 for stable regimes (10-case comparison shows differences but no divergence)
 - [ ] Verify RK4 remains stable where ABM4 fails (no ABM4-fail/RK4-pass found yet)
-- [ ] Benchmark RK4 vs ABM4 performance
+- [x] Benchmark RK4 vs ABM4 performance (RK4 ~1.21x slower on failing case)
 
 ---
 
@@ -344,10 +344,10 @@
 - [ ] Update all documentation to reflect new architecture
 
 ### Final Validation
-- **Status**: NOT STARTED
-- [ ] Full test suite: `pytest -q`
-- [ ] Build all targets: `cmake --build build`
-- [ ] Run C++ tests: `cd build && ctest`
+- **Status**: PARTIAL
+- [x] Full test suite: `pytest -q`
+- [x] Build all targets: `cmake --build build`
+- [ ] Run C++ tests: `cd build && ctest` (no test config present)
 - [ ] Performance benchmark: compare against pre-refactor baseline
 
 ---

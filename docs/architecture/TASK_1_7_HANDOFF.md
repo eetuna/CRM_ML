@@ -109,6 +109,15 @@ PY
 3) Re-evaluate `IVALUE_SCALE_M/N` and solver conditioning.
 4) Test the failing case with known stable damping and record outcome.
 
+## Damping Source Decision (2025-01-14)
+- Parameter files under `data/` contain no damping fields (no matches for “damping”).
+- Keep validated damping defaults in `crm_ml_rl/wrappers/crm_bindings.cpp` as the runtime source.
+- Optional future work: extend parameter format/loader to include damping if needed.
+
+## Solver Scaling Decision (2025-01-14)
+- Reverting `IVALUE_SCALE_M/N` to 1.0 caused large deviations in the CRMDYN seed regression test.
+- Keep `IVALUE_SCALE_M/N` at 10000.0 for now to preserve baseline outputs; reassess after Phase 2 changes.
+
 ## Detailed Handover Tasks (Do In Order)
 ### Task 0: Confirm baseline and environment
 - [ ] Build `crm_python` to ensure bindings match current branch.
@@ -389,6 +398,10 @@ Changed `crm_ml_rl/wrappers/crm_bindings.cpp` line 568-575 from hardcoded 10.0 t
 - `pytest tests/test_parameter_jacobian_autodiff.py -q` → 3 passed.
 - `pytest tests/test_dynamics_convergence.py -q` → 1 passed.
 - `TASK_1_7_FAILING_CASE.json` now converges with RK4 (`converged=True`, `localmin=0`).
+- ABM4 vs RK4 micro-benchmark (50 runs on failing case): ABM4 ~108.46 ms avg, RK4 ~131.42 ms avg (RK4 ~1.21x slower).
+- ABM4 vs RK4 on 10 random cases (currents ∈ [-0.05, 0.05], insertion ∈ [30, 100]): no convergence mismatches; max tip position diff 1.8212, max tip velocity diff 38.8616.
+- Debug-only instrumentation/clamps removed from core solver paths (no `CRM_DEBUG_BVP_SCALE`, `CRM_DEBUG_BVP`, `CRM_CLAMP_*`, or `CRM_DEBUG_BVP_SOLVER` in core).
+- Full validation: `cmake --build build` OK; `pytest -q` OK; `ctest` not configured (no test config file).
 
 ### Recommended Next Steps
 1. Merge `bugfix/damping-defaults` to main (fixes the persistent instability)

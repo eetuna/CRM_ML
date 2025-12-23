@@ -53,19 +53,6 @@ void CoilIntegrad(const double in_twist[6], const double in_n[3], double g[3], d
      wHat(w,w_hat);
      mMult_AB<3,3,1>(w_hat, v, w_v);
 
-     if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-         if (std::strcmp(debug, "1") == 0) {
-             static int sample_log_count = 0;
-             if (sample_log_count < 3) {
-                 ++sample_log_count;
-                 std::cout << "[CRM_DEBUG_BVP_SCALE] CoilIntegrad input twist"
-                           << " v=[" << v[0] << "," << v[1] << "," << v[2] << "]"
-                           << " w=[" << w[0] << "," << w[1] << "," << w[2] << "]"
-                           << "\n";
-             }
-         }
-     }
-
      double damping_vec[3];
      for (int i = 0; i < 3; ++i) {
          damping_vec[i] = damping[i] * v[i] ;
@@ -93,56 +80,10 @@ void CoilIntegrad(const double in_twist[6], const double in_n[3], double g[3], d
      mSub_AB<3,1>(tau, w_inertia_w, diff_tau_w);
      mSub_AB<3,1>(diff_tau_w, damping_wec, residual_w);
 
-     if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-         if (std::strcmp(debug, "1") == 0) {
-             auto maxabs = [](const double* data, int count) {
-                 double maxv = 0.0;
-                 for (int i = 0; i < count; ++i) {
-                     maxv = std::max(maxv, std::abs(data[i]));
-                 }
-                 return maxv;
-             };
-             static int log_count = 0;
-             const double w_max = maxabs(w, 3);
-             const double tau_max = maxabs(tau, 3);
-             const double resid_max = maxabs(residual_w, 3);
-             const bool bad_inertia = std::abs(actInertia[0]) < 1e-12
-                                      || std::abs(actInertia[4]) < 1e-12
-                                      || std::abs(actInertia[8]) < 1e-12;
-             if ((w_max > 1e6 || tau_max > 1e6 || resid_max > 1e6 || bad_inertia
-                  || !std::isfinite(w_max) || !std::isfinite(tau_max) || !std::isfinite(resid_max))
-                 && log_count < 5) {
-                 ++log_count;
-                 std::cout << "[CRM_DEBUG_BVP_SCALE] CoilIntegrad"
-                           << " |w|=" << w_max
-                           << " |tau|=" << tau_max
-                           << " |res_w|=" << resid_max
-                           << " actInertia=["
-                           << actInertia[0] << "," << actInertia[4] << "," << actInertia[8]
-                           << "]\n";
-             }
-         }
-     }
-
      ///  actInertia is diagonal
      wdot[0] = residual_w[0] / actInertia[0];
      wdot[1] = residual_w[1] / actInertia[4];
      wdot[2] = residual_w[2] / actInertia[8];
-
-     if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-         if (std::strcmp(debug, "1") == 0) {
-             static int detail_log_count = 0;
-             if (detail_log_count < 3) {
-                 ++detail_log_count;
-                 std::cout << "[CRM_DEBUG_BVP_SCALE] CoilIntegrad torque"
-                           << " tau=[" << tau[0] << "," << tau[1] << "," << tau[2] << "]"
-                           << " res_w=[" << residual_w[0] << "," << residual_w[1] << "," << residual_w[2] << "]"
-                           << " wdot=[" << wdot[0] << "," << wdot[1] << "," << wdot[2] << "]"
-                           << " inertia=[" << actInertia[0] << "," << actInertia[4] << "," << actInertia[8] << "]"
-                           << "\n";
-             }
-         }
-     }
 
      for (int i = 0; i < 3; ++i) {
          twistdot[i] = vdot[i];
@@ -223,69 +164,12 @@ void CoilDynamics( double in_coil_state[NUM_COIL_STATES], double in_n[3], double
     for (int idx=0; idx<N; idx++) {
 
         if (idx<3) {  // RK2 initialization steps
-            if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-                if (std::strcmp(debug, "1") == 0) {
-                    auto maxabs = [](const double* data, int count) {
-                        double maxv = 0.0;
-                        for (int i = 0; i < count; ++i) {
-                            maxv = std::max(maxv, std::abs(data[i]));
-                        }
-                        return maxv;
-                    };
-                    static int log_count = 0;
-                    if (log_count < 5 && idx == 0) {
-                        ++log_count;
-                        const double v_max = maxabs(x_n, 3);
-                        const double w_max = maxabs(x_n + 3, 3);
-                        const double p_max = maxabs(x_n + 6, 3);
-                        const double R_max = maxabs(x_n + 9, 9);
-                        std::cout << "[CRM_DEBUG_BVP_SCALE] coil initial state"
-                                  << " |v|=" << v_max
-                                  << " |w|=" << w_max
-                                  << " |p|=" << p_max
-                                  << " |R|=" << R_max
-                                  << "\n";
-                    }
-                }
-            }
             RK2_coildyn(x_n, nL, g,  actMass, actInertia, damping, B0, muhat, mL, x_np1, xdot_n );
         }
         else { 		 // ABM4 steps
             ABM4_coildyn(	x_n, xdot_nm1, xdot_nm2, xdot_nm3, x_nm1, x_nm2, x_nm3,
                              nL, g,  actMass, actInertia, damping,  B0, muhat, mL,x_np1, xdot_n);
         }
-        if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-            if (std::strcmp(debug, "1") == 0) {
-                auto maxabs = [](const double* data, int count) {
-                    double maxv = 0.0;
-                    for (int i = 0; i < count; ++i) {
-                        maxv = std::max(maxv, std::abs(data[i]));
-                    }
-                    return maxv;
-                };
-                static int log_count = 0;
-                if (log_count < 5) {
-                    const double v_max = maxabs(x_np1, 3);
-                    const double w_max = maxabs(x_np1 + 3, 3);
-                    const double p_max = maxabs(x_np1 + 6, 3);
-                    const double R_max = maxabs(x_np1 + 9, 9);
-                    const bool bad = !std::isfinite(v_max) || !std::isfinite(w_max) || !std::isfinite(p_max) || !std::isfinite(R_max)
-                                     || v_max > 1e6 || w_max > 1e6 || p_max > 1e6 || R_max > 1e6;
-                    if (bad) {
-                        ++log_count;
-                        std::cout << "[CRM_DEBUG_BVP_SCALE] coil step output"
-                                  << " step=" << idx
-                                  << " method=" << (idx < 3 ? "rk2" : "abm4")
-                                  << " |v|=" << v_max
-                                  << " |w|=" << w_max
-                                  << " |p|=" << p_max
-                                  << " |R|=" << R_max
-                                  << "\n";
-                    }
-                }
-            }
-        }
-
 //        std::cout << "input v_n: " << xdot_n[0] << " " << xdot_n[1] << " " << xdot_n[2] <<  std::endl;
 //        std::cout << "input w_n: " << xdot_n[3] << " " << xdot_n[4] << " " << xdot_n[5] <<  std::endl;
 
@@ -309,11 +193,6 @@ void CoilDynamics( double in_coil_state[NUM_COIL_STATES], double in_n[3], double
             twist_mag > kDivergenceThreshold || p_mag > kDivergenceThreshold) {
             if (out_diverged != nullptr) {
                 *out_diverged = true;
-            }
-            if (const char* debug = std::getenv("CRM_DEBUG_DIVERGENCE")) {
-                if (std::strcmp(debug, "1") == 0) {
-                    std::cout << "Coil integration diverged in ABM4 path." << std::endl;
-                }
             }
             for (int i = 0; i < NUM_COIL_STATES; ++i) out_coil_state[i] = kDivergenceValue;
             for (int i = 0; i < 6; ++i) out_xdot_n[i] = 0.0;
@@ -427,27 +306,6 @@ void RK4_coildyn(double in_x_n[NUM_COIL_STATES], double in_n[3], double g[3],  d
         muhat[i] = in_muhat[i];
     }
 
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-        if (std::strcmp(debug, "1") == 0) {
-            auto maxabs = [](const double* data, int count) {
-                double maxv = 0.0;
-                for (int i = 0; i < count; ++i) {
-                    maxv = std::max(maxv, std::abs(data[i]));
-                }
-                return maxv;
-            };
-            static int log_count = 0;
-            const double w_max = maxabs(twist_n + 3, 3);
-            if ((w_max > 1e6 || !std::isfinite(w_max)) && log_count < 5) {
-                ++log_count;
-                std::cout << "[CRM_DEBUG_BVP_SCALE] RK4_coildyn input twist"
-                          << " |v|=" << maxabs(twist_n, 3)
-                          << " |w|=" << w_max
-                          << "\n";
-            }
-        }
-    }
-
     const double h = t_step;
     double k1[6], k2[6], k3[6], k4[6];
     double twist_2[6], twist_3[6], twist_4[6];
@@ -514,64 +372,7 @@ void CoilDynamicsRK4(double in_coil_state[NUM_COIL_STATES], double in_n[3], doub
 
     int N = ceil(DELTA_T / t_step);
     for (int idx = 0; idx < N; ++idx) {
-        if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-            if (std::strcmp(debug, "1") == 0) {
-                auto maxabs = [](const double* data, int count) {
-                    double maxv = 0.0;
-                    for (int i = 0; i < count; ++i) {
-                        maxv = std::max(maxv, std::abs(data[i]));
-                    }
-                    return maxv;
-                };
-                static int log_count = 0;
-                if (log_count < 5 && idx == 0) {
-                    ++log_count;
-                    const double v_max = maxabs(x_n, 3);
-                    const double w_max = maxabs(x_n + 3, 3);
-                    const double p_max = maxabs(x_n + 6, 3);
-                    const double R_max = maxabs(x_n + 9, 9);
-                    std::cout << "[CRM_DEBUG_BVP_SCALE] coil initial state (rk4)"
-                              << " |v|=" << v_max
-                              << " |w|=" << w_max
-                              << " |p|=" << p_max
-                              << " |R|=" << R_max
-                              << "\n";
-                }
-            }
-        }
         RK4_coildyn(x_n, in_n, g, actMass, actInertia, damping, in_B0, in_muhat, in_mL, x_np1, xdot_n);
-
-        if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-            if (std::strcmp(debug, "1") == 0) {
-                auto maxabs = [](const double* data, int count) {
-                    double maxv = 0.0;
-                    for (int i = 0; i < count; ++i) {
-                        maxv = std::max(maxv, std::abs(data[i]));
-                    }
-                    return maxv;
-                };
-                static int log_count = 0;
-                if (log_count < 5) {
-                    const double v_max = maxabs(x_np1, 3);
-                    const double w_max = maxabs(x_np1 + 3, 3);
-                    const double p_max = maxabs(x_np1 + 6, 3);
-                    const double R_max = maxabs(x_np1 + 9, 9);
-                    const bool bad = !std::isfinite(v_max) || !std::isfinite(w_max) || !std::isfinite(p_max) || !std::isfinite(R_max)
-                                     || v_max > 1e6 || w_max > 1e6 || p_max > 1e6 || R_max > 1e6;
-                    if (bad) {
-                        ++log_count;
-                        std::cout << "[CRM_DEBUG_BVP_SCALE] coil step output"
-                                  << " step=" << idx
-                                  << " method=rk4"
-                                  << " |v|=" << v_max
-                                  << " |w|=" << w_max
-                                  << " |p|=" << p_max
-                                  << " |R|=" << R_max
-                                  << "\n";
-                    }
-                }
-            }
-        }
 
         for (int i = 0; i < NUM_COIL_STATES; ++i) {
             x_n[i] = x_np1[i];
@@ -584,11 +385,6 @@ void CoilDynamicsRK4(double in_coil_state[NUM_COIL_STATES], double in_n[3], doub
             twist_mag > kDivergenceThreshold || p_mag > kDivergenceThreshold) {
             if (out_diverged != nullptr) {
                 *out_diverged = true;
-            }
-            if (const char* debug = std::getenv("CRM_DEBUG_DIVERGENCE")) {
-                if (std::strcmp(debug, "1") == 0) {
-                    std::cout << "Coil integration diverged in RK4 path." << std::endl;
-                }
             }
             for (int i = 0; i < NUM_COIL_STATES; ++i) out_coil_state[i] = kDivergenceValue;
             for (int i = 0; i < 6; ++i) out_xdot_n[i] = 0.0;
@@ -880,24 +676,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
                 for (int i = 0; i < 9; ++i) {
                     R_t[i] = Params.xf[3+i];
                 }
-                if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-                    if (std::strcmp(debug, "1") == 0) {
-                        auto maxabs = [](const double* data, int count) {
-                            double maxv = 0.0;
-                            for (int i = 0; i < count; ++i) {
-                                maxv = std::max(maxv, std::abs(data[i]));
-                            }
-                            return maxv;
-                        };
-                        static int log_count = 0;
-                        const double R_max = maxabs(R_t, 9);
-                        if ((!std::isfinite(R_max) || R_max > 100.0) && log_count < 5) {
-                            ++log_count;
-                            std::cout << "[CRM_DEBUG_BVP_SCALE] DYNNLEquation tip R input"
-                                      << " |R|=" << R_max << " segment=" << segi << "\n";
-                        }
-                    }
-                }
                 CRMFlexible_IVP_Back ( segi, p_t, R_t, Params, u_t , n_0,
                                        u_tau, p_, R_);
 
@@ -930,26 +708,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
                 for (int i = 0; i < 3; ++i) {
                     p_L[i] = out_x_coil[actno][i+6] - R_L[ i*3 +2 ]*RigidSegmentLength * 0.5;
                 }
-                if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-                    if (std::strcmp(debug, "1") == 0) {
-                        auto maxabs = [](const double* data, int count) {
-                            double maxv = 0.0;
-                            for (int i = 0; i < count; ++i) {
-                                maxv = std::max(maxv, std::abs(data[i]));
-                            }
-                            return maxv;
-                        };
-                        static int log_count = 0;
-                        const double R_max = maxabs(R_L, 9);
-                        if ((!std::isfinite(R_max) || R_max > 100.0) && log_count < 5) {
-                            ++log_count;
-                            std::cout << "[CRM_DEBUG_BVP_SCALE] DYNNLEquation coil R output"
-                                      << " |R|=" << R_max << " segment=" << segi
-                                      << " actno=" << actno << "\n";
-                        }
-                    }
-                }
-
                 CRMFlexible_IVP_Back ( segi, p_L, R_L, Params, u_L , n_L[actno],
                                        u_f, p_f, R_f);
                 actno = fsegi - 1;
@@ -1012,52 +770,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 
 
             bool diverged = false;
-            if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-                if (std::strcmp(debug, "1") == 0) {
-                    auto maxabs = [](const double* data, int count) {
-                        double maxv = 0.0;
-                        for (int i = 0; i < count; ++i) {
-                            maxv = std::max(maxv, std::abs(data[i]));
-                        }
-                        return maxv;
-                    };
-                    static int log_count = 0;
-                    if (log_count < 5) {
-                        const double v_max = maxabs(x_coil[actno], 3);
-                        const double w_max = maxabs(x_coil[actno] + 3, 3);
-                        const double p_max = maxabs(x_coil[actno] + 6, 3);
-                        const double R_max = maxabs(x_coil[actno] + 9, 9);
-                        if (!std::isfinite(v_max) || !std::isfinite(w_max) || !std::isfinite(p_max) || !std::isfinite(R_max)
-                            || v_max > 1e6 || w_max > 1e6 || p_max > 1e6 || R_max > 1e6) {
-                            ++log_count;
-                            std::cout << "[CRM_DEBUG_BVP_SCALE] coil input state"
-                                      << " actno=" << actno
-                                      << " |v|=" << v_max
-                                      << " |w|=" << w_max
-                                      << " |p|=" << p_max
-                                      << " |R|=" << R_max
-                                      << "\n";
-                        }
-                    }
-                }
-            }
-            if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-                if (std::strcmp(debug, "1") == 0) {
-                    static int log_count = 0;
-                    if (log_count < 5) {
-                        ++log_count;
-                        std::cout << "[CRM_DEBUG_BVP_SCALE] coil damping"
-                                  << " actno=" << actno
-                                  << " d=[" << Params.damping[actno][0]
-                                  << "," << Params.damping[actno][1]
-                                  << "," << Params.damping[actno][2]
-                                  << "," << Params.damping[actno][3]
-                                  << "," << Params.damping[actno][4]
-                                  << "," << Params.damping[actno][5]
-                                  << "]\n";
-                    }
-                }
-            }
             CoilDynamicsDispatchLegacy(Params.dynamics.integrator_type, x_coil[actno], net_nL, Params.g, actMass[actno], actInertia[actno],
                                        Params.damping[actno], Params.DELTA_T, Params.B0,
                                        muhat[actno], net_mL, out_x_coil[actno], out_xdot, &diverged);
@@ -1116,11 +828,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
             }
         }
         residual_touched = true;
-        if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-            if (std::strcmp(debug, "1") == 0) {
-                std::cout << "[CRM_DEBUG_BVP_SCALE] non-finite p_f/R_f detected; residuals set to 1e6\n";
-            }
-        }
         goto residual_output;
     }
 
@@ -1142,23 +849,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
     for (int i = 0; i < 3; ++i) residual[actno][i+3] = sqrt(v_val[i]);
     residual_touched = true;
 
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-        if (std::strcmp(debug, "1") == 0) {
-            const double res_p_norm = std::sqrt(residual[actno][0] * residual[actno][0]
-                                                + residual[actno][1] * residual[actno][1]
-                                                + residual[actno][2] * residual[actno][2]);
-            const double res_r_norm = std::sqrt(residual[actno][3] * residual[actno][3]
-                                                + residual[actno][4] * residual[actno][4]
-                                                + residual[actno][5] * residual[actno][5]);
-            if (res_p_norm == 0.0 && res_r_norm == 0.0) {
-                std::cout << "[CRM_DEBUG_BVP_SCALE] actno=0 residuals are zero; "
-                          << "p_f=(" << p_f[0] << "," << p_f[1] << "," << p_f[2] << ") "
-                          << "p_d=(" << p_d[0] << "," << p_d[1] << "," << p_d[2] << ") "
-                          << "R_f00=" << R_f[0] << " R_d00=" << R_d[0] << "\n";
-            }
-        }
-    }
-
 
 //     for (int i = 0; i < NUM_ACT_SET; ++i) {
 //         std::cout << "residual p: " << residual[i][0] << " " << residual[i][1] << " " <<residual[i][2] << std::endl;
@@ -1167,37 +857,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 //
 //     std::cout << " --------------------------------- " << std::endl;
 
-
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-        if (std::strcmp(debug, "1") == 0) {
-            double max_m = 0.0;
-            double max_n = 0.0;
-            for (int j = 0; j < NUM_ACT_SET; ++j) {
-                for (int i = 0; i < 3; ++i) {
-                    max_m = std::max(max_m, std::abs(m_L[j][i]));
-                    max_n = std::max(max_n, std::abs(n_L[j][i]));
-                }
-            }
-            double max_res_p = 0.0;
-            double max_res_r = 0.0;
-            for (int j = 0; j < NUM_ACT_SET; ++j) {
-                for (int i = 0; i < 3; ++i) {
-                    max_res_p = std::max(max_res_p, std::abs(residual[j][i]));
-                    max_res_r = std::max(max_res_r, std::abs(residual[j][i + 3]));
-                }
-            }
-            std::cout << "[CRM_DEBUG_BVP_SCALE] max|m_L|=" << max_m
-                      << " max|n_L|=" << max_n
-                      << " max|res_p|=" << max_res_p
-                      << " max|res_r|=" << max_res_r
-                      << "\n";
-            if (max_res_p == 0.0 && max_res_r == 0.0) {
-                std::cout << "[CRM_DEBUG_BVP_SCALE] residual[0]=("
-                          << residual[0][0] << "," << residual[0][1] << "," << residual[0][2] << ","
-                          << residual[0][3] << "," << residual[0][4] << "," << residual[0][5] << ")\n";
-            }
-        }
-    }
 
 residual_output:
     for (int i = 0; i < NUM_ACT_SET; ++i) {
@@ -1209,11 +868,6 @@ residual_output:
         }
     }
 
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-        if (std::strcmp(debug, "1") == 0 && !residual_touched) {
-            std::cout << "[CRM_DEBUG_BVP_SCALE] residual_touched=false (no residual updates in DYNNLEquation)\n";
-        }
-    }
 //
 //    std::cout << "out_y: " << out_y[0] << " " << out_y[1] << " " << out_y[2] <<  std::endl;
 //    std::cout << "out_y: " << out_y[3] << " " << out_y[4] << " " << out_y[5] <<  std::endl;
@@ -1281,24 +935,6 @@ void CRMFlexible_IVP_Back ( int SegmentIndex, const double in_p[3], const double
     mCopy_AB<3>(in_p, xi_statevec._p);
     mCopy_AB<3>(in_u, xi_statevec._u);
 
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-        if (std::strcmp(debug, "1") == 0) {
-            auto maxabs = [](const double* data, int count) {
-                double maxv = 0.0;
-                for (int i = 0; i < count; ++i) {
-                    maxv = std::max(maxv, std::abs(data[i]));
-                }
-                return maxv;
-            };
-            const double R_max = maxabs(in_R, 9);
-            const double u_max = maxabs(in_u, 3);
-            if (!std::isfinite(R_max) || !std::isfinite(u_max) || R_max > 1e6 || u_max > 1e6) {
-                std::cout << "[CRM_DEBUG_BVP_SCALE] CRMFlexible_IVP_Back input large/non-finite segment="
-                          << SegmentIndex << " |R|=" << R_max << " |u|=" << u_max << "\n";
-            }
-        }
-    }
-
 
     double DeltaPE = 0.0;
     auto& CalculateEnergy = in_params.CalculateEnergy;
@@ -1336,21 +972,6 @@ void CRMFlexible_IVP_Back ( int SegmentIndex, const double in_p[3], const double
     }
     for (int j = 0; j < 9; ++j) {
         out_R[j] = xf_statevec._R[j];
-    }
-
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
-        if (std::strcmp(debug, "1") == 0) {
-            auto nonfinite = [](const double* data, int count) {
-                for (int i = 0; i < count; ++i) {
-                    if (!std::isfinite(data[i])) return true;
-                }
-                return false;
-            };
-            if (nonfinite(out_p, 3) || nonfinite(out_R, 9) || nonfinite(out_u, 3)) {
-                std::cout << "[CRM_DEBUG_BVP_SCALE] CRMFlexible_IVP_Back non-finite output at segment "
-                          << SegmentIndex << "\n";
-            }
-        }
     }
 
 
@@ -1717,26 +1338,6 @@ void DynamicsBVP(	CRMShootingMethodParams& in_Params, const double xf[NUM_STATES
 #endif
 
     localmin = (info == 1) ? 0 : (info - 1);
-    if (const char* debug = std::getenv("CRM_DEBUG_BVP")) {
-        const bool log_all = (std::strcmp(debug, "all") == 0);
-        if (log_all || info != 1) {
-            double max_abs = 0.0;
-            double l2 = 0.0;
-            for (int i = 0; i < NLEq_Dim; ++i) {
-                const double v = residual[i];
-                const double absv = std::abs(v);
-                if (absv > max_abs) max_abs = absv;
-                l2 += v * v;
-            }
-            l2 = std::sqrt(l2);
-            std::cout << "[CRM_DEBUG_BVP] info=" << info
-                      << " localmin=" << localmin
-                      << " residual_l2=" << l2
-                      << " residual_max=" << max_abs
-                      << " integrator=" << (in_Params.dynamics.integrator_type == IntegratorType::RK4 ? "rk4" : "abm4")
-                      << "\n";
-        }
-    }
     for (int i = 0; i < NLEq_Dim; i++) returnedparamscaled[i] = x[i];
     delete[] residual;
     delete[] x;

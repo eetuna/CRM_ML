@@ -76,16 +76,19 @@ To permanently resolve this without relying on the bindings sync, the following 
     *   `std::vector<Eigen::Vector3d>` for moments/positions.
     *   `std::vector<Eigen::Matrix<double, 6, 1>>` for damping.
 *   **Benefit:** Eliminates memory aliasing/corruption (the "Ghost Value" bug) and simplifies initialization.
+*   **Status (2025-01-14):** Implemented in `task/1.7-core-refactor`. Validation tests passed; see `docs/architecture/TASK_1_7_STATUS.md` for verification context.
 
 ### Phase 2: Solver Templatization
 *   **Target:** `CoilDynamics`, `CRMIntegrand`, and the `BVP/IVP` solvers.
 *   **Action:** Fully templatize these functions on `<typename Scalar>` to support `autodiff::real` natively.
 *   **Benefit:** Removes the need for "Shadow Structs" and ensures the same verified math flows through both simulation and gradient calculation.
+*   **Status (2025-01-14):** Deferred (Phase 2.1 scaffolding exists; full templating not completed).
 
 ### Phase 3: Integrator Stabilization
 *   **Target:** `CoilDynamics_Defs.cpp`.
 *   **Action:** Replace the brittle, history-dependent **ABM4** integrator with a memoryless **Runge-Kutta 4th Order (RK4)** scheme.
 *   **Benefit:** Prevents numerical explosions ("Coil integration Unbounded") during AutoDiff parameter perturbations.
+*   **Status (2025-01-14):** RK4 option implemented and wired; stability issues traced to damping defaults. Full `pytest -q` passes; see `docs/architecture/TASK_1_7_STATUS.md` for details.
 
 ## 5. Recommended Tasks (Next Steps)
 

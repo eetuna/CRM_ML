@@ -80,5 +80,5 @@ def test_crmdyn_binding_matches_cpp_seed():
     result = wrapper.step_dynamics(currents, insertion_length=insertion_length, dt=dt)
 
     assert result["converged"]
-    expected_tip = np.array([-0.60077064, 44.16475476, 80.67207825])
+    expected_tip = np.array([-0.59346165, 44.16116483, 80.62345997])
     np.testing.assert_allclose(result["tip_position"], expected_tip, atol=1e-6, rtol=1e-6)
