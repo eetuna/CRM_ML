@@ -64,11 +64,12 @@ struct DynamicsContext {
     std::vector<ActuatorDynamicsParams> actuators;  ///< Dynamics params for each actuator [no_act_set]
     double DELTA_T;                                  ///< Time step for integration
     IntegratorType integrator_type;                  ///< Which integrator to use (ABM4 or RK4)
+    bool last_diverged;                              ///< Set true when coil integration diverges during a step
 
     /**
      * @brief Default constructor - initializes empty context with ABM4 (legacy default).
      */
-    DynamicsContext() : DELTA_T(0.0), integrator_type(IntegratorType::ABM4) {}
+    DynamicsContext() : DELTA_T(0.0), integrator_type(IntegratorType::ABM4), last_diverged(false) {}
 
     /**
      * @brief Resize the actuator vector to accommodate no_act_set actuators.

@@ -1133,6 +1133,7 @@ public:
 
         // Task A1.7 Phase 3: Set integrator type
         BVPParams.dynamics.integrator_type = integrator_type;
+        BVPParams.dynamics.last_diverged = false;
 
         // Solve BVP
         double out_u0[3];
@@ -1154,7 +1155,8 @@ public:
                      true, xf_new, x_coil, ReportedMarkerPos);
 
         // Update state only if converged to avoid corrupting internal state with garbage
-        if (localmin == 0) {
+        const bool diverged = BVPParams.dynamics.last_diverged;
+        if (localmin == 0 && !diverged) {
             for (int j = 0; j < NUM_ACT_SET; j++) {
                 for (int i = 0; i < 3; i++) {
                     v_L[j][i] = x_coil[j][i];
@@ -1190,8 +1192,9 @@ public:
         py::dict result;
         result["tip_position"] = tip_pos;
         result["tip_velocity"] = tip_vel;
-        result["converged"] = (localmin == 0);
+        result["converged"] = (localmin == 0) && !diverged;
         result["localmin"] = localmin;
+        result["diverged"] = diverged;
 
         return result;
     }
@@ -1330,6 +1333,7 @@ public:
 
         // Task A1.7 Phase 3: Set integrator type
         BVPParams.dynamics.integrator_type = integrator_type;
+        BVPParams.dynamics.last_diverged = false;
 
         // Solve BVP
         double out_u0[3];
@@ -1357,7 +1361,9 @@ public:
         py::array_t<double> tip_vel({3});
         auto vel = tip_vel.mutable_unchecked<1>();
 
-        if (localmin == 0) {
+        const bool diverged = BVPParams.dynamics.last_diverged;
+        const bool converged = (localmin == 0) && !diverged;
+        if (converged) {
             pos(0) = xf_new[0];
             pos(1) = xf_new[1];
             pos(2) = xf_new[2];
@@ -1390,11 +1396,11 @@ public:
         auto mLout = mL_next.mutable_unchecked<2>();
         auto nLout = nL_next.mutable_unchecked<2>();
 
-        for (int i = 0; i < NUM_STATES; i++) xfout(i) = (localmin == 0) ? xf_new[i] : xf_local[i];
+        for (int i = 0; i < NUM_STATES; i++) xfout(i) = converged ? xf_new[i] : xf_local[i];
 
         for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
             for (int i = 0; i < 3; i++) {
-                if (localmin == 0) {
+                if (converged) {
                     vout(j, i) = x_coil[j][i];
                     wout(j, i) = x_coil[j][i + 3];
                     pout(j, i) = x_coil[j][i + 6];
@@ -1409,7 +1415,7 @@ public:
                 }
             }
             for (int i = 0; i < 9; i++) {
-                if (localmin == 0) {
+                if (converged) {
                     Rout(j, i) = x_coil[j][i + 9];
                 } else {
                     Rout(j, i) = R_L_local[j][i];
@@ -1420,8 +1426,9 @@ public:
         py::dict result;
         result["tip_position"] = tip_pos;
         result["tip_velocity"] = tip_vel;
-        result["converged"] = (localmin == 0);
+        result["converged"] = converged;
         result["localmin"] = localmin;
+        result["diverged"] = diverged;
         result["next_v"] = v_next;
         result["next_w"] = w_next;
         result["next_p"] = p_next;

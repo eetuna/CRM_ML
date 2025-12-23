@@ -570,6 +570,7 @@ void DYNSE3_TimeSpace(double in_R_n[9], double in_p_n[3], double h, double in_tw
 
 void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double out_u0[3], double out_tau[NUM_ACT_SET*3]) {
 
+    Params.dynamics.last_diverged = false;
     // output for time advance, not used in BVP, just placeholders
     double m_L[NUM_ACT_SET][3], n_L[NUM_ACT_SET][3], n_0[3];
     // don't forget to scale parameters before passing to the CRMSolverIVP
@@ -657,10 +658,19 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
         }
     }
 
-
     auto &  NUM_SEGMENTS= Params.no_segments;
 
     bool residual_touched = false;
+    bool force_penalty = false;
+
+    auto set_penalty_residual = [&]() {
+        for (int j = 0; j < NUM_ACT_SET; ++j) {
+            for (int i = 0; i < 6; ++i) {
+                residual[j][i] = 1e6;
+            }
+        }
+        residual_touched = true;
+    };
     for (int segi = NUM_SEGMENTS-1; segi >=0; --segi) { // starting from the last segment
         if ( segi%2 == 0 ) {
             fsegi = segi>>1;
@@ -773,7 +783,11 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
             CoilDynamicsDispatchLegacy(Params.dynamics.integrator_type, x_coil[actno], net_nL, Params.g, actMass[actno], actInertia[actno],
                                        Params.damping[actno], Params.DELTA_T, Params.B0,
                                        muhat[actno], net_mL, out_x_coil[actno], out_xdot, &diverged);
-            (void)diverged;
+            if (diverged) {
+                Params.dynamics.last_diverged = true;
+                force_penalty = true;
+                break;
+            }
 
 //            for (int i = 0; i < NUM_COIL_STATES; ++i) {
 //                std::cout << "out_xdot" << out_xdot[i] << std::endl;
@@ -821,33 +835,27 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
         return false;
     };
 
-    if (any_nonfinite(p_f, 3) || any_nonfinite(R_f, 9) || any_nonfinite(p_d, 3) || any_nonfinite(R_d, 9)) {
-        for (int j = 0; j < NUM_ACT_SET; ++j) {
-            for (int i = 0; i < 6; ++i) {
-                residual[j][i] = 1e6;
-            }
+    if (force_penalty || any_nonfinite(p_f, 3) || any_nonfinite(R_f, 9) || any_nonfinite(p_d, 3) || any_nonfinite(R_d, 9)) {
+        set_penalty_residual();
+    } else {
+        // last segment
+        actno = 0;
+        for (int i = 0; i < 3; ++i) {
+            residual[actno][i] = (p_f[i] - p_d[i]);
         }
+        // calculate vector norm of the rotation matrices
+        for (int i = 0; i < 3; ++i) {
+            v1[i] = R_f[i*3] - R_d[i*3];
+            v2[i] = R_f[1+ i*3] - R_d[1+ i*3];
+            v3[i] = R_f[2 + i*3]  - R_d[2 + i*3];
+        }
+
+        v_val[0] = vNormSq<3>(v1);
+        v_val[1] = vNormSq<3>(v2);
+        v_val[2] = vNormSq<3>(v3);
+        for (int i = 0; i < 3; ++i) residual[actno][i+3] = sqrt(v_val[i]);
         residual_touched = true;
-        goto residual_output;
     }
-
-    // last segment
-    actno = 0;
-    for (int i = 0; i < 3; ++i) {
-        residual[actno][i] = (p_f[i] - p_d[i]);
-    }
-    // calculate vector norm of the rotation matrices
-    for (int i = 0; i < 3; ++i) {
-        v1[i] = R_f[i*3] - R_d[i*3];
-        v2[i] = R_f[1+ i*3] - R_d[1+ i*3];
-        v3[i] = R_f[2 + i*3]  - R_d[2 + i*3];
-    }
-
-    v_val[0] = vNormSq<3>(v1);
-    v_val[1] = vNormSq<3>(v2);
-    v_val[2] = vNormSq<3>(v3);
-    for (int i = 0; i < 3; ++i) residual[actno][i+3] = sqrt(v_val[i]);
-    residual_touched = true;
 
 
 //     for (int i = 0; i < NUM_ACT_SET; ++i) {
@@ -858,7 +866,6 @@ void DYNNLEquation(double in_x[], double out_y[], DYNNLEqnParams& Params, double
 //     std::cout << " --------------------------------- " << std::endl;
 
 
-residual_output:
     for (int i = 0; i < NUM_ACT_SET; ++i) {
         for (int j = 0; j < 3; ++j) {
             out_y[j + i*6] = RESIDUAL_SCALE_P * residual[i][j];
@@ -1082,6 +1089,7 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
                      double out_coil_state[NUM_ACT_SET][NUM_COIL_STATES],  double out_u_new[3], double out_p_new[3], double out_R_new[9],
                      double out_p_atLocMarkers[][3]) {
 
+    CoreParams.dynamics.last_diverged = false;
     double x_coil[NUM_ACT_SET][NUM_COIL_STATES];
     double MagMoment[NUM_ACT_SET][3], muhat[NUM_ACT_SET][9], actMass[NUM_ACT_SET], actInertia[NUM_ACT_SET][9];
 
@@ -1183,7 +1191,9 @@ void CRMIVP_DYN(	 CRMIVPCoreParams& CoreParams, const double in_u0[3], const dou
             CoilDynamicsDispatchLegacy(CoreParams.dynamics.integrator_type, x_coil[actno], net_nL, CoreParams.g, actMass[actno], actInertia[actno],
                                        CoreParams.damping[actno], CoreParams.DELTA_T, CoreParams.B0, muhat[actno], net_mL,
                                        update_coil_state, out_xdot, &diverged);
-            (void)diverged;
+            if (diverged) {
+                CoreParams.dynamics.last_diverged = true;
+            }
 
             for (int i = 0; i < 3; ++i) {
                 w[i] = update_coil_state[i+3];
@@ -1244,6 +1254,7 @@ void DynamicsBVP(	CRMShootingMethodParams& in_Params, const double xf[NUM_STATES
                      double in_mL_initialguess[NUM_ACT_SET][3], double in_nL_initialguess[NUM_ACT_SET][3], double in_ftip_initialguess[3],
                      double out_u0[3], double out_mL[NUM_ACT_SET][3], double out_nL[NUM_ACT_SET][3], double out_tau[NUM_ACT_SET][3], double out_ftip[3], int& out_localmin) {
 
+    in_Params.dynamics.last_diverged = false;
     ContactModeType ContactMode = in_Params.ContactMode;
     int NLEq_Dim;  // Dimension of the Nonlinear Equation to Solve
     NLEq_Dim = NUM_DYN_RESIDUAL;
@@ -1337,6 +1348,8 @@ void DynamicsBVP(	CRMShootingMethodParams& in_Params, const double xf[NUM_STATES
     exit(1);
 #endif
 
+    in_Params.dynamics.last_diverged = DYNNLEParams.dynamics.last_diverged;
+
     localmin = (info == 1) ? 0 : (info - 1);
     for (int i = 0; i < NLEq_Dim; i++) returnedparamscaled[i] = x[i];
     delete[] residual;
@@ -1418,6 +1431,7 @@ void DYNSolverIVP(	CRMShootingMethodParams& in_Params, const double in_u0[3],
     CoreParams.dynamics.integrator_type = in_Params.dynamics.integrator_type;
     double u_new[3], p_new[3], R_new[9];
     CRMIVP_DYN(	 CoreParams, u_0, in_Params.p0, in_Params.R0, m_L, n_L, tau, ftip, out_coil_state, u_new, p_new, R_new, out_p_atLocMarkers);
+    in_Params.dynamics.last_diverged = in_Params.dynamics.last_diverged || CoreParams.dynamics.last_diverged;
 
 //    for (int i = 0; i < NUM_ACT_SET; ++i) {
 //        std::cout << "w: " << out_coil_state[i][3] << " " << out_coil_state[i][4] << " " <<out_coil_state[i][5] << std::endl;

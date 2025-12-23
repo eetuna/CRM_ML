@@ -1,0 +1,27 @@
+{
+  "case": "default",
+  "trial": 0,
+  "timestamp": "2025-12-23 16:31:22",
+  "results": [
+    {
+      "integrator": "abm4",
+      "converged": true,
+      "info": null,
+      "localmin": 0,
+      "residual_norm": null,
+      "diverged": false,
+      "elapsed_time": 0.222991943359375,
+      "status": "SUCCESS"
+    },
+    {
+      "integrator": "rk4",
+      "converged": true,
+      "info": null,
+      "localmin": 0,
+      "residual_norm": null,
+      "diverged": false,
+      "elapsed_time": 0.16348576545715332,
+      "status": "SUCCESS"
+    }
+  ]
+}

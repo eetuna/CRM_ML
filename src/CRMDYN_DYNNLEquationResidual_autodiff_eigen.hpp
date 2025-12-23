@@ -767,14 +767,22 @@ inline void CRMFlexible_IVP_BackAD(const int SegmentIndex,
     out_R = R_n;
 }
 
+// New overload: Accept DynamicsContextAD for consistent parameter handling (Task A1.7 Phase 2)
 template <typename Scalar>
 inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(const autodiff::VectorXreal& x_scaled,
-                                                                              const DYNNLEqnParams* ParamsPtr)
+                                                                              const DynamicsContextAD<Scalar>& ctx)
 {
     static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
 
-    const DYNNLEqnParams& Params = *ParamsPtr;
+    // Guard against null geometry pointer (indicates incomplete context initialization)
+    if (!ctx.geometry) {
+        throw std::runtime_error(
+            "DYNNLEquationResidualEigenAD: geometry pointer is null; "
+            "context must be initialized via DynamicsContextAD::from_params()");
+    }
+
+    const DYNNLEqnParams& Params = *ctx.geometry;
     // Unpack NLE variables (scaled) -> physical m_L, n_L.
     Vec3<Scalar> m_L;
     Vec3<Scalar> n_L;
@@ -832,19 +840,11 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
     }
     for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
 
-    const Scalar actMass = Scalar(Params.ActMass[0]);
-    Eigen::Matrix3d actInertia;
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) actInertia(r, c) = Params.actInertia[0][r * 3 + c];
-    Eigen::Matrix<Scalar, 6, 1> damping;
-    for (int i = 0; i < 6; ++i) damping(i) = Scalar(Params.damping[0][i]);
-
-    // Magnetic moment hat.
-    Vec3<Scalar> mu;
-    for (int i = 0; i < 3; ++i) mu(i) = Scalar(Params.MagMoment[0](i));
-    Mat3<Scalar> muhat;
-    muhat << Scalar(0), -mu(2), mu(1),
-        mu(2), Scalar(0), -mu(0),
-        -mu(1), mu(0), Scalar(0);
+    // Extract learnable parameters from context
+    const Scalar& actMass = ctx.learnable.actMass;
+    const Eigen::Matrix3d& actInertia = ctx.actInertia;
+    const Eigen::Matrix<Scalar, 6, 1>& damping = ctx.learnable.damping;
+    const Mat3<Scalar> muhat = ctx.learnable.getMuHat();
 
     // Iterate segments distal->proximal (same direction as original: segi = NUM_SEGMENTS-1..0).
     Vec3<Scalar> net_mL = Vec3<Scalar>::Zero();
@@ -860,13 +860,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
         if (segi % 2 == 0) {
             // flexible segment
             const int fsegi = segi >> 1;
-            const Vec3<Scalar> ustar = Params.ustar[fsegi].template cast<Scalar>();
-            const Mat3<Scalar> Kinv = Params.Kinv[fsegi].template cast<Scalar>();
+            const Vec3<Scalar>& ustar = ctx.learnable.ustar;
+            const Mat3<Scalar> Kinv = ctx.learnable.getKinv();
 
             if (segi == NUM_SEGMENTS - 1) {
                 // last segment: tau_0 = 0, n_0 is tip force.
                 u_t = ustar + Kinv * tau_0;
-                CRMFlexible_IVP_Back(segi, p_t, R_t, Params, u_t, n_0, u_tau, p_, R_);
+                CRMFlexible_IVP_BackAD(segi, p_t, R_t, ctx, u_t, n_0, u_tau, p_, R_);
             } else {
                 // non-free tip flexible segments with coil on top (see CoilDynamics_Defs.cpp).
                 // u_L = ustar + Kinv * m_L (moment at lower side of upper coil)
@@ -877,12 +877,12 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
                 if (!have_out_coil) {
                     // If coil output is missing, keep behavior deterministic (this indicates a segment ordering mismatch).
                     // We propagate using the current carried pose.
-                    CRMFlexible_IVP_Back(segi, p_f, R_f, Params, u_L, n_L, u_tau, p_, R_);
+                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, ctx, u_L, n_L, u_tau, p_, R_);
                 } else {
                     // Starting pose for this flex segment is half a rigid segment "above" coil center.
                     const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
                     const Mat3<Scalar> R_L = R_coil_out;
-                    CRMFlexible_IVP_Back(segi, p_L, R_L, Params, u_L, n_L, u_f, p_f, R_f);
+                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L, u_f, p_f, R_f);
                     u_tau = u_f;
                     p_ = p_f;
                     R_ = R_f;
@@ -890,7 +890,7 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
             }
 
             // tau = K * (u_tau - ustar)
-            const Mat3<Scalar> K = Params.K[fsegi].template cast<Scalar>();
+            const Mat3<Scalar> K = ctx.learnable.getK();
             tau = K * (u_tau - ustar);
 
             // next coil is below this flex segment (actno = fsegi-1).
@@ -915,12 +915,10 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
             // net_nL = n_L - n_0 for NUM_ACT_SET==1 (see DYNNLEquation).
             net_nL = n_L - n_0;
 
-            CoilDynamicsDispatch(Params.dynamics.integrator_type,
+            CoilDynamicsDispatch(ctx.integrator_type,
                                  vw_coil0, p_coil0, R_coil0, net_nL,
-                                 Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
-                                 actMass, actInertia, damping, Params.DELTA_T,
-                                 Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
-                                 muhat, net_mL,
+                                 ctx.g, actMass, actInertia, damping,
+                                 ctx.DELTA_T, ctx.B0, muhat, net_mL,
                                  vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
@@ -1092,16 +1090,24 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
 // MagMoment = CoilAlignmentTurnAreaMatrix * currents
 // ============================================================================
 
+// New overload: Accept DynamicsContextAD for consistent parameter handling (Task A1.7 Phase 2)
 template <typename Scalar>
 inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithControlsAD(
     const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& x_scaled,
     const Eigen::Matrix<Scalar, 3, 1>& currents,
-    const DYNNLEqnParams* ParamsPtr)
+    const DynamicsContextAD<Scalar>& ctx)
 {
     static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
 
-    const DYNNLEqnParams& Params = *ParamsPtr;
+    // Guard against null geometry pointer (indicates incomplete context initialization)
+    if (!ctx.geometry) {
+        throw std::runtime_error(
+            "DYNNLEquationResidualWithControlsAD: geometry pointer is null; "
+            "context must be initialized via DynamicsContextAD::from_params()");
+    }
+
+    const DYNNLEqnParams& Params = *ctx.geometry;
 
     // Compute MagMoment from currents using CoilAlignmentTurnAreaMatrix
     const Eigen::Matrix3d& CATAM = Params.CoilAlignmentTurnAreaMatrix[0];
@@ -1158,11 +1164,10 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
     }
     for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
 
-    const Scalar actMass = Scalar(Params.ActMass[0]);
-    Eigen::Matrix3d actInertia;
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) actInertia(r, c) = Params.actInertia[0][r * 3 + c];
-    Eigen::Matrix<Scalar, 6, 1> damping;
-    for (int i = 0; i < 6; ++i) damping(i) = Scalar(Params.damping[0][i]);
+    // Extract learnable parameters from context
+    const Scalar& actMass = ctx.learnable.actMass;
+    const Eigen::Matrix3d& actInertia = ctx.actInertia;
+    const Eigen::Matrix<Scalar, 6, 1>& damping = ctx.learnable.damping;
 
     Vec3<Scalar> net_mL = Vec3<Scalar>::Zero();
     Vec3<Scalar> net_nL = Vec3<Scalar>::Zero();
@@ -1175,24 +1180,24 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
     for (int segi = NUM_SEGMENTS - 1; segi >= 0; --segi) {
         if (segi % 2 == 0) {
             const int fsegi = segi >> 1;
-            const Vec3<Scalar> ustar = Params.ustar[fsegi].template cast<Scalar>();
-            const Mat3<Scalar> Kinv = Params.Kinv[fsegi].template cast<Scalar>();
-            const Mat3<Scalar> K = Params.K[fsegi].template cast<Scalar>();
+            const Vec3<Scalar>& ustar = ctx.learnable.ustar;
+            const Mat3<Scalar> Kinv = ctx.learnable.getKinv();
+            const Mat3<Scalar> K = ctx.learnable.getK();
 
             if (segi == NUM_SEGMENTS - 1) {
                 u_t = ustar + Kinv * tau_0;
-                CRMFlexible_IVP_Back(segi, p_t, R_t, Params, u_t, n_0, u_tau, p_, R_);
+                CRMFlexible_IVP_BackAD(segi, p_t, R_t, ctx, u_t, n_0, u_tau, p_, R_);
             } else {
                 const Vec3<Scalar> u_L = ustar + Kinv * m_L;
                 const int actseg = segi + 1;
                 const double RigidSegmentLength = Params.SegBounds[actseg + 1] - Params.SegBounds[actseg];
 
                 if (!have_out_coil) {
-                    CRMFlexible_IVP_Back(segi, p_f, R_f, Params, u_L, n_L, u_tau, p_, R_);
+                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, ctx, u_L, n_L, u_tau, p_, R_);
                 } else {
                     const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
                     const Mat3<Scalar> R_L = R_coil_out;
-                    CRMFlexible_IVP_Back(segi, p_L, R_L, Params, u_L, n_L, u_f, p_f, R_f);
+                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L, u_f, p_f, R_f);
                     u_tau = u_f;
                     p_ = p_f;
                     R_ = R_f;
@@ -1215,12 +1220,10 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
 
             net_nL = n_L - n_0;
 
-            CoilDynamicsDispatch(Params.dynamics.integrator_type,
+            CoilDynamicsDispatch(ctx.integrator_type,
                                  vw_coil0, p_coil0, R_coil0, net_nL,
-                                 Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
-                                 actMass, actInertia, damping, Params.DELTA_T,
-                                 Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
-                                 muhat, net_mL,
+                                 ctx.g, actMass, actInertia, damping,
+                                 ctx.DELTA_T, ctx.B0, muhat, net_mL,
                                  vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
@@ -1285,12 +1288,22 @@ inline Eigen::MatrixXd DYNNLEquationJacobianEigenAD(const Eigen::VectorXd& x_sca
     using autodiff::wrt;
     using autodiff::at;
 
+    // Create base context from params (double precision)
+    dynnl_ad_eigen::DynamicsContextAD<double> ctx_base = dynnl_ad_eigen::DynamicsContextAD<double>::from_params(Params, 0);
+
     VectorXreal x(x_scaled.size());
     for (int i = 0; i < x_scaled.size(); ++i) x(i) = x_scaled(i);
 
     VectorXreal y;
     Eigen::MatrixXd J;
-    jacobian(dynnl_ad_eigen::DYNNLEquationResidualEigenAD<real>, wrt(x), at(x, &Params), y, J);
+
+    auto residual_fn = [&ctx_base](const VectorXreal& x_) -> VectorXreal {
+        // Create AD context from base
+        dynnl_ad_eigen::DynamicsContextAD<real> ctx_ad(ctx_base);
+        return dynnl_ad_eigen::DYNNLEquationResidualEigenAD<real>(x_, ctx_ad);
+    };
+
+    jacobian(residual_fn, wrt(x), at(x), y, J);
     if (out_residual) {
         out_residual->resize(y.size());
         for (int i = 0; i < y.size(); ++i) (*out_residual)(i) = autodiff::val(y(i));
@@ -1402,6 +1415,9 @@ inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
     using autodiff::wrt;
     using autodiff::at;
 
+    // Create base context from params (double precision)
+    dynnl_ad_eigen::DynamicsContextAD<double> ctx_base = dynnl_ad_eigen::DynamicsContextAD<double>::from_params(Params, 0);
+
     // Convert inputs to autodiff types
     VectorXreal x_ad(x_scaled.size());
     for (int i = 0; i < x_scaled.size(); ++i) x_ad(i) = x_scaled(i);
@@ -1412,8 +1428,10 @@ inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
     VectorXreal y_ad;
     Eigen::MatrixXd J_u;
 
-    auto residual_fn = [&x_ad, &Params](const autodiff::Vector3real& u_) -> VectorXreal {
-        return dynnl_ad_eigen::DYNNLEquationResidualWithControlsAD<real>(x_ad, u_, &Params);
+    auto residual_fn = [&x_ad, &ctx_base](const autodiff::Vector3real& u_) -> VectorXreal {
+        // Create AD context from base
+        dynnl_ad_eigen::DynamicsContextAD<real> ctx_ad(ctx_base);
+        return dynnl_ad_eigen::DYNNLEquationResidualWithControlsAD<real>(x_ad, u_, ctx_ad);
     };
 
     jacobian(residual_fn, wrt(u_ad), at(u_ad), y_ad, J_u);
