@@ -1,7 +1,7 @@
 # Development Tasks & Status Report
 
-**Date:** December 22, 2025
-**Status:** Task A1 (Parameter Gradients) Implemented and Validated
+**Date:** December 23, 2025
+**Status:** Task A1.7 (Core C++ Refactor + Integrator Stabilization) Complete
 **Parent Strategy:** [End-to-End Differentiable Simulator Plan (Options A/B/C)](PLAN_end_to_end_differentiable_simulator_options_A_B_C.md)
 
 > **Context:** This document outlines the specific engineering tasks required to execute **Option A (C++ AD + Implicit Diff)** from the parent strategy. It translates the high-level goals of Option A into concrete, checkable coding tasks.
@@ -13,7 +13,7 @@
 *   **Integrity:** Documentation is consistent with the code.
 
 ## 2. Differentiable Simulator Plan (Option A) Status
-We are currently at **Phase 1 (Proof of Concept)** - Task A1 Complete.
+We are currently at **Phase 3 (Integrator Stabilization)** - Task A1 and Task A1.7 Complete. Completion evidence lives in `docs/architecture/TASK_A1_COMPLETION_REPORT.md`.
 *   **Done:**
     *   **Task 1.1:** Evaluate Differentiable Frameworks (Chosen: `autodiff` + Eigen).
     *   **Task 1.2:** Prototype Core Physics Component (Implemented dynamics residual Jacobian $\partial F/\partial x$).
@@ -24,29 +24,32 @@ We are currently at **Phase 1 (Proof of Concept)** - Task A1 Complete.
     *   **FIXED:** Parameter Reporting Bug ("Ghost Value" issue). See Section 3 for details.
 *   **Missing (Next Steps):**
     *   ~~Gradient w.r.t parameters ($\partial F/\partial \theta$).~~ ✅ Done
-    *   **Task 1.3:** Verify Gradient Accuracy (Finite-Difference validation complete; tests now run by default).
+    *   ~~Task 1.3: Verify Gradient Accuracy (Finite-Difference validation complete; tests now run by default).~~ ✅ Done
     *   ~~Task 1.4: Benchmark Performance (Profile AutoDiff vs. FD vs. Analytic).~~ ✅ Done (see `scripts/benchmark_task1_4.py`, results in `data/output/benchmark_task1_4.json`; benchmark now skips unconverged runs and records failure counts)
     *   ~~Task 1.5: Implement gradient w.r.t control inputs ($\partial F/\partial u$).~~ ✅ Done
-    *   **Task A1.6:** Dynamics Stabilization (Mitigated; convergence stable with validated damping values).
+    *   ~~Task A1.6: Dynamics Stabilization (RK4 + adaptive stepping + soft-failure divergence handling).~~ ✅ Done
+    *   ~~Task A1.7: Core C++ refactor complete (modern containers + templated AD path).~~ ✅ Done
     *   **Task A2:** Multi-actuator support (`NUM_ACT_SET > 1`).
-    *   **Known Issue (RESOLVED):** `packLearnableParams` returned unexpected theta values due to memory aliasing in the legacy core. This is now handled via a manual synchronization layer. See Section 3.
+    *   **Known Issue (RESOLVED):** `packLearnableParams` returned unexpected theta values due to memory aliasing in the legacy core. Eliminated by the Phase 1 refactor.
 
 ## 3. Technical Notes & Known Issues
 
 ### ⚠️ Dynamics Instability ("Coil integration Unbounded")
 The solver frequently crashes with "Coil integration Unbounded!!" during training or validaton.
 *   **Root Cause:** The `CoilDynamics` solver uses an **Explicit** ABM4 integrator with a fixed timestep (`t_step = 0.001`). This is unstable for stiff systems (high stiffness/damping, low mass).
-*   **Plan (Task A1.6):**
-    1.  **Adaptive Stepping:** Implement a simple adaptive scheme or reduce `t_step` dynamically when accelerations are high.
-    2.  **Force Clamping:** Clamp maximum forces/moments passed to the integrator to prevent non-physical explosions.
-    3.  **Soft Failure:** Update `crm_bindings.cpp` to catch `isnan` and return a large penalty instead of terminating the process.
+*   **Mitigation (Task A1.6):**
+    1.  **Adaptive Stepping:** RK4 adaptive subdivision on angular acceleration spikes (Phase 3.4).
+    2.  **Soft Failure:** Divergence propagation to callers (Python bindings return `diverged` instead of crashing).
+    3.  **Damping Defaults:** Validated damping defaults applied in bindings for stability.
+*   **Status (2025-12-23):** Mitigations implemented and validated; see `docs/architecture/INTEGRATOR_STABILITY.md`.
 
 ### 🐞 The "Legacy Prep Overlap" Bug
 During implementation of Task A1, a critical memory aliasing issue was identified in the legacy C++ core (`src/CoilDynamics_Defs.cpp` and `src/CRM_BVPIVP_APIDeclarations.hpp`):
 *   **Root Cause:** The classes `CRMShootingMethodParams` and `CRMIVPCoreParams` mix heap-allocated pointers (e.g., `double (*MagMoment)[3]`) with fixed-size arrays (e.g., `double damping[NUM_ACT_SET][6]`). 
 *   **The Error:** When the legacy `Prep` or `Construct` functions run, the calculated **Magnetic Moment** (e.g., `0.018448` for 10mA) is written to a memory location that overlaps with the `damping` array. This is likely due to a compiler padding mismatch or a `NUM_ACT_SET` synchronization error between headers.
 *   **Symptoms:** Python would report all learnable parameters as `0.018448`, regardless of their actual values.
-*   **The Fix:** A **Manual Synchronization** layer was added to `crm_bindings.cpp`. After the legacy C++ initialization runs, the bindings manually re-inject the correct physical values (damping, stiffness, etc.) into the AutoDiff parameter vector. This ensures gradients are calculated on the **true** values while keeping the legacy core untouched.
+*   **The Fix:** A **Manual Synchronization** layer was used temporarily in `crm_bindings.cpp` to re-inject correct physical values into the AutoDiff parameter vector while the legacy arrays remained in place. This layer has since been removed after migrating fully to `DynamicsContext` (2025-12-23).
+*   **Status (2025-12-23):** Resolved by the Phase 1 refactor; see `docs/archive/TASK_1_7_CHECKLIST.md`.
 
 #### 🛠️ Proper Fix Implementation Plan (Long-term)
 To permanently resolve this without relying on the bindings sync, the following core refactor is required:
@@ -76,19 +79,19 @@ To permanently resolve this without relying on the bindings sync, the following 
     *   `std::vector<Eigen::Vector3d>` for moments/positions.
     *   `std::vector<Eigen::Matrix<double, 6, 1>>` for damping.
 *   **Benefit:** Eliminates memory aliasing/corruption (the "Ghost Value" bug) and simplifies initialization.
-*   **Status (2025-12-22):** Implemented and re-validated on `docs/phase2-verification`. Tests passed (`pytest -q`, `pytest tests/test_parameter_jacobian_autodiff.py -v`); see `docs/architecture/TASK_1_7_CHECKLIST.md` for current verification context.
+*   **Status (2025-12-23):** Implemented and re-validated. Legacy dynamics arrays removed in favor of `DynamicsContext`; tests passed (`pytest -q`); see `docs/archive/TASK_1_7_CHECKLIST.md` for current verification context.
 
 ### Phase 2: Solver Templatization
 *   **Target:** `CoilDynamics`, `CRMIntegrand`, and the `BVP/IVP` solvers.
 *   **Action:** Fully templatize these functions on `<typename Scalar>` to support `autodiff::real` natively.
 *   **Benefit:** Removes the need for "Shadow Structs" and ensures the same verified math flows through both simulation and gradient calculation.
-*   **Status (2025-12-22):** Completed for the parameter-gradient AD path (context refactor + residual updates) and validated via `pytest -q` and `pytest tests/test_parameter_jacobian_autodiff.py -v`. Remaining residual/control wrapper signature cleanup is optional.
+*   **Status (2025-12-23):** Completed for the parameter-gradient AD path (context refactor + residual updates) and validated via `pytest -q` and `pytest tests/test_parameter_jacobian_autodiff.py -v`. Remaining residual/control wrapper signature cleanup is optional.
 
 ### Phase 3: Integrator Stabilization
 *   **Target:** `CoilDynamics_Defs.cpp`.
 *   **Action:** Replace the brittle, history-dependent **ABM4** integrator with a memoryless **Runge-Kutta 4th Order (RK4)** scheme.
 *   **Benefit:** Prevents numerical explosions ("Coil integration Unbounded") during AutoDiff parameter perturbations.
-*   **Status (2025-01-14):** RK4 option implemented and wired; stability issues traced to damping defaults. Full `pytest -q` passes; see `docs/architecture/TASK_1_7_STATUS.md` for details.
+*   **Status (2025-12-23):** RK4 option + adaptive stepping implemented and wired; stability issues traced to damping defaults. Full `pytest -q` passes (35 tests); see `docs/archive/TASK_1_7_STATUS.md` for details.
 
 ## 5. Recommended Tasks (Next Steps)
 

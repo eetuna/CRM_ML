@@ -161,7 +161,14 @@ Deliver an end-to-end differentiable step usable from torch via Python:
   - directional multi-solve checks.
 
 ### A1) Make implicit linearization “complete enough”
-Current situation: `linearize_full_seed_action_from_seed_implicit` uses AD for `Jxx` only and FD for the rest.
+**Status: PARTIAL**
+Done:
+- AD `Jxx` is wired and validated in implicit linearization (see `docs/archive/TASK_1_7_STATUS.md`).
+- AD `Jxu` for control inputs is implemented and used in implicit mode (see `docs/archive/TASK_1_5_CHECKLIST.md`).
+Left:
+- AD residual partials for seed blocks beyond currents.
+- Reduce/replace FD for output mapping partials (`g`) or quantify the FD error.
+- Confirm consistent scaling between solver variables and exposed Jacobians.
 
 Tasks:
 1. Implement AD for **residual partials wrt θ** (“theta” = currents + seed components that enter `F`):
@@ -180,6 +187,11 @@ Acceptance criteria:
   - e.g., `rel_frob(A_imp - A_fd) < 1e-2` and `rel_frob(B_imp - B_fd_full) < 1e-2` on stable regimes.
 
 ### A2) Expand the Eigen residual beyond `NUM_ACT_SET==1` (optional but important)
+**Status: NOT STARTED**
+Left:
+- Remove `static_assert(NUM_ACT_SET == 1)` and generalize residual/Jacobian blocks.
+- Add multi-actuator build + Jacobian tests.
+
 Tasks:
 - Generalize residual construction for `NUM_ACT_SET > 1`:
   - block-structure of residual is `(NUM_ACT_SET*6)` in the current DYNNLEquation convention (mL,nL per set).
@@ -189,6 +201,14 @@ Acceptance criteria:
 - Build succeeds for higher `NUM_ACT_SET` configurations and AD-vs-FD residual Jacobians pass.
 
 ### A3) PyTorch “end-to-end” wrapper (Python-level)
+**Status: PARTIAL**
+Done:
+- `CRMDynamicsStepFunction.backward` returns gradients for currents and seed blocks when `A` is available.
+- Wrapper integrates `linearize_full_seed_action_from_seed_implicit` when `CRM_DYN_LINEARIZATION_METHOD=implicit` (see `crm_ml_rl/wrappers/torch_physics.py`).
+Left:
+- Decide/implement insertion-length gradients (currently `None`).
+- Add `torch.autograd.gradcheck` or FD-based validation for the wrapper.
+
 Current wrapper exists: `crm_ml_rl/wrappers/torch_physics.py` (`CRMDynamicsStepFunction`).
 
 Tasks:
@@ -203,6 +223,15 @@ Acceptance criteria:
 - `torch.autograd.gradcheck` passes (or a custom FD check passes) on small batches and stable regimes.
 
 ### A4) Tests for Option A
+**Status: PARTIAL**
+Done:
+- Implicit linearization tests exist (`tests/test_dynamics_implicit_linearization.py`).
+- AD residual sanity test exists (`tests/test_dynnlequation_residual_eigen_autodiff.py`).
+Left:
+- Torch wrapper forward/gradient correctness tests.
+- Implicit-vs-full-FD acceptance checks with tolerances.
+- Cross-implementation `autodiff_eigen` vs `autodiff_template` tests.
+
 Add/extend tests under `tests/`:
 
 1) **Forward correctness**
@@ -229,6 +258,12 @@ Acceptance criteria:
   - convergence stats.
 
 ### A5) Paper-facing experiment recipes (minimal, not overly ambitious)
+**Status: PARTIAL**
+Done:
+- Scripted FD vs implicit linearization benchmarks exist (see `scripts/benchmark_task1_4.py` and `scripts/dynamics_fk_validation/`).
+Left:
+- iLQR/MPC demo that directly consumes implicit `A,B` and produces a short-horizon tracking report.
+
 Provide scripts that reproduce:
 - **AD vs FD Jacobian quality** (runtime + error):
   - plot/print distributions of `rel_frob(A)`, `rel_frob(B)` and directional prediction error.

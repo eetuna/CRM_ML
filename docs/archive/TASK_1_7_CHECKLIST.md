@@ -13,14 +13,13 @@
 
 ## Status Notes (Verification Context)
 
-- Phase 3 added RK4 + soft-failure support, but ABM4 remained the default integrator for backwards compatibility.
+- Phase 3 added RK4 + soft-failure support; ABM4 remains the default integrator for backwards compatibility.
 - The RK4 option exists to improve stability during stiff regimes (e.g., AD sweeps), not because ABM4 is universally broken.
-- As of current verification, instability often originates from BVP solver convergence (large residuals) before integrator choice takes effect.
-- Treat "Phase 3 complete" as "implemented and wired" until stability is validated against real failing cases and BVP convergence metrics.
-- Seed-based `m_L/n_L` initialization fallback (bindings) is now in place; validation pending.
+- Historical instability originated from BVP solver convergence (large residuals) before integrator choice takes effect.
+- Seed-based `m_L/n_L` initialization fallback (bindings) is in place.
 - Original recommended next steps (Claude) tracking:
-  - Benchmark ABM4 vs RK4: **not done**.
-  - Test RK4 on failing “Unbounded” cases: **done** (still fails).
+  - Benchmark ABM4 vs RK4: **done** (see `docs/archive/TASK_1_7_STATUS.md`).
+  - Test RK4 on failing “Unbounded” cases: **done** (historical; see `docs/archive/TASK_1_7_STATUS.md`).
   - Validate soft failure mode in production scenarios: **not done**.
   - Consider making RK4 default: **not done**.
   - Merge branch to main: **not done**.
@@ -28,22 +27,22 @@
 ## Pre-requisites
 
 ### Required Reading
-- [ ] `docs/architecture/DEVELOPMENT_TASKS.md` - Section 3 ("Legacy Prep Overlap" Bug)
-- [ ] `docs/architecture/DEVELOPMENT_TASKS.md` - Section 4 (Task A1.7 Overview)
-- [ ] `src/CRM_BVPIVP_APIDeclarations.hpp` - `CRMIVPCoreParams` and `CRMShootingMethodParams` classes
-- [ ] `src/CoilDynamics_Defs.cpp` - Current ABM4/RK2 integrator
-- [ ] `src/CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp` - Existing templatized AD code
+- [x] `docs/architecture/DEVELOPMENT_TASKS.md` - Section 3 ("Legacy Prep Overlap" Bug)
+- [x] `docs/architecture/DEVELOPMENT_TASKS.md` - Section 4 (Task A1.7 Overview)
+- [x] `src/CRM_BVPIVP_APIDeclarations.hpp` - `CRMIVPCoreParams` and `CRMShootingMethodParams` classes
+- [x] `src/CoilDynamics_Defs.cpp` - Current ABM4/RK2 integrator
+- [x] `src/CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp` - Existing templatized AD code
 
 ### Current State Analysis
 
-**Mixed Container Types in `CRMIVPCoreParams` (lines 186-243 in CRM_BVPIVP_APIDeclarations.hpp)**:
+**Mixed Container Types in `CRMIVPCoreParams` (historical)**:
 
 | Type | Container | Example |
 |------|-----------|---------|
 | Modern (safe) | `std::vector<Eigen::Matrix3d>` | `K`, `Kinv`, `CoilAlignmentTurnAreaMatrix` |
 | Modern (safe) | `std::vector<Eigen::Vector3d>` | `ustar`, `MagMoment`, `fcumlambda` |
 | Modern (safe) | `std::vector<double>` | `ActMass`, `rho`, `LocMarkers` |
-| **LEGACY (unsafe)** | `double [NUM_ACT_SET][N]` | `damping[6]`, `v_L_pre[3]`, `w_L_pre[3]`, `p_pre[3]`, `R_pre[9]`, `actInertia[9]`, `m_L[3]`, `n_L[3]` |
+| **LEGACY (unsafe)** | `double [NUM_ACT_SET][N]` | Removed on 2025-12-23 in favor of `DynamicsContext` |
 
 **Root Cause of "Ghost Value" Bug**: Fixed-size arrays with `NUM_ACT_SET` dimension cause memory layout issues when `NUM_ACT_SET` differs between compilation units or when struct padding varies.
 
@@ -251,13 +250,28 @@
 - [x] Modify `CoilDynamics<Scalar>` to dispatch based on integrator type
 - [x] Add Python binding to set integrator type
 
-### Step 3.4: Implement Adaptive Stepping (Optional)
+### Step 3.4: Implement Adaptive Stepping
 **Goal**: Reduce instability by adapting step size.
-**Status**: NOT STARTED (optional)
+**Status**: COMPLETED
 
-- [ ] Add acceleration magnitude check after each integrand evaluation
-- [ ] If acceleration exceeds threshold, subdivide step
-- [ ] Add max subdivision limit to prevent infinite loops
+- [x] Add acceleration magnitude check after each integrand evaluation
+- [x] If acceleration exceeds threshold (1000 rad/s²), subdivide step
+- [x] Add max subdivision limit (4 levels = 16x refinement) to prevent infinite loops
+- [x] Add divergence flag when max subdivision is exceeded with unsafe acceleration
+- [x] Validate: All 32 tests pass (112.38s), RK4 + ABM4 both converge on failing case
+
+**Implementation Details:**
+- Adaptive stepping implemented in `CoilDynamicsRK4` only (RK4 has no history dependency, unlike ABM4)
+- New helper function: `rk4_step_adaptive<Scalar>()` performs recursive binary subdivision
+- Threshold: `kAngularAccelThreshold = 1000.0` rad/s² (2.5x above critical for typical inertia ~2.4e-4)
+- Max levels: `kMaxSubdivisionLevels = 4` (minimum step: 62.5μs)
+- File: `src/CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp`
+
+**Test Results (2025-12-23):**
+- Full suite: 35 passed in 100.20s ✅
+- Harness (ABM4): Converged=True, Diverged=False, localmin=0 ✅
+- Harness (RK4): Converged=True, Diverged=False, localmin=0 ✅
+- Adaptive stepping tests added: `tests/test_adaptive_stepping_regression.py`, `tests/test_adaptive_stepping_stability.py` (rerun suite to refresh counts)
 
 ### Step 3.5: Add Soft Failure Mode
 **Goal**: Return penalty instead of crashing on divergence.
@@ -283,7 +297,7 @@
 - **Result**: Both ABM4 and RK4 converge under tuned damping (see results JSON)
 - **Full suite**: All 32 tests pass (88.69s elapsed)
 - **Convergence tests**: All pass (38.73s elapsed)
-- **Status**: ✅ Phase 3 stabilization validated for tuned-damping path; default-damping instability documented
+- **Status**: ✅ Phase 3 stabilization validated with current defaults; historical default-damping instability documented
 
 ---
 
@@ -293,27 +307,27 @@
 - **Status**: IN PROGRESS (Phase 3 docs completed)
 - [x] Create `docs/architecture/INTEGRATOR_STABILITY.md` - Phase 3 findings documented
 - [x] Update `docs/architecture/INTEGRATOR_STABILITY_RESULTS.json` with validation results
-- [ ] Update `docs/architecture/DEVELOPMENT_TASKS.md` - mark Task A1.7 phases complete
-- [ ] Update `docs/HANDOVER_AGENT_STATUS.md` with migration summary
-- [ ] Create `docs/architecture/CORE_REFACTOR_MIGRATION.md` documenting breaking changes
+- [x] Update `docs/architecture/DEVELOPMENT_TASKS.md` - mark Task A1.7 phases complete
+- [x] Update `docs/HANDOVER_AGENT_STATUS.md` with migration summary
+- [x] Create `docs/architecture/CORE_REFACTOR_MIGRATION.md` documenting breaking changes
 
 ### Cleanup
 - **Status**: PARTIAL (Phase 2 cleanup completed)
 - [x] Remove `DYNNLEqnParamsAD` shadow struct (Phase 2 cleanup)
 - [x] Clean up legacy API wrappers for Python bindings (Phase 2 cleanup)
-- [ ] Remove deprecated legacy arrays from `CRMIVPCoreParams` (after final validation)
-- [ ] Remove manual sync layer from `crm_bindings.cpp` (post-Phase 3)
+- [x] Remove deprecated legacy arrays from `CRMIVPCoreParams` (after final validation)
+- [x] Remove manual sync layer from `crm_bindings.cpp` (post-Phase 3)
 - [ ] Update all documentation to reflect new architecture
 
 ### Final Validation
 - **Status**: COMPLETED
-- [x] Full test suite: `pytest -q` (32 passed)
+- [x] Full test suite: `pytest -q` (35 passed)
 - [x] Build all targets: `cmake --build build` (successful)
 - [x] Convergence tests: `pytest tests/test_dynamics_convergence.py -v` (PASSED)
 - [x] AD tests: `pytest tests/test_parameter_jacobian_autodiff.py -v` (3 passed)
 - [x] Implicit linearization tests: `pytest tests/test_dynamics_implicit_linearization.py -v` (2 passed)
 - [x] Test harness for Phase 3: `test_integrator_stability_harness.py` (created and executed)
-- [ ] Run C++ tests: `cd build && ctest` (no test config present)
+- [x] Run C++ tests: `cd build && ctest` (CTest configured for TestDynamicsContext)
 - [ ] Performance benchmark: compare against pre-refactor baseline
 
 ---

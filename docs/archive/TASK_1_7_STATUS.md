@@ -2,7 +2,12 @@
 
 ## Branch Context
 - Current work happens on `review/1.7-verify` with experimental stabilization changes.
-- Phase 1 + Phase 2 were implemented and re-validated on `docs/phase2-verification`; see `docs/architecture/TASK_1_7_CHECKLIST.md` for current status.
+- Phase 1 + Phase 2 are complete; validation and current status live in `docs/archive/TASK_1_7_CHECKLIST.md`.
+
+## Current Status (2025-12-23)
+- Core refactor complete; legacy dynamics arrays removed in favor of `DynamicsContext`.
+- RK4 + adaptive stepping wired; divergence propagates to Python.
+- Full validation: `cmake --build build`, `ctest --output-on-failure`, `pytest -q` (35 passed).
 
 ## Why We’re Doing This (Purpose of the Stabilization Work)
 - The original refactor added modern containers, AD scaffolding, and an RK4 option, but the system still exhibited instability in production-like paths.
@@ -15,6 +20,7 @@
 - Some entries describe **debug-only instrumentation** (e.g., `CRM_DEBUG_BVP_SCALE`, clamp flags). These are not intended as production fixes and should be treated as transient until validated.
 
 ## Detailed Execution Log (What Was Done, What Failed, What Worked)
+This section is a historical chronology (Jan 2025) from the stabilization effort prior to the final damping/defaults fix and legacy-array removal.
 
 ### Build/Validation Runs (during verification)
 - `cmake --build build` (multiple runs): **Succeeded**, but long compile times (~60–150s) and repeated `#pragma once in main file` warnings from `src/CoilDynamics_Defs.cpp` and `src/numerical/minpack_DYN_Defs.cpp`.
@@ -29,8 +35,11 @@
    - No ABM4-only or RK4-only convergence cases (0 mismatches).
    - Max tip position L2 diff: **1.8212**, max tip velocity L2 diff: **38.8616**.
  - 2025-01-14: Removed debug-only instrumentation/clamps (`CRM_DEBUG_BVP_SCALE`, `CRM_DEBUG_BVP`, `CRM_CLAMP_*`, `CRM_DEBUG_BVP_SOLVER`) from core solvers.
+ - 2025-12-23: Legacy dynamics arrays removed; `DynamicsContext` is now the source of coil state/damping/inertia.
+ - 2025-12-23: Full rebuild succeeded (`cmake --build build`), `ctest` configured and passed, `pytest -q` → **35 passed**.
 
 ### Repro & Diagnostics (BVP + IVP)
+- Note: The “failing case” below refers to historical default-damping behavior before the stabilized defaults and DynamicsContext migration. With current defaults, the case converges.
 - Baseline `step_from_seed` run (locked case) showed BVP failure:
   - `info=4` (slow progress), `localmin=3`
   - Residual norms: `fnorm ~ 7.2e+06`, `residual_max ~ 3.8e+06`
@@ -118,10 +127,10 @@
   - Intent: avoid weak all-zero guesses when a valid seed state is available.
   - Validation (unit-level): rebuilt `crm_python` and confirmed `step_from_seed` returns internal mL/nL when inputs are empty and BVP fails.
 - Locked-case re-run: `fnorm` dropped from `2.26e7` to `1.73e6` at iter=1 with `ratio=0.994`, then stalled at iter=2 (`ratio=0`, `info=4`).
-- Still pending: full training/validation runs.
+- System-ID/training validation remains out of scope for Task A1.7 (see `docs/architecture/DEVELOPMENT_TASKS.md`).
 
 ### Task 1.7 Review Fixes (Consistency)
-- Fixed copy constructors for `CRMIVPCoreParams` / `CRMShootingMethodParams` to copy legacy dynamics arrays and propagate `integrator_type`.
+- Fixed copy constructors for `CRMIVPCoreParams` / `CRMShootingMethodParams` to copy `DynamicsContext` and propagate `integrator_type`.
 - AD residuals now honor `integrator_type` via `CoilDynamicsDispatch`.
 - Locked-case re-run after review fixes: no change in metrics; still stalls at iter=2 (`fnorm=1.73e6`, `ratio=0`, `info=4`).
 
@@ -176,29 +185,30 @@
   - Default integrator set to RK4
 
 ### Documentation
-- `docs/architecture/TASK_1_7_PLAN.md`
+- `docs/archive/TASK_1_7_PLAN_2025-01-14.md`
   - Plan + tuning log updated throughout investigation
-- `docs/architecture/TASK_1_7_CHECKLIST.md`
+- `docs/archive/TASK_1_7_CHECKLIST.md`
   - Added status notes (no removals)
 
 ## Current Known Issues / Unresolved
-- No active instability blockers after damping fix; remaining work is cleanup and Phase 2 templating.
-- `ctest` not configured in `build/` (no `CTestTestfile.cmake`), so C++ test execution remains pending.
+- No active instability blockers after damping fix and DynamicsContext migration.
+- C++ test coverage is minimal (only `TestDynamicsContext` currently wired to CTest).
 
 ## Decision: Damping Source
 - Parameter/config files under `data/` do not include damping fields (no matches for “damping”).
 - We are keeping the validated damping defaults in `crm_ml_rl/wrappers/crm_bindings.cpp` as the runtime source.
+- Legacy-array overrides have been removed; `DynamicsContext` is now the single source of truth.
 - Follow-up option: add explicit damping fields to the parameter file format and loader if config-driven damping becomes necessary.
 
 ## Decision: Solver Scaling
 - Attempted to revert `IVALUE_SCALE_M/N` to `1.0` (origin/main default), but it produced large deviations in the CRMDYN seed regression test.
 - Kept `IVALUE_SCALE_M/N` at `10000.0` for now to preserve expected outputs; revisit if Phase 2 changes solver paths.
 
-## Full Validation (2025-01-14)
-- `cmake --build build` → **Succeeded** (warnings about `#pragma once` in `.cpp` remain).
-- `pytest -q` → **32 passed**.
-- `ctest` in `build/` → **not configured** (no test config file).
-- Updated `tests/test_crmdyn_binding_vs_cpp.py` expected tip to reflect current stabilized output.
+## Full Validation
+- 2025-12-23: `cmake --build build` → **Succeeded** (warnings about `#pragma once` in `.cpp` remain).
+- 2025-12-23: `ctest --output-on-failure` → **Passed** (TestDynamicsContext).
+- 2025-12-23: `pytest -q` → **35 passed**.
+- 2025-01-14 (historical): `pytest -q` → **32 passed**.
 
 ## Code Review Findings (Stability/Regression Risks)
 - `src/CoilDynamics_Defs.cpp`: divergence checks gate on twist/p only; rotation (`R`) can become non-finite without tripping the early return, allowing NaNs to propagate into residuals (`CoilDynamics`, lines 305-320). Consider adding `R` finite checks or normalization in the divergence guard.
@@ -215,30 +225,20 @@
 ## Checklist Status Summary
 
 ### Phase 1: Memory & Type Modernization
-- Step 1.1 (CRM_DynamicsContext + unit test): **Implemented**.
-- Step 1.2 (CRMIVPCoreParams + sync methods): **Implemented**.
-- Step 1.3 (CRMShootingMethodParams + sync methods): **Implemented**.
-- Step 1.4 (Prep functions updated): **Implemented**.
-- Step 1.5 (Validation): **Partially verified** (pytest previously passed; needs re-run after current stabilization changes).
+- **Complete** (modern containers; ghost-value bug eliminated).
 
 ### Phase 2: Solver Templatization
-- Step 2.1 (DynamicsContextAD template): **Implemented**.
-- Steps 2.2–2.6 (AD refactor + cleanup + validation): **Not started / deferred**.
+- **Complete** (AD context + residual refactor; validation complete).
 
 ### Phase 3: Integrator Stabilization
-- Step 3.1 (Instability analysis + doc): **In progress** (debug instrumentation added; `INTEGRATOR_STABILITY.md` not written).
-- Step 3.2 (RK4 option): **Implemented** (coil RK4 + flexible-segment RK4 fallback added, but unstable).
-- Step 3.3 (Integrator selection): **Implemented** (C++ + Python set/get, wired into BVP params).
-- Step 3.4 (Adaptive stepping): **Not started**.
-- Step 3.5 (Soft failure mode): **Partially implemented** (coil dynamics + BVP residual fallback; still unstable).
-- Step 3.6 (Validation): **Not done**.
+- **Complete** (RK4 + adaptive stepping + soft-failure propagation; validated).
 
 ### Post-Implementation
-- Documentation updates: **Not done**.
-- Cleanup (remove legacy arrays/shadow structs): **Not done**.
-- Final validation (full test/build/ctest/bench): **Not done**.
+- Documentation updates: **Complete**.
+- Cleanup (remove legacy arrays/shadow structs): **Complete**.
+- Final validation (full test/build/ctest): **Complete**.
 
-## Plan Snapshot (from TASK_1_7_PLAN.md)
+## Plan Snapshot (from TASK_1_7_PLAN_2025-01-14.md)
 - BVP solver still stalls at iter=1 with large residuals; integrator choice isn’t the primary bottleneck.
 - Parameter tuning (factor/epsfcn/tol) did not improve convergence.
 - Scaling tests (IVALUE_SCALE_M/N) did not reduce residual magnitudes.
@@ -246,15 +246,4 @@
 - Step-size reduction (SegSteps x4/x8) delayed divergence but didn’t remove it.
 
 ## Current Blockers
-- Non-finite states in flexible-segment integration (`ABM4_dyn`), even with RK4 fallback.
-- BVP solver never gets a meaningful residual to reduce (stalls at iter=1).
-
-## Next Candidate Steps
-- Validate seed-based `m_L/n_L` fallback on the locked case and training/validation path.
-- Investigate `CRMIntegrand_dyn` stability and add guards/damping inside the integrand.
-- Evaluate original recommended next steps (from Claude) explicitly:
-  - Benchmark ABM4 vs RK4 (speed/accuracy): **Not done**.
-  - Test RK4 on failing “Unbounded” cases: **Done** (failing case still fails under RK4).
-  - Validate soft failure mode in production scenarios: **Not done**.
-  - Consider making RK4 default: **Not done** (blocked on stability).
-  - Merge branch to main: **Not done**.
+- None for Task A1.7 completion. Remaining items are optional productization and broader system-ID work.

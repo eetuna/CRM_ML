@@ -71,7 +71,7 @@ All remaining tasks from the **Claude Plan (Phase 3 Integrator Stabilization)** 
 ### 6. ✅ Updated Checklists and Documentation
 
 **Updated Files**:
-1. [docs/architecture/TASK_1_7_CHECKLIST.md](docs/architecture/TASK_1_7_CHECKLIST.md)
+1. [docs/archive/TASK_1_7_CHECKLIST.md](docs/archive/TASK_1_7_CHECKLIST.md)
    - Phase 3 Steps 3.1-3.6 marked COMPLETED
    - Added Phase 3 Test Results Summary section
    - Updated Post-Implementation status (documentation complete, cleanup in progress)
@@ -94,7 +94,7 @@ All remaining tasks from the **Claude Plan (Phase 3 Integrator Stabilization)** 
 ### Documentation Files Created/Modified
 - ✅ [docs/architecture/INTEGRATOR_STABILITY.md](docs/architecture/INTEGRATOR_STABILITY.md) - Phase 3 findings with parameter regimes
 - ✅ [docs/architecture/INTEGRATOR_STABILITY_RESULTS.json](docs/architecture/INTEGRATOR_STABILITY_RESULTS.json) - Test validation results
-- ✅ [docs/architecture/TASK_1_7_CHECKLIST.md](docs/architecture/TASK_1_7_CHECKLIST.md) - Phase 3 completion status
+- ✅ [docs/archive/TASK_1_7_CHECKLIST.md](docs/archive/TASK_1_7_CHECKLIST.md) - Phase 3 completion status
 - ✅ [docs/phase2_verification_checklist.md](docs/phase2_verification_checklist.md) - Plan completion marking
 
 ### Test Files Created

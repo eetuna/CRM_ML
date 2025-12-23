@@ -203,7 +203,7 @@ Successfully implemented AD-based control input gradients. All steps completed w
 | `src/CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp` | +149 | AD residual with controls, control jacobian |
 | `crm_ml_rl/wrappers/crm_bindings.cpp` | +92 | Integration with implicit linearization |
 | `tests/test_dynamics_implicit_linearization.py` | +58 | Validation test |
-| `docs/architecture/TASK_1_5_CHECKLIST.md` | Updated | This document |
+| `docs/archive/TASK_1_5_CHECKLIST.md` | Updated | This document |
 
 ### Commit
 

@@ -8,7 +8,7 @@ Branch: current working branch (based on `autodiff_eigen`)
 - Task A1.7 stability issues resolved via validated damping defaults in bindings.
 - Debug-only instrumentation/clamps removed from core solver paths.
 - Full validation: `pytest -q` → 32 passed; `cmake --build build` succeeded; `ctest` not configured in `build/`.
-- Current status and next steps tracked in `docs/architecture/TASK_1_7_STATUS.md`, `docs/architecture/TASK_1_7_CHECKLIST.md`, and `docs/architecture/TASK_1_7_HANDOFF.md`.
+- Current status and next steps tracked in `docs/archive/TASK_1_7_STATUS.md`, `docs/archive/TASK_1_7_CHECKLIST.md`, and `docs/archive/TASK_1_7_HANDOFF_2025-12-23.md`.
 - Note: `IVALUE_SCALE_M/N` kept at `10000.0` to preserve baseline outputs; revisit after Phase 2 templating.
 
 ## Objective
