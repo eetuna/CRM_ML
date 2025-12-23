@@ -500,7 +500,8 @@ inline void CoilDynamicsRK4(const Vec6<Scalar>& v0w0,
         const Vec6<Scalar> twist_3 = twist_n + h * k2 * Scalar(0.5);
         Mat3<Scalar> R_3;
         Vec3<Scalar> p_3;
-        DYNSE3_TimeSpace(R_n, p_n, h * Scalar(0.5), twist_n + k1 * Scalar(0.5), R_3, p_3);
+        const Vec6<Scalar> twist_for_R3 = twist_n + h * k1 * Scalar(0.5);
+        DYNSE3_TimeSpace(R_n, p_n, h * Scalar(0.5), twist_for_R3, R_3, p_3);
         Vec6<Scalar> k3;
         CoilIntegrand(twist_3, n_L, g, R_3, actMass, actInertia, damping, B0, muhat, m_L, k3);
 
@@ -508,7 +509,8 @@ inline void CoilDynamicsRK4(const Vec6<Scalar>& v0w0,
         const Vec6<Scalar> twist_4 = twist_n + h * k3;
         Mat3<Scalar> R_4;
         Vec3<Scalar> p_4;
-        DYNSE3_TimeSpace(R_n, p_n, h, twist_n + k2, R_4, p_4);
+        const Vec6<Scalar> twist_for_R4 = twist_n + h * k2;
+        DYNSE3_TimeSpace(R_n, p_n, h, twist_for_R4, R_4, p_4);
         Vec6<Scalar> k4;
         CoilIntegrand(twist_4, n_L, g, R_4, actMass, actInertia, damping, B0, muhat, m_L, k4);
 
@@ -1025,11 +1027,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
             // net_nL = n_L - n_0 for NUM_ACT_SET==1 (see DYNNLEquation).
             net_nL = n_L - n_0;
 
-            CoilDynamics(vw_coil0, p_coil0, R_coil0, net_nL, Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
-                         actMass, actInertia, damping, Params.DELTA_T,
-                         Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
-                         muhat, net_mL,
-                         vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
+            CoilDynamicsDispatch(Params.dynamics.integrator_type,
+                                 vw_coil0, p_coil0, R_coil0, net_nL,
+                                 Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
+                                 actMass, actInertia, damping, Params.DELTA_T,
+                                 Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
+                                 muhat, net_mL,
+                                 vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
     }
@@ -1165,10 +1169,11 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
 
             net_nL = n_L - n_0;
 
-            CoilDynamics(vw_coil0, p_coil0, R_coil0, net_nL, ad_params.g,
-                         actMass, actInertia, damping, ad_params.DELTA_T,
-                         ad_params.B0, muhat, net_mL,
-                         vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
+            CoilDynamicsDispatch(Params.dynamics.integrator_type,
+                                 vw_coil0, p_coil0, R_coil0, net_nL,
+                                 ad_params.g, actMass, actInertia, damping,
+                                 ad_params.DELTA_T, ad_params.B0, muhat, net_mL,
+                                 vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
     }
@@ -1315,11 +1320,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
 
             net_nL = n_L - n_0;
 
-            CoilDynamics(vw_coil0, p_coil0, R_coil0, net_nL, Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
-                         actMass, actInertia, damping, Params.DELTA_T,
-                         Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
-                         muhat, net_mL,
-                         vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
+            CoilDynamicsDispatch(Params.dynamics.integrator_type,
+                                 vw_coil0, p_coil0, R_coil0, net_nL,
+                                 Eigen::Vector3d(Params.g[0], Params.g[1], Params.g[2]),
+                                 actMass, actInertia, damping, Params.DELTA_T,
+                                 Eigen::Vector3d(Params.B0[0], Params.B0[1], Params.B0[2]),
+                                 muhat, net_mL,
+                                 vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
     }

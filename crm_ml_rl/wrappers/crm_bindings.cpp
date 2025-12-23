@@ -26,6 +26,7 @@
 #include <memory>
 #include <limits>
 #include <cstdlib>
+#include <cmath>
 
 // Include CRM headers
 #include "CRM.hpp"
@@ -703,6 +704,16 @@ public:
                     }
                     std::cout << "\n[CRM_DEBUG_PARAM_LOAD] CRMDynamicsWrapper g: "
                               << catheter.config.g[0] << " " << catheter.config.g[1] << " " << catheter.config.g[2] << "\n";
+                    for (int i = 0; i < cparams->no_act_set && i < NUM_ACT_SET; i++) {
+                        std::cout << "[CRM_DEBUG_PARAM_LOAD] act " << i
+                                  << " mass=" << cparams->ActMass[i]
+                                  << " r_out=" << cparams->OuterRadius[0]
+                                  << " r_in=" << cparams->InnerRadius[0]
+                                  << " seg_len=" << cparams->SegLengths[2 * i + 1]
+                                  << " I_xx=" << actInertia[i][0]
+                                  << " I_zz=" << actInertia[i][8]
+                                  << "\n";
+                    }
                 }
             }
         }
@@ -1215,6 +1226,16 @@ public:
         double xf_local[NUM_STATES]{};
         double mL_guess_local[NUM_ACT_SET][3]{};
         double nL_guess_local[NUM_ACT_SET][3]{};
+        const double kMnZeroEps = 1e-12;
+        auto sum_abs_mn = [](const double mn[NUM_ACT_SET][3], int sets) {
+            double total = 0.0;
+            for (int j = 0; j < sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    total += std::abs(mn[j][i]);
+                }
+            }
+            return total;
+        };
 
         for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
             for (int i = 0; i < 3; i++) {
@@ -1233,22 +1254,43 @@ public:
             xf_local[i] = (i < xfbuf.size) ? xfptr[i] : 0.0;
         }
 
+        double mL_input_abs = 0.0;
         if (mL_in.size() > 0) {
             auto mbuf = mL_in.request(); const double* mptr = static_cast<double*>(mbuf.ptr);
             for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
                 for (int i = 0; i < 3; i++) {
                     const ssize_t idx = j * 3 + i;
-                    if (idx < mbuf.size) mL_guess_local[j][i] = mptr[idx];
+                    if (idx < mbuf.size) {
+                        mL_guess_local[j][i] = mptr[idx];
+                        mL_input_abs += std::abs(mptr[idx]);
+                    }
                 }
             }
         }
 
+        double nL_input_abs = 0.0;
         if (nL_in.size() > 0) {
             auto nbuf = nL_in.request(); const double* nptr = static_cast<double*>(nbuf.ptr);
             for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
                 for (int i = 0; i < 3; i++) {
                     const ssize_t idx = j * 3 + i;
-                    if (idx < nbuf.size) nL_guess_local[j][i] = nptr[idx];
+                    if (idx < nbuf.size) {
+                        nL_guess_local[j][i] = nptr[idx];
+                        nL_input_abs += std::abs(nptr[idx]);
+                    }
+                }
+            }
+        }
+
+        const double mL_internal_abs = sum_abs_mn(mL_guess, num_sets);
+        const double nL_internal_abs = sum_abs_mn(nL_guess, num_sets);
+        const bool use_internal_mL = (mL_in.size() == 0 || mL_input_abs <= kMnZeroEps) && (mL_internal_abs > kMnZeroEps);
+        const bool use_internal_nL = (nL_in.size() == 0 || nL_input_abs <= kMnZeroEps) && (nL_internal_abs > kMnZeroEps);
+        if (use_internal_mL || use_internal_nL) {
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    if (use_internal_mL) mL_guess_local[j][i] = mL_guess[j][i];
+                    if (use_internal_nL) nL_guess_local[j][i] = nL_guess[j][i];
                 }
             }
         }
@@ -1399,7 +1441,24 @@ public:
     ) {
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
         if (!base["converged"].cast<bool>()) {
-            throw std::runtime_error("linearize_action_from_seed: base dynamics did not converge");
+            py::array_t<double> next_state({6});
+            auto ns = next_state.mutable_unchecked<1>();
+            for (int i = 0; i < 6; i++) ns(i) = 0.0;
+
+            py::array_t<double> B_out({6, 3});
+            auto Bout = B_out.mutable_unchecked<2>();
+            for (int i = 0; i < 6; i++) {
+                for (int j = 0; j < 3; j++) {
+                    Bout(i, j) = 0.0;
+                }
+            }
+
+            py::dict result;
+            result["next_state"] = next_state;
+            result["B"] = B_out;
+            result["base"] = base;
+            result["converged"] = false;
+            return result;
         }
         auto tip_pos_base = base["tip_position"].cast<py::array_t<double>>().request();
         auto tip_vel_base = base["tip_velocity"].cast<py::array_t<double>>().request();
@@ -1418,6 +1477,7 @@ public:
         std::array<double, 3> u0{};
         for (int i = 0; i < 3; i++) u0[i] = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
 
+        bool perturb_failed = false;
         for (int k = 0; k < 3; k++) {
             std::array<double, 3> u_plus = u0;
             std::array<double, 3> u_minus = u0;
@@ -1436,7 +1496,8 @@ public:
             py::dict out_plus = step_from_seed(u_plus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
             py::dict out_minus = step_from_seed(u_minus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_in, nL_in, std::nullopt);
             if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
-                throw std::runtime_error("linearize_action_from_seed: perturbation dynamics did not converge");
+                perturb_failed = true;
+                break;
             }
 
             auto pos_p = out_plus["tip_position"].cast<py::array_t<double>>().request();
@@ -1456,6 +1517,9 @@ public:
 
             B.col(k) = (yp - ym) * (0.5 / eps);
         }
+        if (perturb_failed) {
+            B.setZero();
+        }
 
         py::array_t<double> next_state({6});
         auto ns = next_state.mutable_unchecked<1>();
@@ -1473,6 +1537,7 @@ public:
         result["next_state"] = next_state;
         result["B"] = B_out;
         result["base"] = base;
+        result["converged"] = !perturb_failed;
         return result;
     }
 
@@ -1524,27 +1589,77 @@ public:
             throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
         }
 
-        auto ensure_mn = [&](const py::array_t<double>& arr) {
+        const double kMnZeroEps = 1e-12;
+        auto sum_abs_mn = [&](const double mn[NUM_ACT_SET][3]) {
+            double total = 0.0;
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) total += std::abs(mn[j][i]);
+            }
+            return total;
+        };
+        auto ensure_mn = [&](const py::array_t<double>& arr, const double fallback[NUM_ACT_SET][3]) {
             if (arr.size() != 0) {
                 auto abuf = arr.request();
                 if (abuf.ndim != 2 || abuf.shape[0] != num_sets || abuf.shape[1] != 3) {
                     throw std::runtime_error("mL/nL must have shape (num_act_set, 3) when provided");
                 }
-                return arr;
+                const double* aptr = static_cast<double*>(abuf.ptr);
+                double input_abs = 0.0;
+                for (int j = 0; j < num_sets; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        const ssize_t idx = j * 3 + i;
+                        if (idx < abuf.size) input_abs += std::abs(aptr[idx]);
+                    }
+                }
+                if (input_abs > kMnZeroEps) {
+                    return arr;
+                }
             }
+            const bool use_fallback = sum_abs_mn(fallback) > kMnZeroEps;
             py::array_t<double> out({num_sets, 3});
             auto o = out.mutable_unchecked<2>();
-            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) o(j, i) = 0.0;
+            for (int j = 0; j < num_sets; j++) {
+                for (int i = 0; i < 3; i++) {
+                    o(j, i) = use_fallback ? fallback[j][i] : 0.0;
+                }
+            }
             return out;
         };
 
-        py::array_t<double> mL_use = ensure_mn(mL_in);
-        py::array_t<double> nL_use = ensure_mn(nL_in);
+        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess);
+        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
 
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
         const bool ok = base["converged"].cast<bool>();
         if (!ok) {
-            throw std::runtime_error("linearize_full_seed_action_from_seed: base dynamics did not converge");
+            py::array_t<double> next_state({6});
+            auto ns = next_state.mutable_unchecked<1>();
+            for (int i = 0; i < 6; i++) ns(i) = 0.0;
+
+            py::array_t<double> B_out({6, 3});
+            auto Bout = B_out.mutable_unchecked<2>();
+            for (int i = 0; i < 6; i++) {
+                for (int j = 0; j < 3; j++) {
+                    Bout(i, j) = 0.0;
+                }
+            }
+
+            const int seed_dim = num_sets * 3 + num_sets * 3 + num_sets * 3 + num_sets * 9 + NUM_STATES + num_sets * 3 + num_sets * 3;
+            py::array_t<double> A_out({6, seed_dim});
+            auto Aout = A_out.mutable_unchecked<2>();
+            for (int i = 0; i < 6; i++) {
+                for (int j = 0; j < seed_dim; j++) {
+                    Aout(i, j) = 0.0;
+                }
+            }
+
+            py::dict result;
+            result["next_state"] = next_state;
+            result["B"] = B_out;
+            result["A"] = A_out;
+            result["base"] = base;
+            result["converged"] = false;
+            return result;
         }
         const Eigen::Matrix<double, 6, 1> y0 = get_state6(base);
 
@@ -1563,6 +1678,7 @@ public:
         Eigen::MatrixXd A(6, seed_dim);
         A.setZero();
 
+        bool perturb_failed = false;
         if (ok) {
             // B: central differences w.r.t currents.
             auto curr_buf = currents.request();
@@ -1588,7 +1704,8 @@ public:
                 py::dict out_plus = step_from_seed(u_plus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
                 py::dict out_minus = step_from_seed(u_minus_arr, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
                 if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
-                    throw std::runtime_error("linearize_full_seed_action_from_seed: perturbation dynamics did not converge");
+                    perturb_failed = true;
+                    break;
                 }
 
                 const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
@@ -1596,107 +1713,115 @@ public:
                 B.col(k) = (yp - ym) * (0.5 / eps_u);
             }
 
-            auto copy2 = [](py::array_t<double> dst, const py::array_t<double>& src) {
-                auto d = dst.mutable_unchecked<2>();
-                auto s = src.unchecked<2>();
-                for (ssize_t i = 0; i < s.shape(0); i++) for (ssize_t j = 0; j < s.shape(1); j++) d(i, j) = s(i, j);
-            };
-            auto copy1 = [](py::array_t<double> dst, const py::array_t<double>& src) {
-                auto d = dst.mutable_unchecked<1>();
-                auto s = src.unchecked<1>();
-                for (ssize_t i = 0; i < s.shape(0); i++) d(i) = s(i);
-            };
+            if (!perturb_failed) {
+                auto copy2 = [](py::array_t<double> dst, const py::array_t<double>& src) {
+                    auto d = dst.mutable_unchecked<2>();
+                    auto s = src.unchecked<2>();
+                    for (ssize_t i = 0; i < s.shape(0); i++) for (ssize_t j = 0; j < s.shape(1); j++) d(i, j) = s(i, j);
+                };
+                auto copy1 = [](py::array_t<double> dst, const py::array_t<double>& src) {
+                    auto d = dst.mutable_unchecked<1>();
+                    auto s = src.unchecked<1>();
+                    for (ssize_t i = 0; i < s.shape(0); i++) d(i) = s(i);
+                };
 
-            const int i_v0 = 0;
-            const int i_w0 = i_v0 + dim_v;
-            const int i_p0 = i_w0 + dim_w;
-            const int i_R0 = i_p0 + dim_p;
-            const int i_xf0 = i_R0 + dim_R;
-            const int i_mL0 = i_xf0 + dim_xf;
-            const int i_nL0 = i_mL0 + dim_mL;
+                const int i_v0 = 0;
+                const int i_w0 = i_v0 + dim_v;
+                const int i_p0 = i_w0 + dim_w;
+                const int i_R0 = i_p0 + dim_p;
+                const int i_xf0 = i_R0 + dim_R;
+                const int i_mL0 = i_xf0 + dim_xf;
+                const int i_nL0 = i_mL0 + dim_mL;
 
-            auto bump2 = [&](const py::array_t<double>& src, py::array_t<double>& plus, py::array_t<double>& minus, int flat_idx, int stride) {
-                plus = py::array_t<double>({num_sets, stride});
-                minus = py::array_t<double>({num_sets, stride});
-                copy2(plus, src);
-                copy2(minus, src);
-                const int row = flat_idx / stride;
-                const int col2 = flat_idx % stride;
-                auto p = plus.mutable_unchecked<2>();
-                auto m = minus.mutable_unchecked<2>();
-                p(row, col2) += eps_seed;
-                m(row, col2) -= eps_seed;
-            };
+                auto bump2 = [&](const py::array_t<double>& src, py::array_t<double>& plus, py::array_t<double>& minus, int flat_idx, int stride) {
+                    plus = py::array_t<double>({num_sets, stride});
+                    minus = py::array_t<double>({num_sets, stride});
+                    copy2(plus, src);
+                    copy2(minus, src);
+                    const int row = flat_idx / stride;
+                    const int col2 = flat_idx % stride;
+                    auto p = plus.mutable_unchecked<2>();
+                    auto m = minus.mutable_unchecked<2>();
+                    p(row, col2) += eps_seed;
+                    m(row, col2) -= eps_seed;
+                };
 
-            // A: central differences w.r.t seed components.
-            for (int col = 0; col < seed_dim; col++) {
-                py::array_t<double> v_plus, v_minus, w_plus, w_minus, p_plus, p_minus, R_plus, R_minus, xf_plus, xf_minus, mL_plus, mL_minus, nL_plus, nL_minus;
+                // A: central differences w.r.t seed components.
+                for (int col = 0; col < seed_dim; col++) {
+                    py::array_t<double> v_plus, v_minus, w_plus, w_minus, p_plus, p_minus, R_plus, R_minus, xf_plus, xf_minus, mL_plus, mL_minus, nL_plus, nL_minus;
 
-                const py::array_t<double>* vP = &v_in;
-                const py::array_t<double>* vM = &v_in;
-                const py::array_t<double>* wP = &w_in;
-                const py::array_t<double>* wM = &w_in;
-                const py::array_t<double>* pP = &p_in;
-                const py::array_t<double>* pM = &p_in;
-                const py::array_t<double>* RP = &R_in;
-                const py::array_t<double>* RM = &R_in;
-                const py::array_t<double>* xfP = &xf_in;
-                const py::array_t<double>* xfM = &xf_in;
-                const py::array_t<double>* mLP = &mL_use;
-                const py::array_t<double>* mLM = &mL_use;
-                const py::array_t<double>* nLP = &nL_use;
-                const py::array_t<double>* nLM = &nL_use;
+                    const py::array_t<double>* vP = &v_in;
+                    const py::array_t<double>* vM = &v_in;
+                    const py::array_t<double>* wP = &w_in;
+                    const py::array_t<double>* wM = &w_in;
+                    const py::array_t<double>* pP = &p_in;
+                    const py::array_t<double>* pM = &p_in;
+                    const py::array_t<double>* RP = &R_in;
+                    const py::array_t<double>* RM = &R_in;
+                    const py::array_t<double>* xfP = &xf_in;
+                    const py::array_t<double>* xfM = &xf_in;
+                    const py::array_t<double>* mLP = &mL_use;
+                    const py::array_t<double>* mLM = &mL_use;
+                    const py::array_t<double>* nLP = &nL_use;
+                    const py::array_t<double>* nLM = &nL_use;
 
-                if (col >= i_v0 && col < i_w0) {
-                    bump2(v_in, v_plus, v_minus, col - i_v0, 3);
-                    vP = &v_plus;
-                    vM = &v_minus;
-                } else if (col >= i_w0 && col < i_p0) {
-                    bump2(w_in, w_plus, w_minus, col - i_w0, 3);
-                    wP = &w_plus;
-                    wM = &w_minus;
-                } else if (col >= i_p0 && col < i_R0) {
-                    bump2(p_in, p_plus, p_minus, col - i_p0, 3);
-                    pP = &p_plus;
-                    pM = &p_minus;
-                } else if (col >= i_R0 && col < i_xf0) {
-                    bump2(R_in, R_plus, R_minus, col - i_R0, 9);
-                    RP = &R_plus;
-                    RM = &R_minus;
-                } else if (col >= i_xf0 && col < i_mL0) {
-                    const int idx = col - i_xf0;
-                    xf_plus = py::array_t<double>({NUM_STATES});
-                    xf_minus = py::array_t<double>({NUM_STATES});
-                    copy1(xf_plus, xf_in);
-                    copy1(xf_minus, xf_in);
-                    auto xp = xf_plus.mutable_unchecked<1>();
-                    auto xm = xf_minus.mutable_unchecked<1>();
-                    xp(idx) += eps_seed;
-                    xm(idx) -= eps_seed;
-                    xfP = &xf_plus;
-                    xfM = &xf_minus;
-                } else if (col >= i_mL0 && col < i_nL0) {
-                    bump2(mL_use, mL_plus, mL_minus, col - i_mL0, 3);
-                    mLP = &mL_plus;
-                    mLM = &mL_minus;
-                } else if (col >= i_nL0 && col < seed_dim) {
-                    bump2(nL_use, nL_plus, nL_minus, col - i_nL0, 3);
-                    nLP = &nL_plus;
-                    nLM = &nL_minus;
-                } else {
-                    throw std::runtime_error("seed index out of range");
+                    if (col >= i_v0 && col < i_w0) {
+                        bump2(v_in, v_plus, v_minus, col - i_v0, 3);
+                        vP = &v_plus;
+                        vM = &v_minus;
+                    } else if (col >= i_w0 && col < i_p0) {
+                        bump2(w_in, w_plus, w_minus, col - i_w0, 3);
+                        wP = &w_plus;
+                        wM = &w_minus;
+                    } else if (col >= i_p0 && col < i_R0) {
+                        bump2(p_in, p_plus, p_minus, col - i_p0, 3);
+                        pP = &p_plus;
+                        pM = &p_minus;
+                    } else if (col >= i_R0 && col < i_xf0) {
+                        bump2(R_in, R_plus, R_minus, col - i_R0, 9);
+                        RP = &R_plus;
+                        RM = &R_minus;
+                    } else if (col >= i_xf0 && col < i_mL0) {
+                        const int idx = col - i_xf0;
+                        xf_plus = py::array_t<double>({NUM_STATES});
+                        xf_minus = py::array_t<double>({NUM_STATES});
+                        copy1(xf_plus, xf_in);
+                        copy1(xf_minus, xf_in);
+                        auto xp = xf_plus.mutable_unchecked<1>();
+                        auto xm = xf_minus.mutable_unchecked<1>();
+                        xp(idx) += eps_seed;
+                        xm(idx) -= eps_seed;
+                        xfP = &xf_plus;
+                        xfM = &xf_minus;
+                    } else if (col >= i_mL0 && col < i_nL0) {
+                        bump2(mL_use, mL_plus, mL_minus, col - i_mL0, 3);
+                        mLP = &mL_plus;
+                        mLM = &mL_minus;
+                    } else if (col >= i_nL0 && col < seed_dim) {
+                        bump2(nL_use, nL_plus, nL_minus, col - i_nL0, 3);
+                        nLP = &nL_plus;
+                        nLM = &nL_minus;
+                    } else {
+                        throw std::runtime_error("seed index out of range");
+                    }
+
+                    py::dict out_plus = step_from_seed(currents, insertion_length, *vP, *wP, *pP, *RP, *xfP, *mLP, *nLP, std::nullopt);
+                    py::dict out_minus = step_from_seed(currents, insertion_length, *vM, *wM, *pM, *RM, *xfM, *mLM, *nLM, std::nullopt);
+                    if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
+                        perturb_failed = true;
+                        break;
+                    }
+
+                    const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
+                    const Eigen::Matrix<double, 6, 1> ym = get_state6(out_minus);
+                    A.col(col) = (yp - ym) * (0.5 / eps_seed);
                 }
-
-                py::dict out_plus = step_from_seed(currents, insertion_length, *vP, *wP, *pP, *RP, *xfP, *mLP, *nLP, std::nullopt);
-                py::dict out_minus = step_from_seed(currents, insertion_length, *vM, *wM, *pM, *RM, *xfM, *mLM, *nLM, std::nullopt);
-                if (!out_plus["converged"].cast<bool>() || !out_minus["converged"].cast<bool>()) {
-                    throw std::runtime_error("linearize_full_seed_action_from_seed: seed perturbation did not converge");
-                }
-
-                const Eigen::Matrix<double, 6, 1> yp = get_state6(out_plus);
-                const Eigen::Matrix<double, 6, 1> ym = get_state6(out_minus);
-                A.col(col) = (yp - ym) * (0.5 / eps_seed);
             }
+        }
+
+        if (perturb_failed) {
+            B.setZero();
+            A.setZero();
         }
 
         py::array_t<double> next_state({6});
@@ -1717,6 +1842,7 @@ public:
         result["A"] = A_out;
         result["seed_dim"] = seed_dim;
         result["base"] = base;
+        result["converged"] = !perturb_failed;
         return result;
     }
 
@@ -1774,22 +1900,45 @@ public:
             throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
         }
 
-        auto ensure_mn = [&](const py::array_t<double>& arr) {
+        const double kMnZeroEps = 1e-12;
+        auto sum_abs_mn = [&](const double mn[NUM_ACT_SET][3]) {
+            double total = 0.0;
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) total += std::abs(mn[j][i]);
+            }
+            return total;
+        };
+        auto ensure_mn = [&](const py::array_t<double>& arr, const double fallback[NUM_ACT_SET][3]) {
             if (arr.size() != 0) {
                 auto abuf = arr.request();
                 if (abuf.ndim != 2 || abuf.shape[0] != num_sets || abuf.shape[1] != 3) {
                     throw std::runtime_error("mL/nL must have shape (num_act_set, 3) when provided");
                 }
-                return arr;
+                const double* aptr = static_cast<double*>(abuf.ptr);
+                double input_abs = 0.0;
+                for (int j = 0; j < num_sets; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        const ssize_t idx = j * 3 + i;
+                        if (idx < abuf.size) input_abs += std::abs(aptr[idx]);
+                    }
+                }
+                if (input_abs > kMnZeroEps) {
+                    return arr;
+                }
             }
+            const bool use_fallback = sum_abs_mn(fallback) > kMnZeroEps;
             py::array_t<double> out({num_sets, 3});
             auto o = out.mutable_unchecked<2>();
-            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) o(j, i) = 0.0;
+            for (int j = 0; j < num_sets; j++) {
+                for (int i = 0; i < 3; i++) {
+                    o(j, i) = use_fallback ? fallback[j][i] : 0.0;
+                }
+            }
             return out;
         };
 
-        py::array_t<double> mL_use = ensure_mn(mL_in);
-        py::array_t<double> nL_use = ensure_mn(nL_in);
+        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess);
+        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
 
         // Base solve: get y0 and x* (as next_mL/next_nL) by running the full step once.
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
@@ -2398,22 +2547,45 @@ public:
             throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
         }
 
-        auto ensure_mn = [&](const py::array_t<double>& arr) {
+        const double kMnZeroEps = 1e-12;
+        auto sum_abs_mn = [&](const double mn[NUM_ACT_SET][3]) {
+            double total = 0.0;
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) total += std::abs(mn[j][i]);
+            }
+            return total;
+        };
+        auto ensure_mn = [&](const py::array_t<double>& arr, const double fallback[NUM_ACT_SET][3]) {
             if (arr.size() != 0) {
                 auto abuf = arr.request();
                 if (abuf.ndim != 2 || abuf.shape[0] != num_sets || abuf.shape[1] != 3) {
                     throw std::runtime_error("mL/nL must have shape (num_act_set, 3) when provided");
                 }
-                return arr;
+                const double* aptr = static_cast<double*>(abuf.ptr);
+                double input_abs = 0.0;
+                for (int j = 0; j < num_sets; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        const ssize_t idx = j * 3 + i;
+                        if (idx < abuf.size) input_abs += std::abs(aptr[idx]);
+                    }
+                }
+                if (input_abs > kMnZeroEps) {
+                    return arr;
+                }
             }
+            const bool use_fallback = sum_abs_mn(fallback) > kMnZeroEps;
             py::array_t<double> out({num_sets, 3});
             auto o = out.mutable_unchecked<2>();
-            for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) o(j, i) = 0.0;
+            for (int j = 0; j < num_sets; j++) {
+                for (int i = 0; i < 3; i++) {
+                    o(j, i) = use_fallback ? fallback[j][i] : 0.0;
+                }
+            }
             return out;
         };
 
-        py::array_t<double> mL_use = ensure_mn(mL_in);
-        py::array_t<double> nL_use = ensure_mn(nL_in);
+        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess);
+        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
 
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
         const bool ok = base["converged"].cast<bool>();

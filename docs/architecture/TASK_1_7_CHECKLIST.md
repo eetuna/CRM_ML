@@ -11,6 +11,20 @@
 
 ---
 
+## Status Notes (Verification Context)
+
+- Phase 3 added RK4 + soft-failure support, but ABM4 remained the default integrator for backwards compatibility.
+- The RK4 option exists to improve stability during stiff regimes (e.g., AD sweeps), not because ABM4 is universally broken.
+- As of current verification, instability often originates from BVP solver convergence (large residuals) before integrator choice takes effect.
+- Treat "Phase 3 complete" as "implemented and wired" until stability is validated against real failing cases and BVP convergence metrics.
+- Seed-based `m_L/n_L` initialization fallback (bindings) is now in place; validation pending.
+- Original recommended next steps (Claude) tracking:
+  - Benchmark ABM4 vs RK4: **not done**.
+  - Test RK4 on failing “Unbounded” cases: **done** (still fails).
+  - Validate soft failure mode in production scenarios: **not done**.
+  - Consider making RK4 default: **not done**.
+  - Merge branch to main: **not done**.
+
 ## Pre-requisites
 
 ### Required Reading
@@ -39,8 +53,9 @@
 
 ### Step 1.1: Create New Container Types
 **Goal**: Define type-safe containers for dynamics parameters.
+**Status**: COMPLETED (implemented in task/1.7-core-refactor)
 
-- [ ] Create `src/CRM_DynamicsContext.hpp`:
+- [x] Create `src/CRM_DynamicsContext.hpp`:
   ```cpp
   #pragma once
   #include <vector>
@@ -72,12 +87,13 @@
   } // namespace CRMCatheterModel
   ```
 
-- [ ] Add unit test `tests/cpp/test_dynamics_context.cpp`
+- [x] Add unit test `tests/cpp/test_dynamics_context.cpp`
 
 ### Step 1.2: Migrate CRMIVPCoreParams
 **Goal**: Replace fixed-size arrays with `DynamicsContext`.
+**Status**: COMPLETED (implemented in task/1.7-core-refactor)
 
-- [ ] In `CRM_BVPIVP_APIDeclarations.hpp`, add `DynamicsContext` member to `CRMIVPCoreParams`:
+- [x] In `CRM_BVPIVP_APIDeclarations.hpp`, add `DynamicsContext` member to `CRMIVPCoreParams`:
   ```cpp
   class CRMIVPCoreParams {
   public:
@@ -93,27 +109,31 @@
   };
   ```
 
-- [ ] Add `sync_dynamics_context()` method to copy from legacy arrays to new container
-- [ ] Add `sync_legacy_arrays()` method to copy back (for legacy code compatibility)
+- [x] Add `sync_dynamics_context()` method to copy from legacy arrays to new container
+- [x] Add `sync_legacy_arrays()` method to copy back (for legacy code compatibility)
 
 ### Step 1.3: Migrate CRMShootingMethodParams
 **Goal**: Apply same pattern to shooting method params.
+**Status**: COMPLETED (implemented in task/1.7-core-refactor)
 
-- [ ] Add `DynamicsContext` member
-- [ ] Add sync methods
-- [ ] Update `CRMConstructShootingMethodParamSet()` to populate new container
+- [x] Add `DynamicsContext` member
+- [x] Add sync methods
+- [x] Update `CRMConstructShootingMethodParamSet()` to populate new container
 
 ### Step 1.4: Update Prep Functions
 **Goal**: Ensure new containers are populated correctly.
+**Status**: COMPLETED (implemented in task/1.7-core-refactor)
 
-- [ ] Modify `CRMSolverIVP_Prep()` (CRM_IVPSolver.cpp) to populate `DynamicsContext`
-- [ ] Modify `CRMDYNSolverIVP_Prep()` (CoilDynamics_Defs.cpp) to populate `DynamicsContext`
-- [ ] Verify no memory aliasing with test: compare `dynamics.actuators[0].damping` vs legacy `damping[0]`
+- [x] Modify `CRMSolverIVP_Prep()` (CRM_IVPSolver.cpp) to populate `DynamicsContext`
+- [x] Modify `CRMDYNSolverIVP_Prep()` (CoilDynamics_Defs.cpp) to populate `DynamicsContext`
+- [x] Verify no memory aliasing with test: compare `dynamics.actuators[0].damping` vs legacy `damping[0]`
 
 ### Step 1.5: Validation
-- [ ] Run all existing tests: `pytest -q`
-- [ ] Verify "Ghost Value" bug is resolved: check that `packLearnableParams` returns correct values without manual sync
-- [ ] Run AD tests: `pytest tests/test_parameter_jacobian_autodiff.py -v`
+**Status**: PARTIAL (tests previously passed; re-run needed after current diagnostics)
+
+- [ ] Run all existing tests: `pytest -q` (pending on current branch)
+- [x] Verify "Ghost Value" bug is resolved: check that `packLearnableParams` returns correct values without manual sync
+- [ ] Run AD tests: `pytest tests/test_parameter_jacobian_autodiff.py -v` (pending on current branch)
 
 ---
 
@@ -121,8 +141,9 @@
 
 ### Step 2.1: Create Templatized DynamicsContext
 **Goal**: Allow `DynamicsContext` to hold `autodiff::real` types.
+**Status**: COMPLETED (implemented in task/1.7-core-refactor)
 
-- [ ] Create `src/CRM_DynamicsContext_AD.hpp`:
+- [x] Create `src/CRM_DynamicsContext_AD.hpp`:
   ```cpp
   #pragma once
   #include <autodiff/forward/real.hpp>
@@ -164,6 +185,7 @@
 
 ### Step 2.2: Update Existing AD Residual
 **Goal**: Use new `DynamicsContextAD` in existing AD code.
+**Status**: NOT STARTED (deferred)
 
 - [ ] Refactor `DYNNLEquationResidualEigenAD` to accept `DynamicsContextAD<Scalar>`
 - [ ] Update `DYNNLEquationResidualWithParamsAD` similarly
@@ -171,6 +193,7 @@
 
 ### Step 2.3: Templatize CRMFlexible_IVP_Back
 **Goal**: Make backward integration AD-compatible.
+**Status**: NOT STARTED (deferred)
 
 - [ ] Create `CRMFlexible_IVP_Back<Scalar>` template in `CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp`
 - [ ] Replace hard-coded `double` with `Scalar` template parameter
@@ -178,6 +201,7 @@
 
 ### Step 2.4: Templatize CoilIntegrand (if not already)
 **Goal**: Ensure full AD path through coil dynamics.
+**Status**: NOT STARTED (deferred)
 
 - [ ] Verify `CoilIntegrand<Scalar>` accepts all AD types
 - [ ] Verify `DYNSE3_TimeSpace<Scalar>` accepts all AD types
@@ -185,12 +209,14 @@
 
 ### Step 2.5: Remove Shadow Structs
 **Goal**: Eliminate `DYNNLEqnParamsAD` shadow struct.
+**Status**: NOT STARTED (deferred)
 
 - [ ] Once `DynamicsContextAD` is working, deprecate `DYNNLEqnParamsAD`
 - [ ] Update all callsites to use new container
 - [ ] Remove manual sync layer from `crm_bindings.cpp`
 
 ### Step 2.6: Validation
+**Status**: NOT STARTED (deferred)
 - [ ] Run: `pytest tests/test_dynnlequation_residual_eigen_autodiff.py -v`
 - [ ] Run: `pytest tests/test_parameter_jacobian_autodiff.py -v`
 - [ ] Run: `pytest tests/test_dynamics_implicit_linearization.py -v`
@@ -202,13 +228,15 @@
 
 ### Step 3.1: Analyze Instability Sources
 **Goal**: Understand when and why "Coil integration Unbounded" occurs.
+**Status**: IN PROGRESS (diagnostics added; formal stability doc pending)
 
-- [ ] Add instrumentation to `CoilDynamics<Scalar>` to log max acceleration per step
-- [ ] Identify parameter regimes that cause instability
-- [ ] Document findings in `docs/architecture/INTEGRATOR_STABILITY.md`
+- [x] Add instrumentation to `CoilDynamics<Scalar>` to log max acceleration per step
+- [ ] Identify parameter regimes that cause instability (partial; default damping vs stable damping noted)
+- [ ] Document findings in `docs/architecture/INTEGRATOR_STABILITY.md` (pending)
 
 ### Step 3.2: Implement RK4 Option
 **Goal**: Provide a more stable integration option.
+**Status**: COMPLETED (implemented + wired)
 
 - [ ] Create `CoilDynamicsRK4<Scalar>` in `CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp`:
   ```cpp
@@ -268,6 +296,7 @@
 
 ### Step 3.3: Add Integrator Selection
 **Goal**: Allow runtime selection of integrator.
+**Status**: COMPLETED (C++ + Python set/get)
 
 - [ ] Add `enum class IntegratorType { ABM4, RK4 }` to `DynamicsContext`
 - [ ] Modify `CoilDynamics<Scalar>` to dispatch based on integrator type
@@ -275,6 +304,7 @@
 
 ### Step 3.4: Implement Adaptive Stepping (Optional)
 **Goal**: Reduce instability by adapting step size.
+**Status**: NOT STARTED (optional)
 
 - [ ] Add acceleration magnitude check after each integrand evaluation
 - [ ] If acceleration exceeds threshold, subdivide step
@@ -282,6 +312,7 @@
 
 ### Step 3.5: Add Soft Failure Mode
 **Goal**: Return penalty instead of crashing on divergence.
+**Status**: PARTIAL (coil + BVP residual fallback; production validation pending)
 
 - [ ] Check for NaN/Inf in `CoilDynamics` output
 - [ ] If detected, set output to large but finite values
@@ -289,6 +320,7 @@
 - [ ] Update `crm_bindings.cpp` to handle error flag gracefully
 
 ### Step 3.6: Validation
+**Status**: NOT STARTED
 - [ ] Run stability test across parameter sweep
 - [ ] Verify RK4 produces same results as ABM4 for stable regimes
 - [ ] Verify RK4 remains stable where ABM4 fails
@@ -299,17 +331,20 @@
 ## Post-Implementation
 
 ### Documentation Updates
+- **Status**: NOT STARTED (other than task-specific notes/logs)
 - [ ] Update `docs/architecture/DEVELOPMENT_TASKS.md` - mark Task A1.7 complete
 - [ ] Update `docs/HANDOVER_AGENT_STATUS.md` with migration summary
 - [ ] Create `docs/architecture/CORE_REFACTOR_MIGRATION.md` documenting breaking changes
 
 ### Cleanup
+- **Status**: NOT STARTED
 - [ ] Remove deprecated legacy arrays from `CRMIVPCoreParams` (after verification)
 - [ ] Remove manual sync layer from `crm_bindings.cpp`
 - [ ] Remove `DYNNLEqnParamsAD` shadow struct
 - [ ] Update all documentation to reflect new architecture
 
 ### Final Validation
+- **Status**: NOT STARTED
 - [ ] Full test suite: `pytest -q`
 - [ ] Build all targets: `cmake --build build`
 - [ ] Run C++ tests: `cd build && ctest`

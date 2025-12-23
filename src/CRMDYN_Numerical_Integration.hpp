@@ -1,5 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
+
 //
 //
 //	NUMERICAL INTEGRATION FUNCTIONS for IVP SOLVER
@@ -14,7 +17,13 @@ namespace CRMCatheterModel {
         double Length;
         double deltalambdainv;
         double fcum[3], ustardot[3];  //  We are assuming Kdot=0.0 (K=const)
-
+        auto maxabs = [](const double* data, int count) {
+            double maxv = 0.0;
+            for (int i = 0; i < count; ++i) {
+                maxv = std::max(maxv, std::abs(data[i]));
+            }
+            return maxv;
+        };
         // copy inputs and parameters to local variables
         Length = in_Params.Li;
         deltalambdainv = in_Params.dlambdainv;
@@ -92,6 +101,29 @@ namespace CRMCatheterModel {
         mMult_AB<3, 3, 1>(Kinv->data(), sumterm, KinvSum);			// Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l)
         mSub_AB<3, 1>(ustardot, KinvSum, udot);					// udot = ustardot - Kinv*((um*K+Kdot)*(u-ustar_s) + e3m*R'*intf + R'*l);
 
+        if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
+            if (std::strcmp(debug, "1") == 0) {
+                static int log_count = 0;
+                const double u_max = maxabs(u, 3);
+                const double R_max = maxabs(R, 9);
+                const double fcum_max = maxabs(fcum, 3);
+                const double udot_max = maxabs(udot, 3);
+                const bool bad = !std::isfinite(u_max) || !std::isfinite(R_max) || !std::isfinite(fcum_max) || !std::isfinite(udot_max)
+                                 || u_max > 1e6 || R_max > 1e6 || fcum_max > 1e6 || udot_max > 1e6;
+                if (bad && log_count < 5) {
+                    ++log_count;
+                    std::cout << "[CRM_DEBUG_BVP_SCALE] CRMIntegrand_dyn large/non-finite"
+                              << " s=" << s
+                              << " |u|=" << u_max
+                              << " |R|=" << R_max
+                              << " |fcum|=" << fcum_max
+                              << " |udot|=" << udot_max
+                              << " |nL|=" << maxabs(in_nL, 3)
+                              << "\n";
+                }
+            }
+        }
+
 #ifndef ANALYTICAL_SE3_STEP
         // we will not need these for analytical calculation
         // Rdot = R*u_hat
@@ -110,6 +142,12 @@ namespace CRMCatheterModel {
     }
 
 
+
+    // Forward declaration for RK4 fallback in ABM4_dyn.
+    template <typename StVecType, typename ParamType>
+    void RK4_step_dyn(const StVecType& in_x_n, const double t_n, const double h,
+                  const ParamType in_Params, const double in_nL[3],
+                  StVecType& out_x_np1, StDerivativeVectType<StVecType>& out_xdot_n);
 
     //function [x_1toN] = ABM4(x_0, t_0, N, h, Integrand, initmethod)
     template <typename StVecType, typename ParamType>
@@ -139,6 +177,31 @@ namespace CRMCatheterModel {
         auto& LocMarkers = in_LocMarkers;  // create an alias
         double delta_n_overh, delta_np1_overh;
         double gTpsum, mgTpmid;
+        auto nonfinite = [](const double* data, int count) {
+            for (int i = 0; i < count; ++i) {
+                if (!std::isfinite(data[i])) return true;
+            }
+            return false;
+        };
+        auto maxabs = [](const double* data, int count) {
+            double maxv = 0.0;
+            for (int i = 0; i < count; ++i) {
+                maxv = std::max(maxv, std::abs(data[i]));
+            }
+            return maxv;
+        };
+        auto clamp_u = [&](double u[3]) {
+            const double kMaxU = 1e3;
+            const double u_max = maxabs(u, 3);
+            if (u_max > kMaxU && std::isfinite(u_max)) {
+                const double scale = kMaxU / u_max;
+                for (int i = 0; i < 3; ++i) {
+                    u[i] *= scale;
+                }
+                return true;
+            }
+            return false;
+        };
 
         // initialize the iteration items
         t_n = t_0;
@@ -150,6 +213,72 @@ namespace CRMCatheterModel {
             }
             else { 		 // ABM4 steps
                 ABM4_step_dyn(x_n, t_n, h, xdot_nm1, xdot_nm2, xdot_nm3, x_nm1, x_nm2, x_nm3, in_Params, in_nL, x_np1, xdot_n);
+            }
+
+            if (nonfinite(x_np1._p, 3) || nonfinite(x_np1._R, 9) || nonfinite(x_np1._u, 3)) {
+                if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
+                    if (std::strcmp(debug, "1") == 0) {
+                        const double k_max = in_Params.K ? maxabs(in_Params.K->data(), 9) : 0.0;
+                        const double kinv_max = in_Params.Kinv ? maxabs(in_Params.Kinv->data(), 9) : 0.0;
+                        const double ustar_max = in_Params.ustar ? maxabs(in_Params.ustar->data(), 3) : 0.0;
+                        std::cout << "[CRM_DEBUG_BVP_SCALE] ABM4_dyn non-finite state at step " << idx
+                                  << " t=" << t_n << " h=" << h
+                                  << " |x_n.p|=" << maxabs(x_n._p, 3)
+                                  << " |x_n.R|=" << maxabs(x_n._R, 9)
+                                  << " |x_n.u|=" << maxabs(x_n._u, 3)
+                                  << " |xdot_n|=" << xdot_n.absmax()
+                                  << " |nL|=" << maxabs(in_nL, 3)
+                                  << " |K|=" << k_max
+                                  << " |Kinv|=" << kinv_max
+                                  << " |ustar|=" << ustar_max
+                                  << ", attempting RK4 fallback\n";
+                    }
+                }
+                RK4_step_dyn(x_n, t_n, h, in_Params, in_nL, x_np1, xdot_n);
+                if (nonfinite(x_np1._p, 3) || nonfinite(x_np1._R, 9) || nonfinite(x_np1._u, 3)) {
+                    if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
+                        if (std::strcmp(debug, "1") == 0) {
+                            const double k_max = in_Params.K ? maxabs(in_Params.K->data(), 9) : 0.0;
+                            const double kinv_max = in_Params.Kinv ? maxabs(in_Params.Kinv->data(), 9) : 0.0;
+                            const double ustar_max = in_Params.ustar ? maxabs(in_Params.ustar->data(), 3) : 0.0;
+                            std::cout << "[CRM_DEBUG_BVP_SCALE] RK4 fallback non-finite at step " << idx
+                                      << " t=" << t_n << " h=" << h
+                                      << " |x_n.p|=" << maxabs(x_n._p, 3)
+                                      << " |x_n.R|=" << maxabs(x_n._R, 9)
+                                      << " |x_n.u|=" << maxabs(x_n._u, 3)
+                                      << " |xdot_n|=" << xdot_n.absmax()
+                                      << " |nL|=" << maxabs(in_nL, 3)
+                                      << " |K|=" << k_max
+                                      << " |Kinv|=" << kinv_max
+                                      << " |ustar|=" << ustar_max
+                                      << "\n";
+                        }
+                    }
+                    constexpr double kDivergenceValue = 1e6;
+                    for (int i = 0; i < 3; ++i) {
+                        x_np1._p[i] = kDivergenceValue;
+                        x_np1._u[i] = kDivergenceValue;
+                    }
+                    for (int i = 0; i < 9; ++i) {
+                        x_np1._R[i] = (i == 0 || i == 4 || i == 8) ? 1.0 : 0.0;
+                    }
+                    out_x_N = x_np1;
+                    inout_NextLocMarkerIdx = NextLocMarkerIdx;
+                    return;
+                }
+            }
+
+            if (const char* clamp = std::getenv("CRM_CLAMP_U")) {
+                if (std::strcmp(clamp, "1") == 0) {
+                    if (clamp_u(x_np1._u)) {
+                        if (const char* debug = std::getenv("CRM_DEBUG_BVP_SCALE")) {
+                            if (std::strcmp(debug, "1") == 0) {
+                                std::cout << "[CRM_DEBUG_BVP_SCALE] ABM4_dyn clamped |u| at step " << idx
+                                          << " t=" << t_n << "\n";
+                            }
+                        }
+                    }
+                }
             }
 
             //Project_State_to_Manifold(x_np1);
@@ -240,6 +369,11 @@ namespace CRMCatheterModel {
 		double u_n_pred[3];
 		for (int i = 0; i < 3; i++) u_n_pred[i] = (P_COEFF_N * x_n._u[i] + P_COEFF_Nm1 * x_nm1._u[i] + P_COEFF_Nm2 * x_nm2._u[i] + P_COEFF_Nm3 * x_nm3._u[i]);
 		SE3_Analytical_Step(x_n._R, x_n._p, u_n_pred, h, x_np1_hat._R /*R_np1_hat*/, x_np1_hat._p /*p_np1_hat*/);
+        if (const char* clamp = std::getenv("CRM_CLAMP_SE3")) {
+            if (std::strcmp(clamp, "1") == 0) {
+                Project_State_to_Manifold(x_np1_hat);
+            }
+        }
 #endif
         //ABM4_STEP_STEP2:
         CRMIntegrand_dyn(t_n + h, x_np1_hat, in_Params, in_nL, xdot_np1_hat);
@@ -249,6 +383,11 @@ namespace CRMCatheterModel {
 		double u_n_corr[3];
 		for (int i = 0; i < 3; i++) u_n_corr[i] = (C_COEFF_Np1 * x_np1_hat._u[i] + C_COEFF_N * x_n._u[i] + C_COEFF_Nm1 * x_nm1._u[i] + C_COEFF_Nm2 * x_nm2._u[i]);
 		SE3_Analytical_Step(x_n._R, x_n._p, u_n_corr, h, out_x_np1._R /*R_np1*/, out_x_np1._p /*p_np1*/);
+        if (const char* clamp = std::getenv("CRM_CLAMP_SE3")) {
+            if (std::strcmp(clamp, "1") == 0) {
+                Project_State_to_Manifold(out_x_np1);
+            }
+        }
 #endif
 
     }
@@ -276,6 +415,11 @@ namespace CRMCatheterModel {
 #ifdef ANALYTICAL_SE3_STEP
         // we will calculate R_n_p_k1o2 and p_n_p_k1o2 analytically, without numerical integration
 		SE3_Analytical_Step(x_n._R, x_n._p, x_n._u, h * 0.5, x_n_p_k1o2._R, x_n_p_k1o2._p);
+        if (const char* clamp = std::getenv("CRM_CLAMP_SE3")) {
+            if (std::strcmp(clamp, "1") == 0) {
+                Project_State_to_Manifold(x_n_p_k1o2);
+            }
+        }
 #endif
 
         //RK2_STEP_STEP2:
@@ -284,8 +428,60 @@ namespace CRMCatheterModel {
 #ifdef ANALYTICAL_SE3_STEP
         // we will calculate R_np1 and p_np1 analytically, without numerical integration
 		SE3_Analytical_Step(x_n._R, x_n._p, x_n_p_k1o2._u/*u_np1half*/, h, out_x_np1._R, out_x_np1._p);
+        if (const char* clamp = std::getenv("CRM_CLAMP_SE3")) {
+            if (std::strcmp(clamp, "1") == 0) {
+                Project_State_to_Manifold(out_x_np1);
+            }
+        }
 #endif
 
+    }
+
+    //[x_np1, xdot_n] = RK4_step(x_n, t_n, h, Integrand)
+    template <typename StVecType, typename ParamType>
+    void RK4_step_dyn(const StVecType& in_x_n, const double t_n, const double h,
+                  const ParamType in_Params, const double in_nL[3],
+                  StVecType& out_x_np1, StDerivativeVectType<StVecType>& out_xdot_n) {
+
+        using _SVT = StVecType;
+        using _DVT = StDerivativeVectType<StVecType>;
+
+        _SVT x_n(in_x_n);
+        _DVT k1;
+        _DVT k2;
+        _DVT k3;
+        _DVT k4;
+        _SVT x_n_p_k1o2;
+        _SVT x_n_p_k2o2;
+        _SVT x_n_p_k3;
+        auto& xdot_n = out_xdot_n;
+
+        CRMIntegrand_dyn(t_n, x_n, in_Params, in_nL, k1);
+        x_n_p_k1o2 = x_n + k1 * (h * 0.5);
+        CRMIntegrand_dyn(t_n + h * 0.5, x_n_p_k1o2, in_Params, in_nL, k2);
+
+        x_n_p_k2o2 = x_n + k2 * (h * 0.5);
+        CRMIntegrand_dyn(t_n + h * 0.5, x_n_p_k2o2, in_Params, in_nL, k3);
+
+        x_n_p_k3 = x_n + k3 * h;
+        CRMIntegrand_dyn(t_n + h, x_n_p_k3, in_Params, in_nL, k4);
+
+        out_x_np1 = x_n + (h / 6.0) * (k1 + 2.0 * k2 + 2.0 * k3 + k4);
+        xdot_n = k1;
+
+#ifdef ANALYTICAL_SE3_STEP
+        // Improve SE3 update using average curvature
+        double u_avg[3];
+        for (int i = 0; i < 3; ++i) {
+            u_avg[i] = 0.5 * (x_n._u[i] + out_x_np1._u[i]);
+        }
+        SE3_Analytical_Step(x_n._R, x_n._p, u_avg, h, out_x_np1._R, out_x_np1._p);
+        if (const char* clamp = std::getenv("CRM_CLAMP_SE3")) {
+            if (std::strcmp(clamp, "1") == 0) {
+                Project_State_to_Manifold(out_x_np1);
+            }
+        }
+#endif
     }
 
 }

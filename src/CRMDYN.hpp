@@ -34,8 +34,8 @@ using namespace CRMCatheterModel;
 
 // Regularization scales used for Nonlinear Solver
 
-#define IVALUE_SCALE_M  1.0 //
-#define IVALUE_SCALE_N	1.0		// the variable used in Nonlinear Solver is multiplied with this scale to calculate ftip (tip force) that will be used in IVP
+#define IVALUE_SCALE_M  10000.0 //
+#define IVALUE_SCALE_N	10000.0		// the variable used in Nonlinear Solver is multiplied with this scale to calculate ftip (tip force) that will be used in IVP
 #define IVALUE_SCALE_U	1.0 //(0.01)			// the variable used in Nonlinear Solver is multiplied with this scale to calculate u (curvature) that will be used in IVP
 #define IVALUE_SCALE_F	0.01//(0.01)			// the variable used in Nonlinear Solver is multiplied with this scale to calculate ftip (tip force) that will be used in IVP
 #define RESIDUAL_SCALE_P	1 //(10.0)			// the residual for tip position error coming out of the IVP will be multiplied with this scale to return to the Nonlinear Solver
@@ -121,7 +121,7 @@ void CoilIntegrad(const double in_twist[6], const double in_n[3], double g[3], d
 
 void CoilDynamics( double in_coil_state[NUM_COIL_STATES], double in_n[3], double g[3],
                    double actMass, double actInertia[9], double damping[6], double DELTA_T, double in_B0[3], double in_muhat[9],
-                   double in_mL[3], double out_coil_state[NUM_COIL_STATES], double out_xdot_n[6]);
+                   double in_mL[3], double out_coil_state[NUM_COIL_STATES], double out_xdot_n[6], bool* out_diverged = nullptr);
 
 void RK2_coildyn(double in_x_n[NUM_COIL_STATES], double in_n[3], double g[3],  double actMass, double actInertia[9], double damping[6],
                  double in_B0[3], double in_muhat[9], double in_mL[3],

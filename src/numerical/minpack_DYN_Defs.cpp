@@ -74,6 +74,9 @@
     */
 
 #include <cmath>
+#include <cstdlib>
+#include <cstring>
+#include <iostream>
 
 //#define MAX(a,b) 	( ((b)>(a))?(b):(a) )
 //#define MIN(a,b) 	( ((b)<(a))?(b):(a) )
@@ -188,7 +191,7 @@ void TrustRegionDogleg_dyn(	int n, double x[], double fvec[], double tol, int& i
 	//C     burton s. garbow, kenneth e. hillstrom, jorge j. more
 	//C
 	//C     **********
-	double factor = 100.0;
+	double factor = 1.0;
 	int maxfev = 200 * (n + 1);
 	double xtol = tol;
 	int ml = n - 1;
@@ -413,6 +416,9 @@ void hybrd_dyn(int n, double x[], double fvec[], double xtol, int maxfev, int ml
 	//C     epsmch is the machine precision.
 	//C
 	const double epsmch = DPMPAR1;
+	const char* debug = std::getenv("CRM_DEBUG_BVP_SOLVER");
+	const bool log_all = (debug != nullptr && std::strcmp(debug, "all") == 0);
+	const bool log_on_fail = (debug != nullptr && (std::strcmp(debug, "1") == 0 || log_all));
 	//C
 	info = 0;
 	nfev = 0;
@@ -443,6 +449,10 @@ void hybrd_dyn(int n, double x[], double fvec[], double xtol, int maxfev, int ml
 		return;
 	}
 	fnorm = enorm(n, fvec);
+	if (log_all) {
+		std::cout << "[CRM_DEBUG_BVP_SOLVER] init fnorm=" << fnorm
+		          << " xtol=" << xtol << " maxfev=" << maxfev << "\n";
+	}
 	//C
 	//C     determine the number of calls to fcn needed to compute
 	//C     the jacobian matrix.
@@ -626,6 +636,18 @@ void hybrd_dyn(int n, double x[], double fvec[], double xtol, int maxfev, int ml
 			if (prered > 0.0) {
 				ratio = actred / prered;
 			}
+			if (log_all) {
+				std::cout << "[CRM_DEBUG_BVP_SOLVER] iter=" << iter
+				          << " nfev=" << nfev
+				          << " fnorm=" << fnorm
+				          << " fnorm1=" << fnorm1
+				          << " actred=" << actred
+				          << " prered=" << prered
+				          << " ratio=" << ratio
+				          << " delta=" << delta
+				          << " pnorm=" << pnorm
+				          << "\n";
+			}
 			//C
 			//C           update the step bound.
 			//C
@@ -676,29 +698,59 @@ void hybrd_dyn(int n, double x[], double fvec[], double xtol, int maxfev, int ml
 			//C
 			//C           test for convergence.
 			//C
-			if (delta <= xtol * xnorm || fnorm == 0.0) {
-				info = 1;
-				return;
-			}
+				if (delta <= xtol * xnorm || fnorm == 0.0) {
+					info = 1;
+					if (log_on_fail) {
+						std::cout << "[CRM_DEBUG_BVP_SOLVER] converged iter=" << iter
+						          << " nfev=" << nfev
+						          << " fnorm=" << fnorm
+						          << " delta=" << delta << "\n";
+					}
+					return;
+				}
 			//C
 			//C           tests for termination and stringent tolerances.
 			//C
-			if (nfev >= maxfev) {
-				info = 2;
-				return;
-			}
-			if (p1 * MAX(p1 * delta, pnorm) <= epsmch * xnorm) {
-				info = 3;
-				return;
-			}
-			if (nslow2 == 5) {
-				info = 4;
-				return;
-			}
-			if (nslow1 == 10) {
-				info = 5;
-				return;
-			}
+				if (nfev >= maxfev) {
+					info = 2;
+					if (log_on_fail) {
+						std::cout << "[CRM_DEBUG_BVP_SOLVER] maxfev iter=" << iter
+						          << " nfev=" << nfev
+						          << " fnorm=" << fnorm
+						          << " delta=" << delta << "\n";
+					}
+					return;
+				}
+				if (p1 * MAX(p1 * delta, pnorm) <= epsmch * xnorm) {
+					info = 3;
+					if (log_on_fail) {
+						std::cout << "[CRM_DEBUG_BVP_SOLVER] xtol too small iter=" << iter
+						          << " nfev=" << nfev
+						          << " fnorm=" << fnorm
+						          << " delta=" << delta << "\n";
+					}
+					return;
+				}
+				if (nslow2 == 5) {
+					info = 4;
+					if (log_on_fail) {
+						std::cout << "[CRM_DEBUG_BVP_SOLVER] slow progress (jac) iter=" << iter
+						          << " nfev=" << nfev
+						          << " fnorm=" << fnorm
+						          << " delta=" << delta << "\n";
+					}
+					return;
+				}
+				if (nslow1 == 10) {
+					info = 5;
+					if (log_on_fail) {
+						std::cout << "[CRM_DEBUG_BVP_SOLVER] slow progress iter=" << iter
+						          << " nfev=" << nfev
+						          << " fnorm=" << fnorm
+						          << " delta=" << delta << "\n";
+					}
+					return;
+				}
 			//C
 			//C           criterion for recalculating jacobian approximation
 			//C           by forward differences.

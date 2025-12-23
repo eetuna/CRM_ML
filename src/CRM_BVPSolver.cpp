@@ -556,6 +556,24 @@ namespace CRMCatheterModel {
 		CoilAlignmentTurnAreaMatrix = t.CoilAlignmentTurnAreaMatrix;
 		LocMarkerLambdas = t.LocMarkerLambdas;
 		fcumlambda = t.fcumlambda;
+
+        DELTA_T = t.DELTA_T;
+        for (int i = 0; i < no_act_set; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                v_L_pre[i][j] = t.v_L_pre[i][j];
+                w_L_pre[i][j] = t.w_L_pre[i][j];
+                p_pre[i][j] = t.p_pre[i][j];
+            }
+            for (int j = 0; j < 9; ++j) {
+                R_pre[i][j] = t.R_pre[i][j];
+                actInertia[i][j] = t.actInertia[i][j];
+            }
+            for (int j = 0; j < 6; ++j) {
+                damping[i][j] = t.damping[i][j];
+            }
+        }
+        sync_dynamics_context();
+        dynamics.integrator_type = t.dynamics.integrator_type;
 	}
 
 	CRMShootingMethodParams::~CRMShootingMethodParams() {

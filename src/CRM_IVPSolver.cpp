@@ -706,10 +706,46 @@ namespace CRMCatheterModel {
 	//
 
 
-	void Project_State_to_Manifold(StateVector& State) {
+void Project_State_to_Manifold(StateVector& State) {
 #ifdef ANALYTICAL_SE3_STEP
 
-		// we don't need to do anything for analytical SE3 step
+		// Orthonormalize R to reduce numerical drift during analytical SE3 steps.
+		double* R = State._R;
+		double c0[3] = { R[0], R[3], R[6] };
+		double c1[3] = { R[1], R[4], R[7] };
+
+		auto norm3 = [](const double v[3]) {
+			return sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+		};
+		auto normalize3 = [](double v[3]) {
+			const double n = sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+			if (n > 1e-12) {
+				v[0] /= n; v[1] /= n; v[2] /= n;
+			} else {
+				v[0] = 1.0; v[1] = 0.0; v[2] = 0.0;
+			}
+		};
+
+		normalize3(c0);
+		const double dot01 = c0[0] * c1[0] + c0[1] * c1[1] + c0[2] * c1[2];
+		c1[0] -= dot01 * c0[0];
+		c1[1] -= dot01 * c0[1];
+		c1[2] -= dot01 * c0[2];
+		normalize3(c1);
+
+		double c2[3] = {
+			c0[1] * c1[2] - c0[2] * c1[1],
+			c0[2] * c1[0] - c0[0] * c1[2],
+			c0[0] * c1[1] - c0[1] * c1[0]
+		};
+
+		if (norm3(c2) <= 1e-12) {
+			c2[0] = 0.0; c2[1] = 0.0; c2[2] = 1.0;
+		}
+
+		R[0] = c0[0]; R[3] = c0[1]; R[6] = c0[2];
+		R[1] = c1[0]; R[4] = c1[1]; R[7] = c1[2];
+		R[2] = c2[0]; R[5] = c2[1]; R[8] = c2[2];
 
 #else
 
@@ -913,6 +949,26 @@ namespace CRMCatheterModel {
 			p_atLocMarkers = t.p_atLocMarkers;
 		}
 		fcumlambda = t.fcumlambda;
+
+        DELTA_T = t.DELTA_T;
+        for (int i = 0; i < no_act_set; ++i) {
+            for (int j = 0; j < 3; ++j) {
+                v_L_pre[i][j] = t.v_L_pre[i][j];
+                w_L_pre[i][j] = t.w_L_pre[i][j];
+                p_pre[i][j] = t.p_pre[i][j];
+                m_L[i][j] = t.m_L[i][j];
+                n_L[i][j] = t.n_L[i][j];
+            }
+            for (int j = 0; j < 9; ++j) {
+                R_pre[i][j] = t.R_pre[i][j];
+                actInertia[i][j] = t.actInertia[i][j];
+            }
+            for (int j = 0; j < 6; ++j) {
+                damping[i][j] = t.damping[i][j];
+            }
+        }
+        sync_dynamics_context();
+        dynamics.integrator_type = t.dynamics.integrator_type;
 
 	}
 
