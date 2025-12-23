@@ -11,6 +11,7 @@
 
 #include "CRMDYN.hpp"
 #include "CRM_DynamicsContext.hpp"
+#include "CRM_DynamicsContext_AD_impl.hpp"
 
 namespace CRMCatheterModel {
 
@@ -35,130 +36,6 @@ using Mat3 = Eigen::Matrix<Scalar, 3, 3, Eigen::RowMajor>;
 //   - damping[6], K_diag[3], ustar[3], actMass[1], MagMoment[3]
 // ============================================================================
 
-inline constexpr int NUM_LEARNABLE_PARAMS = 16;
-
-inline constexpr int THETA_OFFSET_DAMPING = 0;
-inline constexpr int THETA_OFFSET_K_DIAG = 6;
-inline constexpr int THETA_OFFSET_USTAR = 9;
-inline constexpr int THETA_OFFSET_ACTMASS = 12;
-inline constexpr int THETA_OFFSET_MAGMOMENT = 13;
-
-template <typename Scalar>
-struct DYNNLEqnParamsAD {
-    Eigen::Matrix<Scalar, 6, 1> damping;
-    Eigen::Matrix<Scalar, 3, 1> K_diag;
-    Eigen::Matrix<Scalar, 3, 1> ustar;
-    Scalar actMass;
-    Eigen::Matrix<Scalar, 3, 1> MagMoment;
-
-    Eigen::Vector3d B0;
-    Eigen::Vector3d g;
-    Eigen::Matrix3d actInertia;
-    double DELTA_T;
-
-    const DYNNLEqnParams* base_params = nullptr;
-
-    Mat3<Scalar> getK() const {
-        Mat3<Scalar> K = Mat3<Scalar>::Zero();
-        K(0, 0) = K_diag(0);
-        K(1, 1) = K_diag(1);
-        K(2, 2) = K_diag(2);
-        return K;
-    }
-
-    Mat3<Scalar> getKinv() const {
-        Mat3<Scalar> Kinv = Mat3<Scalar>::Zero();
-        Kinv(0, 0) = Scalar(1.0) / (K_diag(0) + Scalar(1e-12));
-        Kinv(1, 1) = Scalar(1.0) / (K_diag(1) + Scalar(1e-12));
-        Kinv(2, 2) = Scalar(1.0) / (K_diag(2) + Scalar(1e-12));
-        return Kinv;
-    }
-
-    Mat3<Scalar> getMuHat() const {
-        Mat3<Scalar> muhat;
-        muhat << Scalar(0), -MagMoment(2), MagMoment(1),
-                 MagMoment(2), Scalar(0), -MagMoment(0),
-                 -MagMoment(1), MagMoment(0), Scalar(0);
-        return muhat;
-    }
-};
-
-inline Eigen::VectorXd packLearnableParams(const DYNNLEqnParams& params, int flex_seg_index = 0) {
-    Eigen::VectorXd theta(NUM_LEARNABLE_PARAMS);
-    theta.setZero();
-
-    for (int i = 0; i < 6; ++i) {
-        theta(THETA_OFFSET_DAMPING + i) = params.damping[0][i];
-    }
-
-    if (params.no_flex_seg > flex_seg_index) {
-        theta(THETA_OFFSET_K_DIAG + 0) = params.K[flex_seg_index](0, 0);
-        theta(THETA_OFFSET_K_DIAG + 1) = params.K[flex_seg_index](1, 1);
-        theta(THETA_OFFSET_K_DIAG + 2) = params.K[flex_seg_index](2, 2);
-    }
-
-    if (params.no_flex_seg > flex_seg_index) {
-        for (int i = 0; i < 3; ++i) {
-            theta(THETA_OFFSET_USTAR + i) = params.ustar[flex_seg_index](i);
-        }
-    }
-
-    theta(THETA_OFFSET_ACTMASS) = params.ActMass[0];
-
-    for (int i = 0; i < 3; ++i) {
-        theta(THETA_OFFSET_MAGMOMENT + i) = params.MagMoment[0](i);
-    }
-
-    return theta;
-}
-
-inline std::vector<std::string> getLearnableParamNames() {
-    return {
-        "damping_v0", "damping_v1", "damping_v2",
-        "damping_w0", "damping_w1", "damping_w2",
-        "K_diag_0", "K_diag_1", "K_diag_2",
-        "ustar_0", "ustar_1", "ustar_2",
-        "actMass",
-        "MagMoment_0", "MagMoment_1", "MagMoment_2"
-    };
-}
-
-template <typename Scalar>
-DYNNLEqnParamsAD<Scalar> unpackToADParams(
-    const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& theta,
-    const DYNNLEqnParams& base_params)
-{
-    DYNNLEqnParamsAD<Scalar> ad_params;
-    ad_params.base_params = &base_params;
-
-    for (int i = 0; i < 6; ++i) {
-        ad_params.damping(i) = theta(THETA_OFFSET_DAMPING + i);
-    }
-    for (int i = 0; i < 3; ++i) {
-        ad_params.K_diag(i) = theta(THETA_OFFSET_K_DIAG + i);
-    }
-    for (int i = 0; i < 3; ++i) {
-        ad_params.ustar(i) = theta(THETA_OFFSET_USTAR + i);
-    }
-    ad_params.actMass = theta(THETA_OFFSET_ACTMASS);
-    for (int i = 0; i < 3; ++i) {
-        ad_params.MagMoment(i) = theta(THETA_OFFSET_MAGMOMENT + i);
-    }
-
-    for (int i = 0; i < 3; ++i) {
-        ad_params.B0(i) = base_params.B0[i];
-        ad_params.g(i) = base_params.g[i];
-    }
-
-    for (int r = 0; r < 3; ++r) {
-        for (int c = 0; c < 3; ++c) {
-            ad_params.actInertia(r, c) = base_params.actInertia[0][r * 3 + c];
-        }
-    }
-    ad_params.DELTA_T = base_params.DELTA_T;
-
-    return ad_params;
-}
 
 template <typename T>
 inline T sinT(const T& x)
@@ -784,16 +661,19 @@ template <typename Scalar>
 inline void CRMFlexible_IVP_BackAD(const int SegmentIndex,
                                    const Vec3<Scalar>& in_p,
                                    const Mat3<Scalar>& in_R,
-                                   const DYNNLEqnParams& Params,
+                                   const DynamicsContextAD<Scalar>& ctx,
                                    const Vec3<Scalar>& in_u,
                                    const Vec3<Scalar>& in_nL,
-                                   const Mat3<Scalar>& K,
-                                   const Mat3<Scalar>& Kinv,
-                                   const Vec3<Scalar>& ustar,
                                    Vec3<Scalar>& out_u,
                                    Vec3<Scalar>& out_p,
                                    Mat3<Scalar>& out_R)
 {
+    // Extract geometry data and learnable parameters
+    const DYNNLEqnParams& Params = *ctx.geometry;
+    const Mat3<Scalar> K = ctx.learnable.getK();
+    const Mat3<Scalar> Kinv = ctx.learnable.getKinv();
+    const Vec3<Scalar>& ustar = ctx.learnable.ustar;
+
     const int fsegno = SegmentIndex >> 1;
     const double h = -1.0 * (Params.SegBounds[SegmentIndex + 1] - Params.SegBounds[SegmentIndex]) / (Params.SegSteps[fsegno] * 1.0);
     const int N = Params.SegSteps[fsegno];
@@ -1054,14 +934,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
 template <typename Scalar>
 inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParamsAD(
     const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& x_scaled,
-    const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& theta,
-    const DYNNLEqnParams* ParamsPtr)
+    const DynamicsContextAD<Scalar>& ctx)
 {
     static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
 
-    const DYNNLEqnParams& Params = *ParamsPtr;
-    DYNNLEqnParamsAD<Scalar> ad_params = unpackToADParams<Scalar>(theta, Params);
+    // Geometry data accessed via ctx.geometry pointer
+    const DYNNLEqnParams& Params = *ctx.geometry;
 
     Vec3<Scalar> m_L;
     Vec3<Scalar> n_L;
@@ -1112,14 +991,15 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     }
     for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(Params.R_pre[0][r * 3 + c]);
 
-    const Scalar& actMass = ad_params.actMass;
-    const Eigen::Matrix3d& actInertia = ad_params.actInertia;
-    const Eigen::Matrix<Scalar, 6, 1>& damping = ad_params.damping;
-    const Mat3<Scalar> muhat = ad_params.getMuHat();
+    // Extract learnable parameters from context
+    const Scalar& actMass = ctx.learnable.actMass;
+    const Eigen::Matrix3d& actInertia = ctx.actInertia;
+    const Eigen::Matrix<Scalar, 6, 1>& damping = ctx.learnable.damping;
+    const Mat3<Scalar> muhat = ctx.learnable.getMuHat();
 
-    const Mat3<Scalar> K = ad_params.getK();
-    const Mat3<Scalar> Kinv = ad_params.getKinv();
-    const Vec3<Scalar>& ustar = ad_params.ustar;
+    const Mat3<Scalar> K = ctx.learnable.getK();
+    const Mat3<Scalar> Kinv = ctx.learnable.getKinv();
+    const Vec3<Scalar>& ustar = ctx.learnable.ustar;
 
     Vec3<Scalar> net_mL = Vec3<Scalar>::Zero();
     Vec3<Scalar> net_nL = Vec3<Scalar>::Zero();
@@ -1135,18 +1015,18 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
 
             if (segi == NUM_SEGMENTS - 1) {
                 u_t = ustar + Kinv * tau_0;
-                CRMFlexible_IVP_BackAD(segi, p_t, R_t, Params, u_t, n_0, K, Kinv, ustar, u_tau, p_, R_);
+                CRMFlexible_IVP_BackAD(segi, p_t, R_t, ctx, u_t, n_0, u_tau, p_, R_);
             } else {
                 const Vec3<Scalar> u_L = ustar + Kinv * m_L;
                 const int actseg = segi + 1;
                 const double RigidSegmentLength = Params.SegBounds[actseg + 1] - Params.SegBounds[actseg];
 
                 if (!have_out_coil) {
-                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, Params, u_L, n_L, K, Kinv, ustar, u_tau, p_, R_);
+                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, ctx, u_L, n_L, u_tau, p_, R_);
                 } else {
                     const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
                     const Mat3<Scalar> R_L = R_coil_out;
-                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, Params, u_L, n_L, K, Kinv, ustar, u_f, p_f, R_f);
+                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L, u_f, p_f, R_f);
                     u_tau = u_f;
                     p_ = p_f;
                     R_ = R_f;
@@ -1169,10 +1049,10 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
 
             net_nL = n_L - n_0;
 
-            CoilDynamicsDispatch(Params.dynamics.integrator_type,
+            CoilDynamicsDispatch(ctx.integrator_type,
                                  vw_coil0, p_coil0, R_coil0, net_nL,
-                                 ad_params.g, actMass, actInertia, damping,
-                                 ad_params.DELTA_T, ad_params.B0, muhat, net_mL,
+                                 ctx.g, actMass, actInertia, damping,
+                                 ctx.DELTA_T, ctx.B0, muhat, net_mL,
                                  vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
@@ -1343,6 +1223,29 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
     return out;
 }
 
+// =============================================================================
+// Legacy API Wrappers for Python Bindings
+// =============================================================================
+// These maintain backward compatibility with the Python bindings while using
+// the new LearnableParamsAD implementation internally.
+
+inline constexpr int NUM_LEARNABLE_PARAMS = 16;
+
+inline constexpr int THETA_OFFSET_DAMPING = 0;
+inline constexpr int THETA_OFFSET_K_DIAG = 6;
+inline constexpr int THETA_OFFSET_USTAR = 9;
+inline constexpr int THETA_OFFSET_ACTMASS = 12;
+inline constexpr int THETA_OFFSET_MAGMOMENT = 13;
+
+inline Eigen::VectorXd packLearnableParams(const DYNNLEqnParams& params, int flex_seg_index = 0) {
+    LearnableParamsAD<double> learnable(params, flex_seg_index);
+    return learnable.to_vector();
+}
+
+inline std::vector<std::string> getLearnableParamNames() {
+    return LearnableParamsAD<double>::get_param_names();
+}
+
 } // namespace dynnl_ad_eigen
 
 inline Eigen::VectorXd DYNNLEquationResidualEigenDouble(const Eigen::VectorXd& x_scaled, DYNNLEqnParams& Params)
@@ -1392,7 +1295,9 @@ inline Eigen::MatrixXd DYNNLEquationParameterJacobianEigenAD(
     using autodiff::wrt;
     using autodiff::at;
 
-    Eigen::VectorXd theta_d = dynnl_ad_eigen::packLearnableParams(Params, 0);
+    // Create base context from params (double precision)
+    dynnl_ad_eigen::DynamicsContextAD<double> ctx_base = dynnl_ad_eigen::DynamicsContextAD<double>::from_params(Params, 0);
+    Eigen::VectorXd theta_d = ctx_base.learnable.to_vector();
 
     VectorXreal x_ad(x_scaled.size());
     for (int i = 0; i < x_scaled.size(); ++i) x_ad(i) = x_scaled(i);
@@ -1404,7 +1309,10 @@ inline Eigen::MatrixXd DYNNLEquationParameterJacobianEigenAD(
     Eigen::MatrixXd J_theta;
 
     auto residual_fn = [&](const VectorXreal& theta_) -> VectorXreal {
-        return dynnl_ad_eigen::DYNNLEquationResidualWithParamsAD<real>(x_ad, theta_, &Params);
+        // Create AD context from base, then update learnable params
+        dynnl_ad_eigen::DynamicsContextAD<real> ctx_ad(ctx_base);
+        ctx_ad.learnable.from_vector(theta_);
+        return dynnl_ad_eigen::DYNNLEquationResidualWithParamsAD<real>(x_ad, ctx_ad);
     };
 
     jacobian(residual_fn, wrt(theta_ad), at(theta_ad), y_ad, J_theta);
@@ -1435,7 +1343,9 @@ inline void DYNNLEquationFullJacobiansEigenAD(
     using autodiff::wrt;
     using autodiff::at;
 
-    Eigen::VectorXd theta_d = dynnl_ad_eigen::packLearnableParams(Params, 0);
+    // Create base context from params (double precision)
+    dynnl_ad_eigen::DynamicsContextAD<double> ctx_base = dynnl_ad_eigen::DynamicsContextAD<double>::from_params(Params, 0);
+    Eigen::VectorXd theta_d = ctx_base.learnable.to_vector();
 
     VectorXreal x(x_scaled.size());
     for (int i = 0; i < x_scaled.size(); ++i) x(i) = x_scaled(i);
@@ -1447,8 +1357,11 @@ inline void DYNNLEquationFullJacobiansEigenAD(
     J_x = DYNNLEquationJacobianEigenAD(x_scaled, Params, &residual_x);
 
     VectorXreal y;
-    auto residual_fn = [&x, &Params](const VectorXreal& theta_) -> VectorXreal {
-        return dynnl_ad_eigen::DYNNLEquationResidualWithParamsAD<real>(x, theta_, &Params);
+    auto residual_fn = [&x, &ctx_base](const VectorXreal& theta_) -> VectorXreal {
+        // Create AD context from base, then update learnable params
+        dynnl_ad_eigen::DynamicsContextAD<real> ctx_ad(ctx_base);
+        ctx_ad.learnable.from_vector(theta_);
+        return dynnl_ad_eigen::DYNNLEquationResidualWithParamsAD<real>(x, ctx_ad);
     };
 
     jacobian(residual_fn, wrt(theta), at(theta), y, J_theta);
@@ -1497,5 +1410,5 @@ inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
 
     return J_u;
 }
-
 } // namespace CRMCatheterModel
+

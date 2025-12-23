@@ -1,12 +1,163 @@
 #pragma once
 
 #include <vector>
+#include <string>
 #include <Eigen/Dense>
 #include <autodiff/forward/real.hpp>
 #include "CRM_DynamicsContext.hpp"
 
 namespace CRMCatheterModel {
+
 namespace dynnl_ad_eigen {
+
+// Type aliases for cleaner code
+template <typename Scalar>
+using Vec3 = Eigen::Matrix<Scalar, 3, 1>;
+
+template <typename Scalar>
+using Mat3 = Eigen::Matrix<Scalar, 3, 3, Eigen::RowMajor>;
+
+/**
+ * @brief Container for all learnable parameters in the CRM dynamics model.
+ *
+ * This struct holds the 16 learnable parameters that can be optimized via gradient descent.
+ * It supports both double and autodiff::real types for automatic differentiation.
+ *
+ * Parameter breakdown (16 total):
+ * - damping[6]: Linear (3) + angular (3) damping coefficients (per-actuator)
+ * - K_diag[3]: Diagonal of stiffness matrix K (per-flexible-segment)
+ * - ustar[3]: Rest curvature (per-flexible-segment)
+ * - actMass: Actuator mass (per-actuator)
+ * - MagMoment[3]: Magnetic moment vector (per-actuator)
+ *
+ * Note: For NUM_ACT_SET==1 systems, all parameters from actuator[0] and flex_seg[0] are used.
+ *
+ * @tparam Scalar Numeric type (double or autodiff::real)
+ */
+template <typename Scalar>
+struct LearnableParamsAD {
+    // Actuator parameters (from actuator[0])
+    Eigen::Matrix<Scalar, 6, 1> damping;   ///< Linear (3) + angular (3) damping coefficients
+    Scalar actMass;                         ///< Actuator mass
+    Eigen::Matrix<Scalar, 3, 1> MagMoment; ///< Magnetic moment vector
+
+    // Flexible segment parameters (from flex_seg[0] for single-actuator systems)
+    Eigen::Matrix<Scalar, 3, 1> K_diag;    ///< Diagonal of stiffness matrix K
+    Eigen::Matrix<Scalar, 3, 1> ustar;     ///< Rest curvature
+
+    /**
+     * @brief Default constructor - zero-initialize all parameters.
+     */
+    LearnableParamsAD()
+        : damping(Eigen::Matrix<Scalar, 6, 1>::Zero()),
+          actMass(Scalar(0.0)),
+          MagMoment(Eigen::Matrix<Scalar, 3, 1>::Zero()),
+          K_diag(Eigen::Matrix<Scalar, 3, 1>::Zero()),
+          ustar(Eigen::Matrix<Scalar, 3, 1>::Zero())
+    {}
+
+    /**
+     * @brief Construct from DYNNLEqnParams by extracting learnable parameters.
+     *
+     * Extracts parameters from:
+     * - actuator[0] for damping, actMass, MagMoment
+     * - flex_seg[flex_seg_idx] for K_diag, ustar
+     *
+     * @param params Source parameter struct
+     * @param flex_seg_idx Which flexible segment to extract K and ustar from (default 0)
+     */
+    explicit LearnableParamsAD(const DYNNLEqnParams& params, int flex_seg_idx = 0);
+
+    /**
+     * @brief Reconstruct full 3x3 stiffness matrix K from diagonal.
+     * @return Diagonal matrix with K_diag on the diagonal
+     */
+    Mat3<Scalar> getK() const {
+        Mat3<Scalar> K = Mat3<Scalar>::Zero();
+        K(0, 0) = K_diag(0);
+        K(1, 1) = K_diag(1);
+        K(2, 2) = K_diag(2);
+        return K;
+    }
+
+    /**
+     * @brief Compute inverse of stiffness matrix Kinv from diagonal.
+     * @return Diagonal matrix with 1/K_diag(i) on the diagonal (with regularization)
+     */
+    Mat3<Scalar> getKinv() const {
+        Mat3<Scalar> Kinv = Mat3<Scalar>::Zero();
+        Kinv(0, 0) = Scalar(1.0) / (K_diag(0) + Scalar(1e-12));
+        Kinv(1, 1) = Scalar(1.0) / (K_diag(1) + Scalar(1e-12));
+        Kinv(2, 2) = Scalar(1.0) / (K_diag(2) + Scalar(1e-12));
+        return Kinv;
+    }
+
+    /**
+     * @brief Compute skew-symmetric matrix from magnetic moment vector.
+     * @return 3x3 skew-symmetric matrix muhat such that muhat * v = MagMoment x v
+     */
+    Mat3<Scalar> getMuHat() const {
+        Mat3<Scalar> muhat;
+        muhat << Scalar(0), -MagMoment(2), MagMoment(1),
+                 MagMoment(2), Scalar(0), -MagMoment(0),
+                 -MagMoment(1), MagMoment(0), Scalar(0);
+        return muhat;
+    }
+
+    /**
+     * @brief Serialize all learnable parameters to a flat vector.
+     *
+     * Parameter order (16 total):
+     * [0-5]:   damping[6]
+     * [6-8]:   K_diag[3]
+     * [9-11]:  ustar[3]
+     * [12]:    actMass
+     * [13-15]: MagMoment[3]
+     *
+     * This order matches THETA_OFFSET_* constants in the legacy code.
+     *
+     * @return 16-element vector of learnable parameters
+     */
+    Eigen::Matrix<Scalar, 16, 1> to_vector() const {
+        Eigen::Matrix<Scalar, 16, 1> theta;
+        theta.template segment<6>(0) = damping;
+        theta.template segment<3>(6) = K_diag;
+        theta.template segment<3>(9) = ustar;
+        theta(12) = actMass;
+        theta.template segment<3>(13) = MagMoment;
+        return theta;
+    }
+
+    /**
+     * @brief Deserialize learnable parameters from a flat vector.
+     *
+     * This is the inverse of to_vector(). It updates all fields from the input vector.
+     *
+     * @param theta 16-element vector of learnable parameters
+     */
+    void from_vector(const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& theta) {
+        damping = theta.template segment<6>(0);
+        K_diag = theta.template segment<3>(6);
+        ustar = theta.template segment<3>(9);
+        actMass = theta(12);
+        MagMoment = theta.template segment<3>(13);
+    }
+
+    /**
+     * @brief Get names of all learnable parameters for debugging/logging.
+     * @return Vector of 16 parameter names
+     */
+    static std::vector<std::string> get_param_names() {
+        return {
+            "damping_v0", "damping_v1", "damping_v2",
+            "damping_w0", "damping_w1", "damping_w2",
+            "K_diag_0", "K_diag_1", "K_diag_2",
+            "ustar_0", "ustar_1", "ustar_2",
+            "actMass",
+            "MagMoment_0", "MagMoment_1", "MagMoment_2"
+        };
+    }
+};
 
 /**
  * @brief Templated container for dynamics parameters of a single actuator.
@@ -111,10 +262,29 @@ struct DynamicsContextAD {
     double DELTA_T;  ///< Time step (not differentiated, remains double)
     IntegratorType integrator_type;  ///< Which integrator to use (not differentiated)
 
+    // NEW: Learnable parameters (replaces shadow struct DYNNLEqnParamsAD)
+    LearnableParamsAD<Scalar> learnable;  ///< All 16 learnable parameters
+
+    // NEW: Non-learnable physical constants (remain double for efficiency)
+    Eigen::Vector3d B0;           ///< Magnetic field vector
+    Eigen::Vector3d g;            ///< Gravity vector
+    Eigen::Matrix3d actInertia;   ///< Actuator inertia matrix (3x3)
+
+    // NEW: Pointer to geometry data (not owned, read-only access)
+    const DYNNLEqnParams* geometry;  ///< Pointer for accessing xi, xf, TipForce, SegBounds, etc.
+
     /**
      * @brief Default constructor - initializes empty context with ABM4 (legacy default).
      */
-    DynamicsContextAD() : DELTA_T(0.0), integrator_type(IntegratorType::ABM4) {}
+    DynamicsContextAD()
+        : DELTA_T(0.0),
+          integrator_type(IntegratorType::ABM4),
+          learnable(),
+          B0(Eigen::Vector3d::Zero()),
+          g(Eigen::Vector3d::Zero()),
+          actInertia(Eigen::Matrix3d::Zero()),
+          geometry(nullptr)
+    {}
 
     /**
      * @brief Construct from non-templated DynamicsContext.
@@ -122,13 +292,107 @@ struct DynamicsContextAD {
      * This constructor enables conversion from the base double-precision version
      * to the templated version. When Scalar = double, this is essentially a copy.
      * When Scalar = autodiff::real, this converts all values to AD types.
+     *
+     * Note: This constructor does NOT populate learnable, B0, g, actInertia, or geometry.
+     * Use the DYNNLEqnParams constructor for full initialization.
      */
     explicit DynamicsContextAD(const DynamicsContext& ctx)
-        : DELTA_T(ctx.DELTA_T), integrator_type(ctx.integrator_type)
+        : DELTA_T(ctx.DELTA_T),
+          integrator_type(ctx.integrator_type),
+          learnable(),
+          B0(Eigen::Vector3d::Zero()),
+          g(Eigen::Vector3d::Zero()),
+          actInertia(Eigen::Matrix3d::Zero()),
+          geometry(nullptr)
     {
         actuators.reserve(ctx.size());
         for (int i = 0; i < ctx.size(); ++i) {
             actuators.emplace_back(ctx.actuators[i]);
+        }
+    }
+
+    /**
+     * @brief Construct from DYNNLEqnParams with full initialization.
+     *
+     * This is the preferred constructor for AD residual functions. It extracts:
+     * - Learnable parameters from actuator[0] and flex_seg[flex_seg_idx]
+     * - Physical constants (B0, g, actInertia)
+     * - Dynamics state from DynamicsContext
+     * - Geometry pointer for read-only access
+     *
+     * @param params Source parameter struct
+     * @param flex_seg_idx Which flexible segment to extract K and ustar from (default 0)
+     */
+    explicit DynamicsContextAD(const DYNNLEqnParams& params, int flex_seg_idx = 0);
+
+    /**
+     * @brief Static factory method for clarity.
+     *
+     * This is equivalent to the constructor but provides clearer syntax:
+     * `auto ctx = DynamicsContextAD<real>::from_params(params);`
+     *
+     * @param params Source parameter struct
+     * @param flex_seg_idx Which flexible segment to extract K and ustar from (default 0)
+     * @return Fully initialized DynamicsContextAD
+     */
+    static DynamicsContextAD from_params(const DYNNLEqnParams& params, int flex_seg_idx = 0) {
+        return DynamicsContextAD(params, flex_seg_idx);
+    }
+
+    /**
+     * @brief Template copy constructor for converting double→AD types.
+     *
+     * This enables creating a DynamicsContextAD<autodiff::real> from a
+     * DynamicsContextAD<double>, which is useful in the gradient computation lambda.
+     *
+     * @tparam OtherScalar Source scalar type (typically double)
+     * @param other Source context
+     */
+    template <typename OtherScalar>
+    explicit DynamicsContextAD(const DynamicsContextAD<OtherScalar>& other)
+        : DELTA_T(other.DELTA_T),
+          integrator_type(other.integrator_type),
+          B0(other.B0),
+          g(other.g),
+          actInertia(other.actInertia),
+          geometry(other.geometry)
+    {
+        // Convert actuators
+        actuators.reserve(other.actuators.size());
+        for (const auto& act : other.actuators) {
+            actuators.emplace_back();
+            auto& dst = actuators.back();
+            // Convert each field from OtherScalar to Scalar
+            for (int i = 0; i < 6; ++i) dst.damping(i) = Scalar(act.damping(i));
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    dst.inertia(r, c) = Scalar(act.inertia(r, c));
+                }
+            }
+            dst.mass = Scalar(act.mass);
+            for (int i = 0; i < 3; ++i) {
+                dst.v_L_pre(i) = Scalar(act.v_L_pre(i));
+                dst.w_L_pre(i) = Scalar(act.w_L_pre(i));
+                dst.p_pre(i) = Scalar(act.p_pre(i));
+            }
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    dst.R_pre(r, c) = Scalar(act.R_pre(r, c));
+                }
+            }
+            for (int i = 0; i < 3; ++i) {
+                dst.m_L(i) = Scalar(act.m_L(i));
+                dst.n_L(i) = Scalar(act.n_L(i));
+            }
+        }
+
+        // Convert learnable parameters
+        for (int i = 0; i < 6; ++i) learnable.damping(i) = Scalar(other.learnable.damping(i));
+        learnable.actMass = Scalar(other.learnable.actMass);
+        for (int i = 0; i < 3; ++i) {
+            learnable.MagMoment(i) = Scalar(other.learnable.MagMoment(i));
+            learnable.K_diag(i) = Scalar(other.learnable.K_diag(i));
+            learnable.ustar(i) = Scalar(other.learnable.ustar(i));
         }
     }
 
@@ -202,6 +466,12 @@ inline DynamicsContextAD<double> convertToAD<double>(const DynamicsContext& ctx)
 
     return result;
 }
+
+// =============================================================================
+// Template Implementation Note
+// =============================================================================
+// The constructors that take DYNNLEqnParams are implemented in
+// CRM_DynamicsContext_AD_impl.hpp, which must be included AFTER CRMDYN.hpp
 
 } // namespace dynnl_ad_eigen
 } // namespace CRMCatheterModel

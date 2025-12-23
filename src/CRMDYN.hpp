@@ -1,4 +1,7 @@
 #pragma once
+
+#define CRMDYN_HPP_INCLUDED
+
 #include <cmath>
 #include "CRM_MatrixOperations.hpp"
 #include <math.h>
