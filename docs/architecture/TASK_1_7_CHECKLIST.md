@@ -185,11 +185,11 @@
 
 ### Step 2.2: Update Existing AD Residual
 **Goal**: Use new `DynamicsContextAD` in existing AD code.
-**Status**: PARTIAL (parameter-gradient path updated)
+**Status**: COMPLETED (all residual functions now use DynamicsContextAD)
 
-- [ ] Refactor `DYNNLEquationResidualEigenAD` to accept `DynamicsContextAD<Scalar>`
+- [x] Refactor `DYNNLEquationResidualEigenAD` to accept `DynamicsContextAD<Scalar>`
 - [x] Update `DYNNLEquationResidualWithParamsAD` similarly
-- [ ] Update `DYNNLEquationResidualWithControlsAD` similarly
+- [x] Update `DYNNLEquationResidualWithControlsAD` similarly
 
 ### Step 2.3: Templatize CRMFlexible_IVP_Back
 **Goal**: Make backward integration AD-compatible.
@@ -216,11 +216,12 @@
 - [x] Remove manual sync layer from `crm_bindings.cpp`
 
 ### Step 2.6: Validation
-**Status**: PARTIAL (parameter Jacobian AD tests run)
-- [ ] Run: `pytest tests/test_dynnlequation_residual_eigen_autodiff.py -v`
-- [x] Run: `pytest tests/test_parameter_jacobian_autodiff.py -v`
-- [ ] Run: `pytest tests/test_dynamics_implicit_linearization.py -v`
-- [x] Verify AD gradients match FD within tolerance
+**Status**: COMPLETED (all tests pass post-refactoring)
+- [x] Run: `pytest tests/test_dynnlequation_residual_eigen_autodiff.py -v` (1 passed)
+- [x] Run: `pytest tests/test_parameter_jacobian_autodiff.py -v` (3 passed)
+- [x] Run: `pytest tests/test_dynamics_implicit_linearization.py -v` (2 passed)
+- [x] Run: `pytest -q` (32 passed)
+- [x] Verify AD gradients match FD within tolerance (parameter Jacobian tests validate)
 
 ---
 
