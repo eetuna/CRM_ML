@@ -883,7 +883,6 @@ template <typename Scalar>
 inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(const autodiff::VectorXreal& x_scaled,
                                                                               const DynamicsContextAD<Scalar>& ctx)
 {
-    static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
 
     // Guard against null geometry pointer (indicates incomplete context initialization)
@@ -894,13 +893,18 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
     }
 
     const DYNNLEqnParams& Params = *ctx.geometry;
-    // Unpack NLE variables (scaled) -> physical m_L, n_L.
-    Vec3<Scalar> m_L;
-    Vec3<Scalar> n_L;
-    for (int i = 0; i < 3; ++i) {
-        m_L(i) = Scalar(IVALUE_SCALE_M) * x_scaled(i);
-        n_L(i) = Scalar(IVALUE_SCALE_N) * x_scaled(3 + i);
+    // Unpack NLE variables (scaled) -> physical m_L, n_L for each actuator.
+    // Layout: [m_L_0[3], n_L_0[3], m_L_1[3], n_L_1[3], ...]
+    std::array<Vec3<Scalar>, NUM_ACT_SET> m_L_all, n_L_all;
+    for (int j = 0; j < NUM_ACT_SET; ++j) {
+        for (int i = 0; i < 3; ++i) {
+            m_L_all[j](i) = Scalar(IVALUE_SCALE_M) * x_scaled(i + j*6);
+            n_L_all[j](i) = Scalar(IVALUE_SCALE_N) * x_scaled(i + j*6 + 3);
+        }
     }
+    // For single-actuator compatibility, use first actuator
+    Vec3<Scalar>& m_L = m_L_all[0];
+    Vec3<Scalar>& n_L = n_L_all[0];
 
     // tip force (free tip) is fixed; note: in existing DYNNLEquation they use Params.TipForce.
     Vec3<Scalar> n_0;
@@ -936,21 +940,6 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
     Mat3<Scalar> R_ = Mat3<Scalar>::Identity();
 
     Vec6<Scalar> xdot_dummy = Vec6<Scalar>::Zero();
-    Vec6<Scalar> vw1 = Vec6<Scalar>::Zero();
-    Vec3<Scalar> p1 = Vec3<Scalar>::Zero();
-    Mat3<Scalar> R1 = Mat3<Scalar>::Identity();
-
-    // Downstream coil state seed.
-    Vec6<Scalar> vw_coil0;
-    Vec3<Scalar> p_coil0;
-    Mat3<Scalar> R_coil0;
-    const auto& act0 = Params.dynamics.actuators[0];
-    for (int i = 0; i < 3; ++i) {
-        vw_coil0(i) = Scalar(act0.v_L_pre(i));
-        vw_coil0(3 + i) = Scalar(act0.w_L_pre(i));
-        p_coil0(i) = Scalar(act0.p_pre(i));
-    }
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(act0.R_pre(r, c));
 
     // Extract learnable parameters from context
     const Scalar& actMass = ctx.learnable.actMass;
@@ -964,9 +953,9 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
 
     // Coil output cache for segments above.
     bool have_out_coil = false;
-    Vec6<Scalar> vw_coil_out = vw_coil0;
-    Vec3<Scalar> p_coil_out = p_coil0;
-    Mat3<Scalar> R_coil_out = R_coil0;
+    Vec6<Scalar> vw_coil_out = Vec6<Scalar>::Zero();
+    Vec3<Scalar> p_coil_out = Vec3<Scalar>::Zero();
+    Mat3<Scalar> R_coil_out = Mat3<Scalar>::Identity();
 
     for (int segi = NUM_SEGMENTS - 1; segi >= 0; --segi) {
         if (segi % 2 == 0) {
@@ -979,56 +968,60 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(c
                 // last segment: tau_0 = 0, n_0 is tip force.
                 u_t = ustar + Kinv * tau_0;
                 CRMFlexible_IVP_BackAD(segi, p_t, R_t, ctx, u_t, n_0, u_tau, p_, R_);
+
+                // Calculate tau and net_mL for actuator below
+                const Mat3<Scalar> K = ctx.learnable.getK();
+                tau = K * (u_tau - ustar);
+                const int actno = fsegi - 1;
+                net_mL = m_L_all[actno] - tau;
             } else {
-                // non-free tip flexible segments with coil on top (see CoilDynamics_Defs.cpp).
-                // u_L = ustar + Kinv * m_L (moment at lower side of upper coil)
-                const Vec3<Scalar> u_L = ustar + Kinv * m_L;
+                // non-free tip flexible segments with coil on top
+                const int actno = fsegi;
+                // u_L = ustar + Kinv * m_L[actno]
+                const Vec3<Scalar> u_L = ustar + Kinv * m_L_all[actno];
                 const int actseg = segi + 1;
                 const double RigidSegmentLength = Params.SegBounds[actseg + 1] - Params.SegBounds[actseg];
 
-                if (!have_out_coil) {
-                    // If coil output is missing, keep behavior deterministic (this indicates a segment ordering mismatch).
-                    // We propagate using the current carried pose.
-                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, ctx, u_L, n_L, u_tau, p_, R_);
-                } else {
-                    // Starting pose for this flex segment is half a rigid segment "above" coil center.
-                    const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
-                    const Mat3<Scalar> R_L = R_coil_out;
-                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L, u_f, p_f, R_f);
-                    u_tau = u_f;
-                    p_ = p_f;
-                    R_ = R_f;
+                // Starting pose for this flex segment is half a rigid segment "above" coil center
+                const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
+                const Mat3<Scalar> R_L = R_coil_out;
+                CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L_all[actno], u_f, p_f, R_f);
+
+                const int actno_below = fsegi - 1;
+                if (actno_below >= 0) {
+                    // Calculate moment at upper side of coil and net torque for actuator below
+                    const Mat3<Scalar> K = ctx.learnable.getK();
+                    tau = K * (u_f - ustar);
+                    net_mL = m_L_all[actno_below] - tau;
                 }
             }
-
-            // tau = K * (u_tau - ustar)
-            const Mat3<Scalar> K = ctx.learnable.getK();
-            tau = K * (u_tau - ustar);
-
-            // next coil is below this flex segment (actno = fsegi-1).
-            // With NUM_ACT_SET==1, only one coil exists; original uses actno = fsegi-1.
-            // We assume fsegi==1 for last flex (so actno==0). For fsegi==0, there is no coil below.
-            // If actno < 0, no coil: just propagate.
-            const int actno = fsegi - 1;
-            if (actno >= 0) {
-                // net torque applied to the downward coil: m_L - tau
-                net_mL = m_L - tau;
-            } else {
-                // no coil below: just update carried state
-                p_f = p_;
-                R_f = R_;
-                u_f = u_tau;
-            }
         } else {
-            // rigid (actuator) segment: integrate coil dynamics using net_mL from previous flexible step.
+            // rigid (actuator) segment: integrate coil dynamics
             const int actno = (segi - 1) >> 1;
-            (void)actno;
 
-            // net_nL = n_L - n_0 for NUM_ACT_SET==1 (see DYNNLEquation).
-            net_nL = n_L - n_0;
+            // Calculate net force: n_L[actno] - n_L[actno+1] or n_L[actno] - n_0 for last actuator
+            if (actno < NUM_ACT_SET - 1) {
+                net_nL = n_L_all[actno] - n_L_all[actno + 1];
+            } else {
+                net_nL = n_L_all[actno] - n_0;
+            }
+
+            // Get actuator-specific initial state and parameters
+            const auto& act = Params.dynamics.actuators[actno];
+            Vec6<Scalar> vw_coil;
+            Vec3<Scalar> p_coil;
+            Mat3<Scalar> R_coil;
+            for (int i = 0; i < 3; ++i) {
+                vw_coil(i) = Scalar(act.v_L_pre(i));
+                vw_coil(3 + i) = Scalar(act.w_L_pre(i));
+                p_coil(i) = Scalar(act.p_pre(i));
+            }
+            for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) {
+                R_coil(r, c) = Scalar(act.R_pre(r, c));
+            }
 
             CoilDynamicsDispatch(ctx.integrator_type,
-                                 vw_coil0, p_coil0, R_coil0, net_nL,
+                                 vw_coil, p_coil, R_coil, net_nL,
                                  ctx.g, actMass, actInertia, damping,
                                  ctx.DELTA_T, ctx.B0, muhat, net_mL,
                                  vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
@@ -1054,7 +1047,6 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& x_scaled,
     const DynamicsContextAD<Scalar>& ctx)
 {
-    static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
 
     // Guard against null geometry pointer (indicates incomplete context initialization)
@@ -1067,12 +1059,18 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     // Geometry data accessed via ctx.geometry pointer
     const DYNNLEqnParams& Params = *ctx.geometry;
 
-    Vec3<Scalar> m_L;
-    Vec3<Scalar> n_L;
-    for (int i = 0; i < 3; ++i) {
-        m_L(i) = Scalar(IVALUE_SCALE_M) * x_scaled(i);
-        n_L(i) = Scalar(IVALUE_SCALE_N) * x_scaled(3 + i);
+    // Unpack NLE variables (scaled) -> physical m_L, n_L for each actuator.
+    // Layout: [m_L_0[3], n_L_0[3], m_L_1[3], n_L_1[3], ...]
+    std::array<Vec3<Scalar>, NUM_ACT_SET> m_L_all, n_L_all;
+    for (int j = 0; j < NUM_ACT_SET; ++j) {
+        for (int i = 0; i < 3; ++i) {
+            m_L_all[j](i) = Scalar(IVALUE_SCALE_M) * x_scaled(i + j*6);
+            n_L_all[j](i) = Scalar(IVALUE_SCALE_N) * x_scaled(i + j*6 + 3);
+        }
     }
+    // For single-actuator compatibility, use first actuator
+    Vec3<Scalar>& m_L = m_L_all[0];
+    Vec3<Scalar>& n_L = n_L_all[0];
 
     Vec3<Scalar> n_0;
     for (int i = 0; i < 3; ++i) n_0(i) = Scalar(Params.TipForce[i]);
@@ -1106,17 +1104,6 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     Vec3<Scalar> p1 = Vec3<Scalar>::Zero();
     Mat3<Scalar> R1 = Mat3<Scalar>::Identity();
 
-    Vec6<Scalar> vw_coil0;
-    Vec3<Scalar> p_coil0;
-    Mat3<Scalar> R_coil0;
-    const auto& act0 = Params.dynamics.actuators[0];
-    for (int i = 0; i < 3; ++i) {
-        vw_coil0(i) = Scalar(act0.v_L_pre(i));
-        vw_coil0(3 + i) = Scalar(act0.w_L_pre(i));
-        p_coil0(i) = Scalar(act0.p_pre(i));
-    }
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(act0.R_pre(r, c));
-
     // Extract learnable parameters from context
     const Scalar& actMass = ctx.learnable.actMass;
     const Eigen::Matrix3d& actInertia = ctx.actInertia;
@@ -1131,9 +1118,9 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
     Vec3<Scalar> net_nL = Vec3<Scalar>::Zero();
 
     bool have_out_coil = false;
-    Vec6<Scalar> vw_coil_out = vw_coil0;
-    Vec3<Scalar> p_coil_out = p_coil0;
-    Mat3<Scalar> R_coil_out = R_coil0;
+    Vec6<Scalar> vw_coil_out = Vec6<Scalar>::Zero();
+    Vec3<Scalar> p_coil_out = Vec3<Scalar>::Zero();
+    Mat3<Scalar> R_coil_out = Mat3<Scalar>::Identity();
 
     for (int segi = NUM_SEGMENTS - 1; segi >= 0; --segi) {
         if (segi % 2 == 0) {
@@ -1142,41 +1129,50 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
             if (segi == NUM_SEGMENTS - 1) {
                 u_t = ustar + Kinv * tau_0;
                 CRMFlexible_IVP_BackAD(segi, p_t, R_t, ctx, u_t, n_0, u_tau, p_, R_);
+
+                tau = K * (u_tau - ustar);
+                const int actno = fsegi - 1;
+                net_mL = m_L_all[actno] - tau;
             } else {
-                const Vec3<Scalar> u_L = ustar + Kinv * m_L;
+                const int actno = fsegi;
+                const Vec3<Scalar> u_L = ustar + Kinv * m_L_all[actno];
                 const int actseg = segi + 1;
                 const double RigidSegmentLength = Params.SegBounds[actseg + 1] - Params.SegBounds[actseg];
 
-                if (!have_out_coil) {
-                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, ctx, u_L, n_L, u_tau, p_, R_);
-                } else {
-                    const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
-                    const Mat3<Scalar> R_L = R_coil_out;
-                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L, u_f, p_f, R_f);
-                    u_tau = u_f;
-                    p_ = p_f;
-                    R_ = R_f;
+                const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
+                const Mat3<Scalar> R_L = R_coil_out;
+                CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L_all[actno], u_f, p_f, R_f);
+
+                const int actno_below = fsegi - 1;
+                if (actno_below >= 0) {
+                    tau = K * (u_f - ustar);
+                    net_mL = m_L_all[actno_below] - tau;
                 }
-            }
-
-            tau = K * (u_tau - ustar);
-
-            const int actno = fsegi - 1;
-            if (actno >= 0) {
-                net_mL = m_L - tau;
-            } else {
-                p_f = p_;
-                R_f = R_;
-                u_f = u_tau;
             }
         } else {
             const int actno = (segi - 1) >> 1;
-            (void)actno;
 
-            net_nL = n_L - n_0;
+            if (actno < NUM_ACT_SET - 1) {
+                net_nL = n_L_all[actno] - n_L_all[actno + 1];
+            } else {
+                net_nL = n_L_all[actno] - n_0;
+            }
+
+            const auto& act = Params.dynamics.actuators[actno];
+            Vec6<Scalar> vw_coil;
+            Vec3<Scalar> p_coil;
+            Mat3<Scalar> R_coil;
+            for (int i = 0; i < 3; ++i) {
+                vw_coil(i) = Scalar(act.v_L_pre(i));
+                vw_coil(3 + i) = Scalar(act.w_L_pre(i));
+                p_coil(i) = Scalar(act.p_pre(i));
+            }
+            for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) {
+                R_coil(r, c) = Scalar(act.R_pre(r, c));
+            }
 
             CoilDynamicsDispatch(ctx.integrator_type,
-                                 vw_coil0, p_coil0, R_coil0, net_nL,
+                                 vw_coil, p_coil, R_coil, net_nL,
                                  ctx.g, actMass, actInertia, damping,
                                  ctx.DELTA_T, ctx.B0, muhat, net_mL,
                                  vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
@@ -1207,10 +1203,9 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
 template <typename Scalar>
 inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithControlsAD(
     const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& x_scaled,
-    const Eigen::Matrix<Scalar, 3, 1>& currents,
+    const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& currents,
     const DynamicsContextAD<Scalar>& ctx)
 {
-    static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
 
     // Guard against null geometry pointer (indicates incomplete context initialization)
@@ -1222,21 +1217,37 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
 
     const DYNNLEqnParams& Params = *ctx.geometry;
 
-    // Compute MagMoment from currents using CoilAlignmentTurnAreaMatrix
-    const Eigen::Matrix3d& CATAM = Params.CoilAlignmentTurnAreaMatrix[0];
-    Vec3<Scalar> MagMoment = CATAM.template cast<Scalar>() * currents;
-    Mat3<Scalar> muhat;
-    muhat << Scalar(0), -MagMoment(2), MagMoment(1),
-             MagMoment(2), Scalar(0), -MagMoment(0),
-             -MagMoment(1), MagMoment(0), Scalar(0);
-
-    // Unpack NLE variables (scaled) -> physical m_L, n_L.
-    Vec3<Scalar> m_L;
-    Vec3<Scalar> n_L;
-    for (int i = 0; i < 3; ++i) {
-        m_L(i) = Scalar(IVALUE_SCALE_M) * x_scaled(i);
-        n_L(i) = Scalar(IVALUE_SCALE_N) * x_scaled(3 + i);
+    // Compute MagMoment from currents using CoilAlignmentTurnAreaMatrix for each actuator
+    // currents layout: [i0[3], i1[3], ...] for NUM_ACT_SET actuators
+    std::array<Vec3<Scalar>, NUM_ACT_SET> MagMoment_all;
+    std::array<Mat3<Scalar>, NUM_ACT_SET> muhat_all;
+    for (int j = 0; j < NUM_ACT_SET; ++j) {
+        const Eigen::Matrix3d& CATAM = Params.CoilAlignmentTurnAreaMatrix[j];
+        Eigen::Matrix<Scalar, 3, 1> currents_j;
+        for (int i = 0; i < 3; ++i) {
+            currents_j(i) = currents(i + j*3);
+        }
+        MagMoment_all[j] = CATAM.template cast<Scalar>() * currents_j;
+        const Vec3<Scalar>& MM = MagMoment_all[j];
+        muhat_all[j] << Scalar(0), -MM(2), MM(1),
+                        MM(2), Scalar(0), -MM(0),
+                        -MM(1), MM(0), Scalar(0);
     }
+    // For single-actuator compatibility, use first actuator
+    Mat3<Scalar>& muhat = muhat_all[0];
+
+    // Unpack NLE variables (scaled) -> physical m_L, n_L for each actuator.
+    // Layout: [m_L_0[3], n_L_0[3], m_L_1[3], n_L_1[3], ...]
+    std::array<Vec3<Scalar>, NUM_ACT_SET> m_L_all, n_L_all;
+    for (int j = 0; j < NUM_ACT_SET; ++j) {
+        for (int i = 0; i < 3; ++i) {
+            m_L_all[j](i) = Scalar(IVALUE_SCALE_M) * x_scaled(i + j*6);
+            n_L_all[j](i) = Scalar(IVALUE_SCALE_N) * x_scaled(i + j*6 + 3);
+        }
+    }
+    // For single-actuator compatibility, use first actuator
+    Vec3<Scalar>& m_L = m_L_all[0];
+    Vec3<Scalar>& n_L = n_L_all[0];
 
     Vec3<Scalar> n_0;
     for (int i = 0; i < 3; ++i) n_0(i) = Scalar(Params.TipForce[i]);
@@ -1267,17 +1278,6 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
 
     Vec6<Scalar> xdot_dummy = Vec6<Scalar>::Zero();
 
-    Vec6<Scalar> vw_coil0;
-    Vec3<Scalar> p_coil0;
-    Mat3<Scalar> R_coil0;
-    const auto& act0 = Params.dynamics.actuators[0];
-    for (int i = 0; i < 3; ++i) {
-        vw_coil0(i) = Scalar(act0.v_L_pre(i));
-        vw_coil0(3 + i) = Scalar(act0.w_L_pre(i));
-        p_coil0(i) = Scalar(act0.p_pre(i));
-    }
-    for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) R_coil0(r, c) = Scalar(act0.R_pre(r, c));
-
     // Extract learnable parameters from context
     const Scalar& actMass = ctx.learnable.actMass;
     const Eigen::Matrix3d& actInertia = ctx.actInertia;
@@ -1287,9 +1287,9 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
     Vec3<Scalar> net_nL = Vec3<Scalar>::Zero();
 
     bool have_out_coil = false;
-    Vec6<Scalar> vw_coil_out = vw_coil0;
-    Vec3<Scalar> p_coil_out = p_coil0;
-    Mat3<Scalar> R_coil_out = R_coil0;
+    Vec6<Scalar> vw_coil_out = Vec6<Scalar>::Zero();
+    Vec3<Scalar> p_coil_out = Vec3<Scalar>::Zero();
+    Mat3<Scalar> R_coil_out = Mat3<Scalar>::Identity();
 
     for (int segi = NUM_SEGMENTS - 1; segi >= 0; --segi) {
         if (segi % 2 == 0) {
@@ -1301,43 +1301,52 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithContr
             if (segi == NUM_SEGMENTS - 1) {
                 u_t = ustar + Kinv * tau_0;
                 CRMFlexible_IVP_BackAD(segi, p_t, R_t, ctx, u_t, n_0, u_tau, p_, R_);
+
+                tau = K * (u_tau - ustar);
+                const int actno = fsegi - 1;
+                net_mL = m_L_all[actno] - tau;
             } else {
-                const Vec3<Scalar> u_L = ustar + Kinv * m_L;
+                const int actno = fsegi;
+                const Vec3<Scalar> u_L = ustar + Kinv * m_L_all[actno];
                 const int actseg = segi + 1;
                 const double RigidSegmentLength = Params.SegBounds[actseg + 1] - Params.SegBounds[actseg];
 
-                if (!have_out_coil) {
-                    CRMFlexible_IVP_BackAD(segi, p_f, R_f, ctx, u_L, n_L, u_tau, p_, R_);
-                } else {
-                    const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
-                    const Mat3<Scalar> R_L = R_coil_out;
-                    CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L, u_f, p_f, R_f);
-                    u_tau = u_f;
-                    p_ = p_f;
-                    R_ = R_f;
+                const Vec3<Scalar> p_L = p_coil_out - R_coil_out.col(2) * Scalar(RigidSegmentLength) * Scalar(0.5);
+                const Mat3<Scalar> R_L = R_coil_out;
+                CRMFlexible_IVP_BackAD(segi, p_L, R_L, ctx, u_L, n_L_all[actno], u_f, p_f, R_f);
+
+                const int actno_below = fsegi - 1;
+                if (actno_below >= 0) {
+                    tau = K * (u_f - ustar);
+                    net_mL = m_L_all[actno_below] - tau;
                 }
-            }
-
-            tau = K * (u_tau - ustar);
-
-            const int actno = fsegi - 1;
-            if (actno >= 0) {
-                net_mL = m_L - tau;
-            } else {
-                p_f = p_;
-                R_f = R_;
-                u_f = u_tau;
             }
         } else {
             const int actno = (segi - 1) >> 1;
-            (void)actno;
 
-            net_nL = n_L - n_0;
+            if (actno < NUM_ACT_SET - 1) {
+                net_nL = n_L_all[actno] - n_L_all[actno + 1];
+            } else {
+                net_nL = n_L_all[actno] - n_0;
+            }
+
+            const auto& act = Params.dynamics.actuators[actno];
+            Vec6<Scalar> vw_coil;
+            Vec3<Scalar> p_coil;
+            Mat3<Scalar> R_coil;
+            for (int i = 0; i < 3; ++i) {
+                vw_coil(i) = Scalar(act.v_L_pre(i));
+                vw_coil(3 + i) = Scalar(act.w_L_pre(i));
+                p_coil(i) = Scalar(act.p_pre(i));
+            }
+            for (int r = 0; r < 3; ++r) for (int c = 0; c < 3; ++c) {
+                R_coil(r, c) = Scalar(act.R_pre(r, c));
+            }
 
             CoilDynamicsDispatch(ctx.integrator_type,
-                                 vw_coil0, p_coil0, R_coil0, net_nL,
+                                 vw_coil, p_coil, R_coil, net_nL,
                                  ctx.g, actMass, actInertia, damping,
-                                 ctx.DELTA_T, ctx.B0, muhat, net_mL,
+                                 ctx.DELTA_T, ctx.B0, muhat_all[actno], net_mL,
                                  vw_coil_out, p_coil_out, R_coil_out, xdot_dummy);
             have_out_coil = true;
         }
@@ -1519,7 +1528,7 @@ inline void DYNNLEquationFullJacobiansEigenAD(
 
 inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
     const Eigen::VectorXd& x_scaled,
-    const Eigen::Vector3d& currents,
+    const Eigen::VectorXd& currents,
     DYNNLEqnParams& Params,
     Eigen::VectorXd* out_residual = nullptr)
 {
@@ -1536,13 +1545,13 @@ inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
     VectorXreal x_ad(x_scaled.size());
     for (int i = 0; i < x_scaled.size(); ++i) x_ad(i) = x_scaled(i);
 
-    autodiff::Vector3real u_ad;
-    for (int i = 0; i < 3; ++i) u_ad(i) = currents(i);
+    VectorXreal u_ad(currents.size());
+    for (int i = 0; i < currents.size(); ++i) u_ad(i) = currents(i);
 
     VectorXreal y_ad;
     Eigen::MatrixXd J_u;
 
-    auto residual_fn = [&x_ad, &ctx_base](const autodiff::Vector3real& u_) -> VectorXreal {
+    auto residual_fn = [&x_ad, &ctx_base](const VectorXreal& u_) -> VectorXreal {
         // Create AD context from base
         dynnl_ad_eigen::DynamicsContextAD<real> ctx_ad(ctx_base);
         return dynnl_ad_eigen::DYNNLEquationResidualWithControlsAD<real>(x_ad, u_, ctx_ad);
