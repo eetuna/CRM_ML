@@ -385,6 +385,11 @@ Changed `crm_ml_rl/wrappers/crm_bindings.cpp` line 568-575 from hardcoded 10.0 t
 - ✅ test_dynamics_convergence.py: 1/1 pass
 - ✅ TASK_1_7_FAILING_CASE.json: converges with ABM4 and RK4
 
+### Validation Update (2025-01-14, local)
+- `pytest tests/test_parameter_jacobian_autodiff.py -q` → 3 passed.
+- `pytest tests/test_dynamics_convergence.py -q` → 1 passed.
+- `TASK_1_7_FAILING_CASE.json` now converges with RK4 (`converged=True`, `localmin=0`).
+
 ### Recommended Next Steps
 1. Merge `bugfix/damping-defaults` to main (fixes the persistent instability)
 2. Optional: Consider loading damping from parameter file instead of hardcoding
