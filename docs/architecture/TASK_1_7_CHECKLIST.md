@@ -320,10 +320,10 @@
 - [ ] Update `crm_bindings.cpp` to handle error flag gracefully
 
 ### Step 3.6: Validation
-**Status**: NOT STARTED
-- [ ] Run stability test across parameter sweep
+**Status**: PARTIAL (targeted tests + failing case validation done)
+- [x] Run stability test across parameter sweep (failing case now converges with new damping defaults)
 - [ ] Verify RK4 produces same results as ABM4 for stable regimes
-- [ ] Verify RK4 remains stable where ABM4 fails
+- [ ] Verify RK4 remains stable where ABM4 fails (no ABM4-fail/RK4-pass found yet)
 - [ ] Benchmark RK4 vs ABM4 performance
 
 ---

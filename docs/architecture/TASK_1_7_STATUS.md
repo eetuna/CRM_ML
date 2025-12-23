@@ -19,6 +19,9 @@
 ### Build/Validation Runs (during verification)
 - `cmake --build build` (multiple runs): **Succeeded**, but long compile times (~60–150s) and repeated `#pragma once in main file` warnings from `src/CoilDynamics_Defs.cpp` and `src/numerical/minpack_DYN_Defs.cpp`.
 - `pytest -q` after initial integration wiring fixes: **32 passed**.
+ - 2025-01-14: `pytest tests/test_parameter_jacobian_autodiff.py -q` → **3 passed**.
+ - 2025-01-14: `pytest tests/test_dynamics_convergence.py -q` → **1 passed**.
+ - 2025-01-14: `TASK_1_7_FAILING_CASE.json` now converges with RK4 (`converged=True`, `localmin=0`).
 
 ### Repro & Diagnostics (BVP + IVP)
 - Baseline `step_from_seed` run (locked case) showed BVP failure:

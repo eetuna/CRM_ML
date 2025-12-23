@@ -11,6 +11,7 @@ Identify and fix the root cause of BVP non-convergence that prevents stable dyna
 ## Relevance Audit
 - This plan is now a historical log of the stabilization attempts (steps 1–4 completed).
 - Remaining work should be tracked in `docs/architecture/TASK_1_7_CHECKLIST.md` and Claude’s recommended next steps.
+- Validation update (2025-01-14): failing case now converges; key tests pass. Remaining work is mostly productization (damping source + cleanup).
 
 ## Plan
 
