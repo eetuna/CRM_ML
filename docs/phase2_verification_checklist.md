@@ -87,6 +87,7 @@
 - [x] Phase 2 audit hardening fixes implemented and validated (rebuild + pytest).
 - [x] Rebuild after hardening: `cmake --build build` completed (after timeouts).
 - [x] Tests after hardening: `pytest -q` reported `32 passed in 86.88s`.
+- [x] AD tests: `pytest tests/test_parameter_jacobian_autodiff.py -v` reported `3 passed in 13.93s`.
 
 ## Audit Remediation Summary
 

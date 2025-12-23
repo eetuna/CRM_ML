@@ -129,11 +129,11 @@
 - [x] Verify no memory aliasing with test: compare `dynamics.actuators[0].damping` vs legacy `damping[0]`
 
 ### Step 1.5: Validation
-**Status**: PARTIAL (tests previously passed; re-run needed after current diagnostics)
+**Status**: COMPLETED (tests re-run on current branch)
 
-- [ ] Run all existing tests: `pytest -q` (pending on current branch)
+- [x] Run all existing tests: `pytest -q` (32 passed)
 - [x] Verify "Ghost Value" bug is resolved: check that `packLearnableParams` returns correct values without manual sync
-- [ ] Run AD tests: `pytest tests/test_parameter_jacobian_autodiff.py -v` (pending on current branch)
+- [x] Run AD tests: `pytest tests/test_parameter_jacobian_autodiff.py -v` (3 passed)
 
 ---
 
