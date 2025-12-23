@@ -2,6 +2,7 @@
 
 #include <vector>
 #include <string>
+#include <stdexcept>
 #include <Eigen/Dense>
 #include <autodiff/forward/real.hpp>
 #include "CRM_DynamicsContext.hpp"
@@ -134,8 +135,14 @@ struct LearnableParamsAD {
      * This is the inverse of to_vector(). It updates all fields from the input vector.
      *
      * @param theta 16-element vector of learnable parameters
+     * @throws std::invalid_argument if theta.size() != 16
      */
     void from_vector(const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& theta) {
+        if (theta.size() != 16) {
+            throw std::invalid_argument(
+                "LearnableParamsAD::from_vector: expected 16 parameters, got " +
+                std::to_string(theta.size()));
+        }
         damping = theta.template segment<6>(0);
         K_diag = theta.template segment<3>(6);
         ustar = theta.template segment<3>(9);
@@ -271,7 +278,7 @@ struct DynamicsContextAD {
     Eigen::Matrix3d actInertia;   ///< Actuator inertia matrix (3x3)
 
     // NEW: Pointer to geometry data (not owned, read-only access)
-    const DYNNLEqnParams* geometry;  ///< Pointer for accessing xi, xf, TipForce, SegBounds, etc.
+    const DYNNLEqnParams* geometry;  ///< Pointer for accessing xi, xf, TipForce, SegBounds, etc. Must outlive this context.
 
     /**
      * @brief Default constructor - initializes empty context with ABM4 (legacy default).
@@ -418,6 +425,17 @@ struct DynamicsContextAD {
      */
     bool is_valid() const {
         return !actuators.empty() && DELTA_T > 0.0;
+    }
+
+    /**
+     * @brief Check if the context is valid for AD residual computation.
+     * @return true if basic validity checks pass AND geometry pointer is non-null
+     *
+     * This is a stricter check than is_valid() since AD residual functions
+     * require the geometry pointer to be properly initialized.
+     */
+    bool is_valid_for_ad() const {
+        return is_valid() && geometry != nullptr;
     }
 };
 

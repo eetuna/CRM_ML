@@ -7,6 +7,7 @@
 
 #include <cmath>
 #include <string>
+#include <stdexcept>
 #include <vector>
 
 #include "CRMDYN.hpp"
@@ -668,6 +669,13 @@ inline void CRMFlexible_IVP_BackAD(const int SegmentIndex,
                                    Vec3<Scalar>& out_p,
                                    Mat3<Scalar>& out_R)
 {
+    // Guard against null geometry pointer (indicates incomplete context initialization)
+    if (!ctx.geometry) {
+        throw std::runtime_error(
+            "CRMFlexible_IVP_BackAD: geometry pointer is null; "
+            "context must be initialized via DynamicsContextAD::from_params()");
+    }
+
     // Extract geometry data and learnable parameters
     const DYNNLEqnParams& Params = *ctx.geometry;
     const Mat3<Scalar> K = ctx.learnable.getK();
@@ -938,6 +946,13 @@ inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualWithParam
 {
     static_assert(NUM_ACT_SET == 1, "This Eigen+autodiff residual currently supports NUM_ACT_SET==1.");
     using Resid = Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1>;
+
+    // Guard against null geometry pointer (indicates incomplete context initialization)
+    if (!ctx.geometry) {
+        throw std::runtime_error(
+            "DYNNLEquationResidualWithParamsAD: geometry pointer is null; "
+            "context must be initialized via DynamicsContextAD::from_params()");
+    }
 
     // Geometry data accessed via ctx.geometry pointer
     const DYNNLEqnParams& Params = *ctx.geometry;
@@ -1411,4 +1426,3 @@ inline Eigen::MatrixXd DYNNLEquationControlJacobianEigenAD(
     return J_u;
 }
 } // namespace CRMCatheterModel
-
