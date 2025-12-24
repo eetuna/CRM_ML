@@ -62,6 +62,20 @@
 *   **Task 4.6: FD Epsilon Sensitivity Check**
     *   Verify that the FD baselines used in `gradcheck` are stable by varying `eps` (e.g., testing `1e-4`, `1e-5`, and `1e-6`). 
     *   If the gradients change significantly with `eps`, the system may be too stiff for standard FD, further justifying the need for the Phase 2 AD implementation.
+*   **Task 4.7: Implement Direct Output Jacobian ($g_\theta$) AD Logic**
+    *   **Context:** `DYNNLEquationOutputJacobianEigenAD` currently sets `out_gth` to zero.
+    *   **Action:** Extend the AD implementation to accept `currents` and `seed` as AD variables and compute the direct partial derivatives $\partial y / \partial \theta$.
+*   **Task 4.8: Generalize Parameter Jacobian Bindings**
+    *   **Context:** `compute_parameter_jacobian` in `crm_bindings.cpp` is restricted to `num_sets == 1`.
+    *   **Action:** Remove this restriction and ensure the multi-actuator logic from Phase 1 is fully exposed for system identification.
+*   **Task 4.9: Generalize Output Vector for Multi-Actuator Support**
+    *   **Context:** `eval_output_AD` currently returns a fixed 6D vector (tip + 1st actuator).
+    *   **Action:** Scale the output vector $y$ and Jacobians $g_x, g_\theta$ to include velocities for all `NUM_ACT_SET` actuators.
+*   **Task 4.10: Validate Damping Propagation in AD Path**
+    *   **Context:** Damping is a critical stability parameter.
+    *   **Action:** Verify that values set via `dyn.set_damping()` in Python correctly propagate into the `DynamicsContextAD` and are used by the templated AD integrators.
+*   **Task 4.11: Add Compile-time vs. Runtime Actuator Count Guard**
+    *   **Action:** Implement checks in `crm_bindings.cpp` to ensure that input currents and seed state shapes match the compile-time `NUM_ACT_SET`, preventing silent errors in multi-actuator scenarios.
 
 ---
 
@@ -78,6 +92,24 @@
 *   **Task 5.4: Control Input Scaling**
     *   Implement a normalization layer for currents (e.g., mapping $[-1, 1]$ to the physical range $[-0.5, 0.5]$ Amps).
     *   **Goal:** Improve the conditioning of the $B$ matrix ($\partial y / \partial u$) to prevent the optimizer from taking "wild" steps.
+*   **Task 5.5: Fix iLQR State Jacobian Mapping ($A_t$)**
+    *   **Context:** `iLQRController` currently uses `A_t = B_t` as a placeholder.
+    *   **Action:** Map the high-dimensional `seed_state` Jacobian (the `A` matrix from `linearize_full_seed_action_from_seed_implicit`) to the 6D tip state to accurately model error propagation.
+
+---
+
+## Phase 6: Documentation & Final Artifacts
+**Goal:** Clean up the codebase and provide visual proof of stabilization.
+
+*   **Task 6.1: Generate Proof of Control**
+    *   Run the finalized iLQR demo.
+    *   **Output:** `ilqr_trajectory.png` showing tip trace vs. target.
+    *   **Output:** `convergence.json` documenting Cost vs. Iteration.
+*   **Task 6.2: Update README.md**
+    *   Add a section: "How to run the stable iLQR demo."
+    *   Document the `CRM_DYN_LINEARIZATION_METHOD=implicit` environment variable.
+*   **Task 6.3: Mark Option A as Recommended**
+    *   Update `docs/architecture/PLAN_end_to_end_differentiable_simulator_options_A_B_C.md` to reflect that Option A is now the stable, verified standard.
 
 ---
 
