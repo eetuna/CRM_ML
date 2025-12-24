@@ -2514,38 +2514,92 @@ public:
         }
         const Eigen::MatrixXd dxdth = qr.solve(-Jxth);  // (x_dim, theta_dim)
 
-        // Partials of g: gx and gθ (using the post-solve mapping, no root-solve).
+        // Phase 2 Task 2.3: Compute output gradients gx and gθ using AD
         Eigen::MatrixXd gx(6, x_dim);
-        gx.setZero();
-        for (int j = 0; j < x_dim; j++) {
-            Eigen::VectorXd xp = x_star_scaled;
-            Eigen::VectorXd xm = x_star_scaled;
-            xp(j) += eps_g_x;
-            xm(j) -= eps_g_x;
-            const Eigen::Matrix<double, 6, 1> yp = eval_output(xp, curr0, seed0);
-            const Eigen::Matrix<double, 6, 1> ym = eval_output(xm, curr0, seed0);
-            gx.col(j) = (yp - ym) * (0.5 / eps_g_x);
+        Eigen::MatrixXd gth(6, theta_dim);
+
+        // Build DYNNLEqnParams for AD function (reuse eval_residual logic)
+        py::array_t<double> vA, wA, pA, RA, xfA, mLA, nLA;
+        unpack_seed(seed0, vA, wA, pA, RA, xfA, mLA, nLA);
+        CRMShootingMethodParams BVPParams_for_AD = build_BVPParams(curr0, vA, wA, pA, RA, dt);
+
+        const bool FinalValueOnly = true;
+        DYNNLEqnParams DYNNLEParams_for_AD(BVPParams_for_AD.no_flex_seg, BVPParams_for_AD.no_rigid_seg,
+                                           BVPParams_for_AD.no_act_set, BVPParams_for_AD.no_locmarkers,
+                                           BVPParams_for_AD.no_fcum_steps);
+
+        double x_0_for_AD[NUM_STATES];
+        for (int i = 0; i < NUM_STATES; i++) {
+            if (i < 3) x_0_for_AD[i] = BVPParams_for_AD.p0[i];
+            else if (i < 12) x_0_for_AD[i] = BVPParams_for_AD.R0[i - 3];
+            else x_0_for_AD[i] = 0.0;
         }
 
-        Eigen::MatrixXd gth(6, theta_dim);
-        gth.setZero();
-        for (int j = 0; j < theta_dim; j++) {
-            Eigen::Vector3d curr_p = curr0;
-            Eigen::Vector3d curr_m = curr0;
-            Eigen::VectorXd seed_p = seed0;
-            Eigen::VectorXd seed_m = seed0;
-            if (j < 3) {
-                curr_p(j) += eps_g_theta;
-                curr_m(j) -= eps_g_theta;
-            } else {
-                const int k = j - 3;
-                seed_p(k) += eps_g_theta;
-                seed_m(k) -= eps_g_theta;
+        double mL_guess_for_AD[NUM_ACT_SET][3]{};
+        double nL_guess_for_AD[NUM_ACT_SET][3]{};
+        auto mLseed_AD = mLA.unchecked<2>();
+        auto nLseed_AD = nLA.unchecked<2>();
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess_for_AD[j][i] = mLseed_AD(j, i);
+                nL_guess_for_AD[j][i] = nLseed_AD(j, i);
             }
-            const Eigen::Matrix<double, 6, 1> yp = eval_output(x_star_scaled, curr_p, seed_p);
-            const Eigen::Matrix<double, 6, 1> ym = eval_output(x_star_scaled, curr_m, seed_m);
-            gth.col(j) = (yp - ym) * (0.5 / eps_g_theta);
         }
+
+        double actInertia_for_AD[NUM_ACT_SET][9]{};
+        double damping_for_AD[NUM_ACT_SET][6]{};
+        double v_L_pre_for_AD[NUM_ACT_SET][3]{};
+        double w_L_pre_for_AD[NUM_ACT_SET][3]{};
+        double p_pre_for_AD[NUM_ACT_SET][3]{};
+        double R_pre_for_AD[NUM_ACT_SET][9]{};
+
+        for (int j = 0; j < BVPParams_for_AD.no_act_set; ++j) {
+            const auto& act_AD = BVPParams_for_AD.dynamics.actuators[j];
+            for (int i = 0; i < 3; ++i) {
+                v_L_pre_for_AD[j][i] = act_AD.v_L_pre(i);
+                w_L_pre_for_AD[j][i] = act_AD.w_L_pre(i);
+                p_pre_for_AD[j][i] = act_AD.p_pre(i);
+            }
+            for (int i = 0; i < 9; ++i) {
+                actInertia_for_AD[j][i] = act_AD.inertia(i / 3, i % 3);
+                R_pre_for_AD[j][i] = act_AD.R_pre(i / 3, i % 3);
+            }
+            for (int i = 0; i < 6; ++i) {
+                damping_for_AD[j][i] = act_AD.damping(i);
+            }
+        }
+
+        CRMDYNSolverIVP_Prep(
+            BVPParams_for_AD.no_flex_seg, BVPParams_for_AD.no_rigid_seg, BVPParams_for_AD.no_act_set,
+            BVPParams_for_AD.no_locmarkers, BVPParams_for_AD.no_fcum_steps,
+            x_0_for_AD, BVPParams_for_AD.IntegrationStepSize,
+            BVPParams_for_AD.Li, BVPParams_for_AD.dlambdainv, BVPParams_for_AD.rho, BVPParams_for_AD.SegmentTypes,
+            BVPParams_for_AD.SegEndLambdas, BVPParams_for_AD.LocMarkerLambdas,
+            BVPParams_for_AD.K, BVPParams_for_AD.Kinv, BVPParams_for_AD.ustar,
+            BVPParams_for_AD.MagMoment, BVPParams_for_AD.fcumlambda, BVPParams_for_AD.CoilAlignmentTurnAreaMatrix,
+            BVPParams_for_AD.B0, BVPParams_for_AD.g, BVPParams_for_AD.ActMass, actInertia_for_AD, damping_for_AD,
+            BVPParams_for_AD.dynamics.DELTA_T,
+            v_L_pre_for_AD, w_L_pre_for_AD, p_pre_for_AD, R_pre_for_AD,
+            mL_guess_for_AD, nL_guess_for_AD,
+            FinalValueOnly, DYNNLEParams_for_AD
+        );
+
+        DYNNLEParams_for_AD.ContactMode = ContactModeType::FREE_TIP;
+        for (int i = 0; i < 3; i++) {
+            DYNNLEParams_for_AD.TipForce[i] = 0.0;
+            DYNNLEParams_for_AD.TipConstraintPoint[i] = 0.0;
+            DYNNLEParams_for_AD.ftip_initialguess[i] = 0.0;
+        }
+
+        auto xfseed_AD = xfA.unchecked<1>();
+        for (int i = 0; i < NUM_STATES; i++) {
+            DYNNLEParams_for_AD.xf[i] = xfseed_AD(i);
+        }
+
+        // Call AD function to compute gradients
+        CRMCatheterModel::dynnl_ad_eigen::DYNNLEquationOutputJacobianEigenAD(
+            x_star_scaled, curr0, seed0, DYNNLEParams_for_AD, gx, gth
+        );
 
         // Assemble dy/dθ = gθ + gx * dx/dθ
         const Eigen::MatrixXd dydth = gth + gx * dxdth;  // (6, theta_dim)

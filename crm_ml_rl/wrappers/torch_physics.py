@@ -86,7 +86,7 @@ class CRMFKFunction(torch.autograd.Function):
         # J_dp: (B, 3, 4); grad_tip_pos: (B, 3) => grad_inputs: (B, 4)
         grad_inputs = torch.einsum("bij,bi->bj", J_dp, grad_tip_pos)
         grad_currents = grad_inputs[:, :3]
-        grad_insertion = grad_inputs[:, 3]
+        grad_insertion = grad_inputs[:, 3:4]  # Keep shape (B, 1) to match input shape
         return grad_currents, grad_insertion, None
 
 
@@ -218,6 +218,32 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
 
     @staticmethod
     def backward(ctx, grad_next_state: torch.Tensor):
+        """
+        Backward pass for dynamics step.
+
+        Computes gradients of the loss w.r.t. inputs using the chain rule and
+        linearization matrices A (state Jacobian) and B (control Jacobian).
+
+        Differentiable inputs:
+            - currents: Always computed via B matrix (∂next_state/∂currents)
+            - seed tensors (v, w, p, R, xf, mL, nL): Computed via A matrix when available
+              (requires CRM_DYN_LINEARIZATION_METHOD=implicit or fd)
+
+        Non-differentiable inputs:
+            - insertion_length: Not differentiated (would require C++ extension to expose ∂y/∂insertion).
+              This is acceptable for most control applications where insertion length is treated
+              as a fixed parameter during trajectory optimization.
+            - dyn, eps_u, eps_seed: Configuration parameters (not trainable)
+
+        Args:
+            ctx: Context from forward pass containing saved tensors (B, A matrices)
+            grad_next_state: Gradient of loss w.r.t. next_state output (B, 6)
+
+        Returns:
+            Tuple of gradients for all forward inputs in order:
+            (grad_currents, grad_insertion, grad_seed_v, grad_seed_w, grad_seed_p,
+             grad_seed_R, grad_seed_xf, grad_seed_mL, grad_seed_nL, None, None, None)
+        """
         saved = ctx.saved_tensors
         B = saved[0]  # (B, 6, 3)
         A = saved[1] if (getattr(ctx, "has_seed_jac", False) and len(saved) > 1) else None
@@ -226,6 +252,8 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
 
         # grad_currents = B^T * grad_next_state
         grad_currents = torch.einsum("bik,bk->bi", B.transpose(1, 2), grad_next_state)
+
+        # Insertion length gradient not computed - see docstring above
         grad_insertion = None
 
         grad_seed_v = None

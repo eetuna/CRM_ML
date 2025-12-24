@@ -878,6 +878,294 @@ inline void CRMFlexible_IVP_BackAD(const int SegmentIndex,
     out_R = R_n;
 }
 
+// Phase 2 Task 2.1: Templated forward IVP for AD gradient computation
+template <typename Scalar>
+inline void CRMFlexible_IVP_ForwardAD(const int SegmentIndex,
+                                      const Vec3<Scalar>& in_p,
+                                      const Mat3<Scalar>& in_R,
+                                      const DynamicsContextAD<Scalar>& ctx,
+                                      const Vec3<Scalar>& in_u,
+                                      const Vec3<Scalar>& in_nL,
+                                      Vec3<Scalar>& out_u,
+                                      Vec3<Scalar>& out_p,
+                                      Mat3<Scalar>& out_R)
+{
+    // Guard against null geometry pointer (indicates incomplete context initialization)
+    if (!ctx.geometry) {
+        throw std::runtime_error(
+            "CRMFlexible_IVP_ForwardAD: geometry pointer is null; "
+            "context must be initialized via DynamicsContextAD::from_params()");
+    }
+
+    // Extract geometry data and learnable parameters
+    const DYNNLEqnParams& Params = *ctx.geometry;
+    const Mat3<Scalar> K = ctx.learnable.getK();
+    const Mat3<Scalar> Kinv = ctx.learnable.getKinv();
+    const Vec3<Scalar>& ustar = ctx.learnable.ustar;
+
+    const int fsegno = SegmentIndex >> 1;
+    const double h = (Params.SegBounds[SegmentIndex + 1] - Params.SegBounds[SegmentIndex]) / (Params.SegSteps[fsegno] * 1.0);
+    const int N = Params.SegSteps[fsegno];
+
+    Vec3<Scalar> u_nm3 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> u_nm2 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> u_nm1 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> u_n = in_u;
+    Vec3<Scalar> u_np1 = u_n;
+
+    Vec3<Scalar> udot_nm3 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> udot_nm2 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> udot_nm1 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> udot_n = Vec3<Scalar>::Zero();
+
+    Vec3<Scalar> p_nm3 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> p_nm2 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> p_nm1 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> p_n = in_p;
+    Vec3<Scalar> p_np1 = p_n;
+
+    Mat3<Scalar> R_nm3 = Mat3<Scalar>::Identity();
+    Mat3<Scalar> R_nm2 = Mat3<Scalar>::Identity();
+    Mat3<Scalar> R_nm1 = Mat3<Scalar>::Identity();
+    Mat3<Scalar> R_n = in_R;
+    Mat3<Scalar> R_np1 = R_n;
+
+    double t_n = Params.SegBounds[SegmentIndex];
+    for (int idx = 0; idx < N; ++idx) {
+        udot_n = CRMIntegrand_dynAD<Scalar>(Params, fsegno, SegmentIndex, t_n, R_n, u_n, in_nL, K, Kinv, ustar);
+
+        if (idx < 3) {
+            const Vec3<Scalar> u_mid = u_n + Scalar(0.5) * Scalar(h) * udot_n;
+            Mat3<Scalar> R_mid;
+            Vec3<Scalar> p_mid;
+            SE3_Analytical_Step(R_n, p_n, u_n, Scalar(h) * Scalar(0.5), R_mid, p_mid);
+            const Vec3<Scalar> udot_mid = CRMIntegrand_dynAD<Scalar>(Params, fsegno, SegmentIndex, t_n + 0.5 * h, R_mid, u_mid, in_nL, K, Kinv, ustar);
+            u_np1 = u_n + Scalar(h) * udot_mid;
+            SE3_Analytical_Step(R_n, p_n, u_mid, Scalar(h), R_np1, p_np1);
+        } else {
+            const Scalar Pn = Scalar(55.0 / 24.0), Pnm1 = Scalar(-59.0 / 24.0), Pnm2 = Scalar(37.0 / 24.0), Pnm3 = Scalar(-9.0 / 24.0);
+            const Scalar Cnp1 = Scalar(9.0 / 24.0), Cn = Scalar(19.0 / 24.0), Cnm1 = Scalar(-5.0 / 24.0), Cnm2 = Scalar(1.0 / 24.0);
+
+            const Vec3<Scalar> u_hat = u_n + Scalar(h) * (Pn * udot_n + Pnm1 * udot_nm1 + Pnm2 * udot_nm2 + Pnm3 * udot_nm3);
+            const Vec3<Scalar> u_n_pred = Pn * u_n + Pnm1 * u_nm1 + Pnm2 * u_nm2 + Pnm3 * u_nm3;
+
+            Mat3<Scalar> R_hat;
+            Vec3<Scalar> p_hat;
+            SE3_Analytical_Step(R_n, p_n, u_n_pred, Scalar(h), R_hat, p_hat);
+
+            const Vec3<Scalar> udot_hat = CRMIntegrand_dynAD<Scalar>(Params, fsegno, SegmentIndex, t_n + h, R_hat, u_hat, in_nL, K, Kinv, ustar);
+            const Vec3<Scalar> u_corr = u_n + Scalar(h) * (Cnp1 * udot_hat + Cn * udot_n + Cnm1 * udot_nm1 + Cnm2 * udot_nm2);
+            const Vec3<Scalar> u_n_corr = Cnp1 * u_hat + Cn * u_n + Cnm1 * u_nm1 + Cnm2 * u_nm2;
+            SE3_Analytical_Step(R_n, p_n, u_n_corr, Scalar(h), R_np1, p_np1);
+
+            u_np1 = u_corr;
+        }
+
+        u_nm3 = u_nm2;
+        u_nm2 = u_nm1;
+        u_nm1 = u_n;
+        u_n = u_np1;
+
+        udot_nm3 = udot_nm2;
+        udot_nm2 = udot_nm1;
+        udot_nm1 = udot_n;
+
+        p_nm3 = p_nm2;
+        p_nm2 = p_nm1;
+        p_nm1 = p_n;
+        p_n = p_np1;
+
+        R_nm3 = R_nm2;
+        R_nm2 = R_nm1;
+        R_nm1 = R_n;
+        R_n = R_np1;
+
+        t_n += h;
+    }
+
+    out_u = u_n;
+    out_p = p_n;
+    out_R = R_n;
+}
+
+// Phase 2 Task 2.2: Output mapping evaluation using AD
+// This function computes the output y = g(x*, theta) where:
+//   x* are the solved m_L, n_L values
+//   theta are the parameters (currents, seed state)
+//   y = [u_tip (3), v_coil (3)]
+//
+// Note: This is a simplified version that evaluates output at the equilibrium point
+// The full forward dynamics (CRMIVP_DYN_AD) would be implemented here in a complete solution
+template <typename Scalar>
+inline Eigen::Matrix<Scalar, 6, 1> eval_output_AD(
+    const Eigen::Matrix<Scalar, Eigen::Dynamic, 1>& x_scaled,
+    const DynamicsContextAD<Scalar>& ctx)
+{
+    if (!ctx.geometry) {
+        throw std::runtime_error(
+            "eval_output_AD: geometry pointer is null");
+    }
+
+    const DYNNLEqnParams& Params = *ctx.geometry;
+    const int num_sets = Params.dynamics.size();
+
+    // Unpack x_scaled to get m_L, n_L
+    std::array<Vec3<Scalar>, NUM_ACT_SET> m_L_all, n_L_all;
+    for (int j = 0; j < num_sets && j < NUM_ACT_SET; ++j) {
+        for (int i = 0; i < 3; ++i) {
+            m_L_all[j](i) = Scalar(IVALUE_SCALE_M) * x_scaled(i + j * 6);
+            n_L_all[j](i) = Scalar(IVALUE_SCALE_N) * x_scaled(i + j * 6 + 3);
+        }
+    }
+
+    // Get tip force
+    Vec3<Scalar> n_0;
+    for (int i = 0; i < 3; ++i) n_0(i) = Scalar(Params.TipForce[i]);
+
+    // Get initial root configuration
+    Vec3<Scalar> p_0;
+    Mat3<Scalar> R_0;
+    for (int i = 0; i < 3; ++i) p_0(i) = Scalar(Params.xi[i]);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            R_0(r, c) = Scalar(Params.xi[3 + r * 3 + c]);
+        }
+    }
+
+    // Get tip state
+    Vec3<Scalar> p_t;
+    Mat3<Scalar> R_t;
+    for (int i = 0; i < 3; ++i) p_t(i) = Scalar(Params.xf[i]);
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            R_t(r, c) = Scalar(Params.xf[3 + r * 3 + c]);
+        }
+    }
+
+    // Extract learnable parameters
+    const Mat3<Scalar> K = ctx.learnable.getK();
+    const Mat3<Scalar> Kinv = ctx.learnable.getKinv();
+    const Vec3<Scalar>& ustar = ctx.learnable.ustar;
+    const Scalar& actMass = ctx.learnable.actMass;
+    const Eigen::Matrix<Scalar, 6, 1>& damping = ctx.learnable.damping;
+    const Mat3<Scalar> muhat = ctx.learnable.getMuHat();
+
+    const int NUM_SEGMENTS = Params.no_segments;
+
+    // Integrate backward from tip to get u at tip
+    Vec3<Scalar> tau_0 = Vec3<Scalar>::Zero();
+    Vec3<Scalar> u_t = ustar + Kinv * tau_0;
+
+    // Backward pass through last flexible segment to get state at first actuator
+    Vec3<Scalar> u_tau, p_flex;
+    Mat3<Scalar> R_flex_mat;
+    const int last_flex_seg = NUM_SEGMENTS - 1;
+    CRMFlexible_IVP_BackAD(last_flex_seg, p_t, R_t, ctx, u_t, n_0, u_tau, p_flex, R_flex_mat);
+
+    // Compute moment at boundary
+    Vec3<Scalar> tau = K * (u_tau - ustar);
+
+    // Get first actuator state
+    const auto& act0 = Params.dynamics.actuators[0];
+    Vec6<Scalar> vw_coil;
+    Vec3<Scalar> p_coil;
+    Mat3<Scalar> R_coil;
+    for (int i = 0; i < 3; ++i) {
+        vw_coil(i) = Scalar(act0.v_L_pre(i));
+        vw_coil(3 + i) = Scalar(act0.w_L_pre(i));
+        p_coil(i) = Scalar(act0.p_pre(i));
+    }
+    for (int r = 0; r < 3; ++r) {
+        for (int c = 0; c < 3; ++c) {
+            R_coil(r, c) = Scalar(act0.R_pre(r, c));
+        }
+    }
+
+    // Compute net forces/moments on first actuator
+    Vec3<Scalar> net_nL;
+    if (num_sets > 1) {
+        net_nL = n_L_all[0] - n_L_all[1];
+    } else {
+        net_nL = n_L_all[0] - n_0;
+    }
+
+    Vec3<Scalar> net_mL = m_L_all[0] - tau;
+
+    // Integrate actuator dynamics
+    Vec6<Scalar> vw_out, xdot_dummy = Vec6<Scalar>::Zero();
+    Vec3<Scalar> p_out;
+    Mat3<Scalar> R_out;
+
+    CoilDynamicsDispatch(ctx.integrator_type,
+                        vw_coil, p_coil, R_coil, net_nL,
+                        ctx.g, actMass, ctx.actInertia, damping,
+                        ctx.DELTA_T, ctx.B0, muhat, net_mL,
+                        vw_out, p_out, R_out, xdot_dummy);
+
+    // Build output: [u_tip, v_coil]
+    Eigen::Matrix<Scalar, 6, 1> y;
+    y(0) = u_tau(0);  // Tip curvature
+    y(1) = u_tau(1);
+    y(2) = u_tau(2);
+    y(3) = vw_out(0);  // Actuator linear velocity
+    y(4) = vw_out(1);
+    y(5) = vw_out(2);
+
+    return y;
+}
+
+// Phase 2 Task 2.2: Wrapper for computing output Jacobians using autodiff
+// Computes gx = ∂y/∂x and gθ = ∂y/∂θ where y = g(x*, θ)
+inline void DYNNLEquationOutputJacobianEigenAD(
+    const Eigen::VectorXd& x_scaled,
+    const Eigen::Vector3d& currents,
+    const Eigen::VectorXd& seed_flat,
+    DYNNLEqnParams& Params,
+    Eigen::MatrixXd& out_gx,    // 6 × x_dim
+    Eigen::MatrixXd& out_gth)   // 6 × theta_dim
+{
+    using autodiff::VectorXreal;
+    using autodiff::real;
+    using autodiff::jacobian;
+    using autodiff::wrt;
+    using autodiff::at;
+
+    // Create base context from params (double precision)
+    dynnl_ad_eigen::DynamicsContextAD<double> ctx_base = dynnl_ad_eigen::DynamicsContextAD<double>::from_params(Params, 0);
+
+    const int x_dim = static_cast<int>(x_scaled.size());
+    const int curr_dim = 3;
+    const int seed_dim = static_cast<int>(seed_flat.size());
+    const int theta_dim = curr_dim + seed_dim;
+
+    out_gx.resize(6, x_dim);
+    out_gth.resize(6, theta_dim);
+
+    // Convert inputs to AD types
+    VectorXreal x_ad(x_dim);
+    for (int i = 0; i < x_dim; ++i) x_ad(i) = x_scaled(i);
+
+    // Compute Jacobian w.r.t. x (state variables m_L, n_L)
+    VectorXreal y_x;
+    auto output_fn_x = [&ctx_base](const VectorXreal& x_) -> VectorXreal {
+        dynnl_ad_eigen::DynamicsContextAD<real> ctx_ad(ctx_base);
+        return dynnl_ad_eigen::eval_output_AD(x_, ctx_ad);
+    };
+
+    jacobian(output_fn_x, wrt(x_ad), at(x_ad), y_x, out_gx);
+
+    // Compute Jacobian w.r.t. θ (parameters: currents + seed)
+    // For now, set to zero as parameter differentiation requires extending eval_output_AD
+    // to accept and differentiate w.r.t. currents and seed parameters
+    out_gth.setZero();
+
+    // TODO: Implement parameter Jacobian computation
+    // This would require:
+    // 1. Passing currents and seed as AD variables to eval_output_AD
+    // 2. Computing how they affect the BVP solution and forward dynamics
+    // 3. Using jacobian() with wrt(currents, seed)
+}
+
 // New overload: Accept DynamicsContextAD for consistent parameter handling (Task A1.7 Phase 2)
 template <typename Scalar>
 inline Eigen::Matrix<Scalar, NUM_DYN_RESIDUAL, 1> DYNNLEquationResidualEigenAD(const autodiff::VectorXreal& x_scaled,
