@@ -80,18 +80,6 @@
     *   Verify `reaching_demo` setup (targets, horizon).
     *   Verify `tracking_demo` trajectory generation.
 
-### 3.2 Instability Investigation Plan (Current Priority)
-**File:** `examples/debug_consecutive_stepping.py` (Created during session)
-
-*   [ ] **Divergence Reproduction:**
-    *   Confirm Step 1 succeeds (`converged=True`).
-    *   Confirm Step 2 fails (`converged=False` or `diverged=True`).
-    *   Audit inputs passed to Step 2: Are `next_v`, `next_w`, etc., from Step 1 valid (non-NaN, reasonable magnitudes)?
-
-*   [ ] **Root Cause Analysis (Code Level):**
-    *   Audit `src/CRM_DynamicsContext.hpp` or relevant integrator state management: Is internal state reset correctly between `step_from_seed` calls?
-    *   Check `step_from_seed` implementation in bindings: Does it re-initialize the IVP solver correctly for the second step?
-
 ---
 
 ## Part 4: Phase 4 Audit - Python Wrapper Polish
@@ -122,7 +110,6 @@
 
 1.  **Static Analysis:** Manually inspect the file content for the checklist items above.
 2.  **Dynamic Analysis (Phase 3 Focus):**
-    *   Run `examples/debug_consecutive_stepping.py` (Already done - confirmed failure).
     *   Run `tests/test_torch_gradcheck.py` to confirm Phase 4 status.
     *   Run `pytest tests/test_multi_actuator_ad.py` (if it exists) or check build config for Phase 1.
 
