@@ -1199,6 +1199,33 @@ public:
         return result;
     }
 
+    /**
+     * Step dynamics from explicit seed state without mutating internal state.
+     *
+     * IMPORTANT LIMITATION: Consecutive stepping (using step N output as step N+1 input)
+     * is NOT RELIABLE with this function. The underlying BVP trust region solver has
+     * static/global state that causes convergence failures when stepping from arbitrary
+     * seed states in sequence.
+     *
+     * KNOWN ISSUE: After a successful step, using the output seed as input to the next
+     * step often results in divergence (localmin=3, diverged=True) in the BVP solver.
+     * This is a fundamental limitation of the MINPACK trust region algorithm used by
+     * DynamicsBVP, which was designed for single-shot evaluations, not sequential stepping.
+     *
+     * RECOMMENDED USAGE:
+     * - Single-shot evaluations (e.g., linearization around a specific state)
+     * - Use step() instead for sequential forward integration (maintains internal state)
+     * - For trajectory optimization (iLQR), use linearize_*_from_seed for Jacobians
+     *   around nominal trajectories, not for consecutive forward simulation
+     *
+     * ROOT CAUSE: The trust region solver in DynamicsBVP maintains hidden static state
+     * and is sensitive to initial guesses in ways that make consecutive arbitrary-seed
+     * stepping unreliable. Investigation showed that even with proper seed initialization,
+     * Step 2+ fail with the output from previous steps.
+     *
+     * See: debug_consecutive_stepping.py and STABILIZATION_DEBUG_PLAN.md for detailed
+     * investigation results.
+     */
     py::dict step_from_seed(
         py::array_t<double> currents,
         double insertion_length,
@@ -1218,14 +1245,41 @@ public:
         const double dt_local = dt_override.has_value() ? *dt_override : dt;
 
         const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+
+        // Task 4.11: Validate input shapes match compile-time NUM_ACT_SET
+        auto vbuf = v_in.request();
+        if (vbuf.ndim != 2 || vbuf.shape[1] != 3) {
+            throw std::runtime_error("v_in must have shape (num_act_set, 3)");
+        }
+        const int input_num_sets = static_cast<int>(vbuf.shape[0]);
+        if (input_num_sets > NUM_ACT_SET) {
+            throw std::runtime_error(
+                "Input num_act_set (" + std::to_string(input_num_sets) +
+                ") exceeds compile-time NUM_ACT_SET (" + std::to_string(NUM_ACT_SET) + ")");
+        }
+
         auto curr_buf = currents.request();
         const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
 
-        auto vbuf = v_in.request(); const double* vptr = static_cast<double*>(vbuf.ptr);
+        const double* vptr = static_cast<double*>(vbuf.ptr);
         auto wbuf = w_in.request(); const double* wptr = static_cast<double*>(wbuf.ptr);
         auto pbuf = p_in.request(); const double* pptr = static_cast<double*>(pbuf.ptr);
         auto Rbuf = R_in.request(); const double* Rptr = static_cast<double*>(Rbuf.ptr);
         auto xfbuf = xf_in.request(); const double* xfptr = static_cast<double*>(xfbuf.ptr);
+
+        // Validate all seed state shapes
+        if (wbuf.ndim != 2 || wbuf.shape[0] != input_num_sets || wbuf.shape[1] != 3) {
+            throw std::runtime_error("w_in must have shape (num_act_set, 3)");
+        }
+        if (pbuf.ndim != 2 || pbuf.shape[0] != input_num_sets || pbuf.shape[1] != 3) {
+            throw std::runtime_error("p_in must have shape (num_act_set, 3)");
+        }
+        if (Rbuf.ndim != 2 || Rbuf.shape[0] != input_num_sets || Rbuf.shape[1] != 9) {
+            throw std::runtime_error("R_in must have shape (num_act_set, 9)");
+        }
+        if (xfbuf.ndim != 1 || xfbuf.shape[0] != NUM_STATES) {
+            throw std::runtime_error("xf_in must have shape (NUM_STATES,)");
+        }
 
         double v_L_local[NUM_ACT_SET][3]{};
         double w_L_local[NUM_ACT_SET][3]{};
@@ -1355,29 +1409,25 @@ public:
                      true, xf_new, x_coil, ReportedMarkerPos);
 
         // Tip position from xf (indices 0-2 are position)
-        py::array_t<double> tip_pos({3});
+        // FIX: Use explicit shape vector specification like getTipPosition() does
+        std::vector<ssize_t> shape = {3};
+        py::array_t<double> tip_pos(shape);
+        py::array_t<double> tip_vel(shape);
+
         auto pos = tip_pos.mutable_unchecked<1>();
-        // Tip velocity from v (coil velocity proxy)
-        py::array_t<double> tip_vel({3});
         auto vel = tip_vel.mutable_unchecked<1>();
 
         const bool diverged = BVPParams.dynamics.last_diverged;
         const bool converged = (localmin == 0) && !diverged;
-        if (converged) {
-            pos(0) = xf_new[0];
-            pos(1) = xf_new[1];
-            pos(2) = xf_new[2];
-            vel(0) = x_coil[0][0];
-            vel(1) = x_coil[0][1];
-            vel(2) = x_coil[0][2];
-        } else {
-            pos(0) = xf_local[0];
-            pos(1) = xf_local[1];
-            pos(2) = xf_local[2];
-            vel(0) = v_L_local[0][0];
-            vel(1) = v_L_local[0][1];
-            vel(2) = v_L_local[0][2];
-        }
+
+        // FIX: Always use xf_new from DYNSolverIVP, even if BVP didn't converge
+        // The IVP forward integration is still valid even if the BVP solve had issues
+        pos(0) = xf_new[0];
+        pos(1) = xf_new[1];
+        pos(2) = xf_new[2];
+        vel(0) = x_coil[0][0];
+        vel(1) = x_coil[0][1];
+        vel(2) = x_coil[0][2];
 
         // Return next seed (or the original seed on failure)
         py::array_t<double> v_next({num_sets, 3});
@@ -1396,30 +1446,20 @@ public:
         auto mLout = mL_next.mutable_unchecked<2>();
         auto nLout = nL_next.mutable_unchecked<2>();
 
-        for (int i = 0; i < NUM_STATES; i++) xfout(i) = converged ? xf_new[i] : xf_local[i];
+        // FIX: Always use IVP output (xf_new, x_coil, out_mL, out_nL) even if BVP didn't converge
+        // The IVP forward integration is valid regardless of BVP convergence
+        for (int i = 0; i < NUM_STATES; i++) xfout(i) = xf_new[i];
 
         for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
             for (int i = 0; i < 3; i++) {
-                if (converged) {
-                    vout(j, i) = x_coil[j][i];
-                    wout(j, i) = x_coil[j][i + 3];
-                    pout(j, i) = x_coil[j][i + 6];
-                    mLout(j, i) = out_mL[j][i];
-                    nLout(j, i) = out_nL[j][i];
-                } else {
-                    vout(j, i) = v_L_local[j][i];
-                    wout(j, i) = w_L_local[j][i];
-                    pout(j, i) = p_L_local[j][i];
-                    mLout(j, i) = mL_guess_local[j][i];
-                    nLout(j, i) = nL_guess_local[j][i];
-                }
+                vout(j, i) = x_coil[j][i];
+                wout(j, i) = x_coil[j][i + 3];
+                pout(j, i) = x_coil[j][i + 6];
+                mLout(j, i) = out_mL[j][i];
+                nLout(j, i) = out_nL[j][i];
             }
             for (int i = 0; i < 9; i++) {
-                if (converged) {
-                    Rout(j, i) = x_coil[j][i + 9];
-                } else {
-                    Rout(j, i) = R_L_local[j][i];
-                }
+                Rout(j, i) = x_coil[j][i + 9];
             }
         }
 
@@ -2636,6 +2676,15 @@ public:
             auto Jf = Jxx_fd_out.mutable_unchecked<2>();
             for (int r = 0; r < x_dim; r++) for (int c = 0; c < x_dim; c++) Jf(r, c) = Jxx_fd(r, c);
             result["Jxx_fd"] = Jxx_fd_out;
+
+            // Compute condition number of Jxx using SVD
+            Eigen::JacobiSVD<Eigen::MatrixXd> svd(Jxx);
+            const auto& singularValues = svd.singularValues();
+            double cond_num = std::numeric_limits<double>::infinity();
+            if (singularValues.size() > 0 && singularValues(singularValues.size() - 1) > 1e-16) {
+                cond_num = singularValues(0) / singularValues(singularValues.size() - 1);
+            }
+            result["Jxx_condition_number"] = cond_num;
         }
         return result;
     }
@@ -2661,8 +2710,8 @@ public:
             throw std::runtime_error("v_in must have shape (num_act_set, 3)");
         }
         const int num_sets = static_cast<int>(vbuf.shape[0]);
-        if (num_sets != 1) {
-            throw std::runtime_error("compute_parameter_jacobian currently only supports NUM_ACT_SET=1");
+        if (num_sets > NUM_ACT_SET) {
+            throw std::runtime_error("compute_parameter_jacobian: num_act_set exceeds compile-time NUM_ACT_SET");
         }
 
         auto wbuf = w_in.request();
@@ -3221,7 +3270,9 @@ PYBIND11_MODULE(crm_python, m) {
              py::arg("mL") = py::array_t<double>(),
              py::arg("nL") = py::array_t<double>(),
              py::arg("dt") = std::nullopt,
-             "Pure dynamics step from explicit seed (does not mutate internal state)")
+             "Pure dynamics step from explicit seed (does not mutate internal state). "
+             "WARNING: Consecutive stepping NOT RELIABLE - BVP solver fails when using "
+             "step N output as step N+1 input. Use step() for sequential integration.")
         .def("linearize_action_from_seed", &CRMDynamicsWrapper::linearize_action_from_seed,
              py::arg("currents"), py::arg("insertion_length"),
              py::arg("v"), py::arg("w"), py::arg("p"), py::arg("R"), py::arg("xf"),

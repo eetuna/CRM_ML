@@ -1102,14 +1102,34 @@ inline Eigen::Matrix<Scalar, 6, 1> eval_output_AD(
                         ctx.DELTA_T, ctx.B0, muhat, net_mL,
                         vw_out, p_out, R_out, xdot_dummy);
 
-    // Build output: [u_tip, v_coil]
+    // Forward integrate through flexible segment to get new tip position
+    // Start from actuator boundary state (p_out, R_out) and integrate to tip
+    Vec3<Scalar> u_boundary = ustar + Kinv * tau;  // Curvature at actuator/flex boundary
+    Vec3<Scalar> p_tip_new, u_tip_new;
+    Mat3<Scalar> R_tip_new;
+
+    // Integrate through the last flexible segment (actuator -> tip)
+    CRMFlexible_IVP_ForwardAD(last_flex_seg, p_out, R_out, ctx, u_boundary, n_0,
+                              u_tip_new, p_tip_new, R_tip_new);
+
+    // Build output: [p_tip, v_coil_0]
+    // NOTE: Currently only returns output for first actuator (actuator 0).
+    // For multi-actuator support (NUM_ACT_SET > 1), this function would need to:
+    //   1. Change return type to Eigen::Matrix<Scalar, Eigen::Dynamic, 1>
+    //   2. Loop through all actuators computing vw_out for each
+    //   3. Return vector of size (3 + 3*num_sets)
+    // See docs/TASK_4_9_MULTI_ACTUATOR_OUTPUT_PLAN.md for details.
+    //
+    // IMPORTANT: This output must match the FD version in crm_bindings.cpp eval_output lambda:
+    // y(0-2) = tip position (xf_new[0-2])
+    // y(3-5) = actuator 0 linear velocity (x_coil[0][0-2])
     Eigen::Matrix<Scalar, 6, 1> y;
-    y(0) = u_tau(0);  // Tip curvature
-    y(1) = u_tau(1);
-    y(2) = u_tau(2);
-    y(3) = vw_out(0);  // Actuator linear velocity
-    y(4) = vw_out(1);
-    y(5) = vw_out(2);
+    y(0) = p_tip_new(0);  // New tip position X (after forward integration)
+    y(1) = p_tip_new(1);  // New tip position Y
+    y(2) = p_tip_new(2);  // New tip position Z
+    y(3) = vw_out(0);     // Actuator 0 linear velocity X
+    y(4) = vw_out(1);     // Actuator 0 linear velocity Y
+    y(5) = vw_out(2);     // Actuator 0 linear velocity Z
 
     return y;
 }

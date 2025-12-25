@@ -72,15 +72,25 @@ class iLQRController:
         self.state_dim = 6
         self.action_dim = 3
 
-    def _linearize(self, currents: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        # Control input scaling: normalized [-1, 1] maps to physical currents
+        # Using step() API which is more stable than step_from_seed()
+        self.current_scale = 0.1  # Maximum current amplitude in Amps
+
+    def _linearize(self, currents_normalized: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         """
         Linearize dynamics around current state.
+
+        Args:
+            currents_normalized: Normalized currents in [-1, 1]
 
         Returns:
             next_state: (6,) next state
             A: (6, seed_dim) state Jacobian
-            B: (6, 3) control Jacobian
+            B: (6, 3) control Jacobian (scaled for normalized inputs)
         """
+        # Convert normalized currents to physical currents
+        currents_physical = currents_normalized * self.current_scale
+
         v = seed_state['v']
         w = seed_state['w']
         p = seed_state['p']
@@ -91,30 +101,39 @@ class iLQRController:
 
         if self.use_implicit:
             result = self.dyn.linearize_full_seed_action_from_seed_implicit(
-                currents, self.insertion_length, v, w, p, R, xf, mL, nL
+                currents_physical, self.insertion_length, v, w, p, R, xf, mL, nL
             )
         else:
             result = self.dyn.linearize_full_seed_action_from_seed(
-                currents, self.insertion_length, v, w, p, R, xf, mL, nL
+                currents_physical, self.insertion_length, v, w, p, R, xf, mL, nL
             )
 
         next_state = np.array(result['next_state'], dtype=np.float64)  # (6,)
         A = np.array(result['A'], dtype=np.float64)  # (6, seed_dim)
-        B = np.array(result['B'], dtype=np.float64)  # (6, 3)
+        B_physical = np.array(result['B'], dtype=np.float64)  # (6, 3)
+
+        # Scale B matrix for normalized inputs: B_normalized = B_physical * current_scale
+        B = B_physical * self.current_scale
 
         return next_state, A, B
 
-    def _step_forward(self, currents: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, Dict]:
+    def _step_forward(self, currents_normalized: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, Dict]:
         """
-        Take a forward dynamics step.
+        Take a forward dynamics step using step() API for stability.
+
+        Args:
+            currents_normalized: Normalized currents in [-1, 1]
+            seed_state: Current seed state (used to set internal state)
 
         Returns:
             state: (6,) tip position + velocity
             new_seed: Updated seed state dict
         """
-        result = self.dyn.step_from_seed(
-            currents,
-            self.insertion_length,
+        # Convert normalized to physical currents
+        currents_physical = currents_normalized * self.current_scale
+
+        # Set internal seed state before stepping
+        self.dyn.set_seed_state(
             seed_state['v'],
             seed_state['w'],
             seed_state['p'],
@@ -124,20 +143,15 @@ class iLQRController:
             seed_state['nL']
         )
 
+        # Use step() instead of step_from_seed() for BVP stability
+        result = self.dyn.step(currents_physical, self.insertion_length)
+
         tip_pos = np.array(result['tip_position'], dtype=np.float64)
         tip_vel = np.array(result['tip_velocity'], dtype=np.float64)
         state = np.concatenate([tip_pos, tip_vel])
 
-        # Get new seed state from result
-        new_seed = {
-            'v': result['next_v'],
-            'w': result['next_w'],
-            'p': result['next_p'],
-            'R': result['next_R'],
-            'xf': result['next_xf'],
-            'mL': result['next_mL'],
-            'nL': result['next_nL']
-        }
+        # Get new seed state from internal state
+        new_seed = self.dyn.get_seed_state()
 
         return state, new_seed
 
@@ -164,7 +178,7 @@ class iLQRController:
         # Position tracking cost (only on position, not velocity)
         Q_pos = 100.0 if is_final else 10.0  # Higher weight on final state
         Q_vel = 1.0 if is_final else 0.1
-        R_action = 0.01  # Small action regularization
+        R_action = 0.1  # Action regularization - increased from 0.01 to penalize aggressive currents
 
         # Cost
         pos_error = x[:3] - x_target[:3]
@@ -235,21 +249,33 @@ class iLQRController:
             u_t = actions[t]
             x_target_t = target_traj[t] if target_traj.ndim == 2 else target_traj
 
-            # Note: A_list[t] is (6, seed_dim), we only use position/velocity parts
-            # Extract relevant parts: assume first 6 columns correspond to [px,py,pz,vx,vy,vz]
-            # This is a simplification - in reality need to map seed -> state properly
-            A_t = B_list[t]  # (6, 3) - for now just use B, since seed->state mapping is complex
+            # A_list[t] is (6, seed_dim) where seed_dim >> 6
+            # The state Jacobian A maps changes in seed state to changes in tip state
+            # For iLQR, we approximate the state-to-state dynamics using only the B matrix
+            # since the seed state includes many internal DOFs (v, w, p, R, xf, mL, nL)
+            #
+            # The seed state vector layout is approximately:
+            # v (3), w (3), p (N*3), R (N*9), xf (N), mL (N*3), nL (N*3)
+            # where N is the number of spatial segments
+            #
+            # For tip state [px, py, pz, vx, vy, vz], we could extract columns corresponding
+            # to v (velocity seed) from A_list[t], but this is still an approximation
+            #
+            # A simpler and more stable approach: treat dynamics as primarily control-driven
+            # and use A_t ≈ I (identity) to represent state persistence
+            A_t = np.eye(self.state_dim)  # Simplified: assume state persists + control input
             B_t = B_list[t]  # (6, 3)
 
             # Quadratize cost
             l, l_x, l_u, l_xx, l_uu, l_ux = self._quadratize_cost(x_t, u_t, x_target_t, is_final=False)
 
             # Q-function approximation
-            Q_x = l_x + V_x
+            # Q(x,u) ≈ l(x,u) + V(f(x,u)) where f(x,u) = A*x + B*u
+            Q_x = l_x + A_t.T @ V_x
             Q_u = l_u + B_t.T @ V_x
-            Q_xx = l_xx + V_xx
+            Q_xx = l_xx + A_t.T @ V_xx @ A_t
             Q_uu = l_uu + B_t.T @ V_xx @ B_t
-            Q_ux = l_ux + B_t.T @ V_xx
+            Q_ux = l_ux + B_t.T @ V_xx @ A_t
 
             # Regularization for numerical stability
             Q_uu_reg = Q_uu + 1e-4 * np.eye(self.action_dim)
@@ -309,19 +335,48 @@ class iLQRController:
             # Compute state deviation (simplified - just use tip state)
             dx = states_new[t] - states_nom[t]
 
-            # Update control with gains
+            # Update control with gains (in normalized space)
             u_new = actions_nom[t] + alpha * k_list[t] + K_list[t] @ dx
 
-            # Clip actions to reasonable bounds
-            u_new = np.clip(u_new, -0.5, 0.5)
+            # Clip to normalized bounds [-1, 1], then scale to physical currents
+            u_normalized = np.clip(u_new, -1.0, 1.0)
+            u_physical = u_normalized * self.current_scale
 
-            actions_new[t] = u_new
+            actions_new[t] = u_normalized  # Store normalized action
 
-            # Forward step
+            # Forward step using step() API for BVP stability
             try:
-                states_new[t + 1], seeds_new[t + 1] = self._step_forward(u_new, seeds_new[t])
+                # Set internal seed state
+                self.dyn.set_seed_state(
+                    seeds_new[t]['v'],
+                    seeds_new[t]['w'],
+                    seeds_new[t]['p'],
+                    seeds_new[t]['R'],
+                    seeds_new[t]['xf'],
+                    seeds_new[t]['mL'],
+                    seeds_new[t]['nL']
+                )
+
+                # Use step() instead of step_from_seed()
+                currents_physical = u_normalized * self.current_scale
+                result = self.dyn.step(currents_physical, self.insertion_length)
+
+                # Check for divergence
+                if result.get('diverged', False):
+                    print(f"      Diverged at timestep {t}")
+                    return states_nom, actions_nom, seeds_nom, float('inf'), False
+
+                # Extract state
+                tip_pos = np.array(result['tip_position'], dtype=np.float64)
+                tip_vel = np.array(result['tip_velocity'], dtype=np.float64)
+                states_new[t + 1] = np.concatenate([tip_pos, tip_vel])
+
+                # Get updated seed state from internal state
+                seeds_new[t + 1] = self.dyn.get_seed_state()
+
             except Exception as e:
                 # Forward pass failed
+                print(f"      Exception at timestep {t}: {type(e).__name__}: {e}")
                 return states_nom, actions_nom, seeds_nom, float('inf'), False
 
         # Compute total cost (simplified - just use final cost for now)
@@ -355,15 +410,25 @@ class iLQRController:
         else:
             x_target_full = x_target
 
-        # Initialize trajectory
+        # Initialize trajectory with small random actions to break symmetry
         if u_init is None:
-            actions = np.zeros((T, self.action_dim))
+            actions = 0.01 * np.random.randn(T, self.action_dim)
         else:
             actions = u_init.copy()
 
         states = np.zeros((T + 1, self.state_dim))
         states[0] = x0
         seeds = [self.dyn.get_seed_state()]
+
+        # Settling steps: run zero-current steps to reach equilibrium
+        # TEMPORARILY DISABLED FOR DEBUGGING
+        # print("Running settling steps (10 zero-current steps)...")
+        # settling_seed = seeds[0]
+        # for i in range(10):
+        #     settling_state, settling_seed = self._step_forward(np.zeros(self.action_dim), settling_seed)
+        # # Update initial seed and state after settling
+        # seeds[0] = settling_seed
+        # states[0] = settling_state
 
         # Initial forward rollout
         print("Initial forward rollout...")
@@ -413,11 +478,14 @@ class iLQRController:
 
                 if success:
                     actual_cost = np.linalg.norm(states_new[-1, :3] - x_target_full[:3])
+                    print(f"    alpha={alpha:.2f}: cost={actual_cost:.6f}, success={success}")
                     if actual_cost < best_cost:
                         best_cost = actual_cost
                         best_states = states_new
                         best_actions = actions_new
                         best_seeds = seeds_new
+                else:
+                    print(f"    alpha={alpha:.2f}: FAILED (divergence or exception)")
 
             times_forward.append(time.time() - t_fwd_start)
 

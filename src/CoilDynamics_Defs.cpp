@@ -1426,7 +1426,7 @@ void DYNSolverIVP(	CRMShootingMethodParams& in_Params, const double in_u0[3],
     for (int i = 0; i < NUM_STATES; i++) {
         if (i < 3) x_0[i] = in_Params.p0[i];
         else if (i < 12) x_0[i] = in_Params.R0[i - 3];
-        else if (i < 15) x_0[i] = in_u0[i];
+        else if (i < 15) x_0[i] = in_u0[i - 12];  // FIX: Map indices 12,13,14 to in_u0[0,1,2]
     }
 
     CRMIVPCoreParams CoreParams(in_Params.no_flex_seg, in_Params.no_rigid_seg, in_Params.no_act_set, in_Params.no_locmarkers, in_Params.no_fcum_steps);
@@ -1499,7 +1499,7 @@ void DYNSolverIVP(	CRMShootingMethodParams& in_Params, const double in_u0[3],
         }else if(i<3+9){
             out_x_N[i] = R_new[i-3];
         }else{
-            out_x_N[i] = u_new[i-3-9];
+            out_x_N[i] = u_new[i-12];  // FIX: Map indices 12,13,14 to u_new[0,1,2]
         }
     }
 
