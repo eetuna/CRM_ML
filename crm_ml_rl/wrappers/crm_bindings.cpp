@@ -2636,26 +2636,29 @@ public:
             DYNNLEParams_for_AD.xf[i] = xfseed_AD(i);
         }
 
+        // Task 4.9: Compute output dimension dynamically
+        const int output_dim = 3 + 3 * num_sets;  // tip_position + velocity_per_actuator
+
         // Call AD function to compute gradients
         CRMCatheterModel::dynnl_ad_eigen::DYNNLEquationOutputJacobianEigenAD(
             x_star_scaled, curr0, seed0, DYNNLEParams_for_AD, gx, gth
         );
 
         // Assemble dy/dθ = gθ + gx * dx/dθ
-        const Eigen::MatrixXd dydth = gth + gx * dxdth;  // (6, theta_dim)
+        const Eigen::MatrixXd dydth = gth + gx * dxdth;  // (output_dim, theta_dim)
 
         // Split into B (currents) and A (seed).
-        py::array_t<double> next_state({6});
+        py::array_t<double> next_state({output_dim});
         auto ns = next_state.mutable_unchecked<1>();
-        for (int i = 0; i < 6; i++) ns(i) = y0(i);
+        for (int i = 0; i < output_dim; i++) ns(i) = y0(i);
 
-        py::array_t<double> B_out({6, 3});
+        py::array_t<double> B_out({output_dim, 3});
         auto Bout = B_out.mutable_unchecked<2>();
-        for (int i = 0; i < 6; i++) for (int j = 0; j < 3; j++) Bout(i, j) = dydth(i, j);
+        for (int i = 0; i < output_dim; i++) for (int j = 0; j < 3; j++) Bout(i, j) = dydth(i, j);
 
-        py::array_t<double> A_out({6, seed_dim});
+        py::array_t<double> A_out({output_dim, seed_dim});
         auto Aout = A_out.mutable_unchecked<2>();
-        for (int i = 0; i < 6; i++) for (int j = 0; j < seed_dim; j++) Aout(i, j) = dydth(i, 3 + j);
+        for (int i = 0; i < output_dim; i++) for (int j = 0; j < seed_dim; j++) Aout(i, j) = dydth(i, 3 + j);
 
         py::dict result;
         result["next_state"] = next_state;
@@ -2671,6 +2674,18 @@ public:
             auto Ju = Jxx_out.mutable_unchecked<2>();
             for (int r = 0; r < x_dim; r++) for (int c = 0; c < x_dim; c++) Ju(r, c) = Jxx(r, c);
             result["Jxx"] = Jxx_out;
+
+            // Task 4.7: Export gx and gth for verification
+            // Task 4.9: Use dynamic output_dim
+            py::array_t<double> gx_out({output_dim, x_dim});
+            auto gx_arr = gx_out.mutable_unchecked<2>();
+            for (int r = 0; r < output_dim; r++) for (int c = 0; c < x_dim; c++) gx_arr(r, c) = gx(r, c);
+            result["gx"] = gx_out;
+
+            py::array_t<double> gth_out({output_dim, theta_dim});
+            auto gth_arr = gth_out.mutable_unchecked<2>();
+            for (int r = 0; r < output_dim; r++) for (int c = 0; c < theta_dim; c++) gth_arr(r, c) = gth(r, c);
+            result["gth"] = gth_out;
 
             py::array_t<double> Jxx_fd_out({x_dim, x_dim});
             auto Jf = Jxx_fd_out.mutable_unchecked<2>();

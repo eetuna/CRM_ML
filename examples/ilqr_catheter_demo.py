@@ -45,7 +45,8 @@ class iLQRController:
         max_iters: int = 20,
         tol: float = 1e-3,
         alpha_min: float = 1e-4,
-        use_implicit: bool = True
+        use_implicit: bool = True,
+        verbose: bool = False
     ):
         """
         Initialize iLQR controller.
@@ -58,6 +59,7 @@ class iLQRController:
             tol: Convergence tolerance for cost reduction
             alpha_min: Minimum line search step size
             use_implicit: Use implicit AD linearization (vs full FD)
+            verbose: Enable detailed progress output
         """
         self.dyn = dyn
         self.insertion_length = insertion_length
@@ -66,6 +68,7 @@ class iLQRController:
         self.tol = tol
         self.alpha_min = alpha_min
         self.use_implicit = use_implicit
+        self.verbose = verbose
 
         # State: [px, py, pz, vx, vy, vz] (6D, in mm and mm/s)
         # Action: [Ix, Iy, Iz] (3D)
@@ -420,24 +423,16 @@ class iLQRController:
         states[0] = x0
         seeds = [self.dyn.get_seed_state()]
 
-        # Settling steps: run zero-current steps to reach equilibrium
-        # TEMPORARILY DISABLED FOR DEBUGGING
-        # print("Running settling steps (10 zero-current steps)...")
-        # settling_seed = seeds[0]
-        # for i in range(10):
-        #     settling_state, settling_seed = self._step_forward(np.zeros(self.action_dim), settling_seed)
-        # # Update initial seed and state after settling
-        # seeds[0] = settling_seed
-        # states[0] = settling_state
-
         # Initial forward rollout
-        print("Initial forward rollout...")
+        if self.verbose:
+            print("Initial forward rollout...")
         for t in range(T):
             states[t + 1], new_seed = self._step_forward(actions[t], seeds[t])
             seeds.append(new_seed)
 
         initial_cost = np.linalg.norm(states[-1, :3] - x_target_full[:3])
-        print(f"Initial cost (final pos error): {initial_cost:.6f}")
+        if self.verbose:
+            print(f"Initial cost (final pos error): {initial_cost:.6f}")
 
         # iLQR iterations
         costs = [initial_cost]
@@ -478,19 +473,22 @@ class iLQRController:
 
                 if success:
                     actual_cost = np.linalg.norm(states_new[-1, :3] - x_target_full[:3])
-                    print(f"    alpha={alpha:.2f}: cost={actual_cost:.6f}, success={success}")
+                    if self.verbose:
+                        print(f"    alpha={alpha:.2f}: cost={actual_cost:.6f}, success={success}")
                     if actual_cost < best_cost:
                         best_cost = actual_cost
                         best_states = states_new
                         best_actions = actions_new
                         best_seeds = seeds_new
                 else:
-                    print(f"    alpha={alpha:.2f}: FAILED (divergence or exception)")
+                    if self.verbose:
+                        print(f"    alpha={alpha:.2f}: FAILED (divergence or exception)")
 
             times_forward.append(time.time() - t_fwd_start)
 
             if best_states is None:
-                print(f"Iteration {iteration + 1}: Line search failed")
+                if self.verbose:
+                    print(f"Iteration {iteration + 1}: Line search failed")
                 break
 
             # Update trajectory
@@ -503,12 +501,14 @@ class iLQRController:
             cost_reduction = costs[-2] - costs[-1]
             iter_time = time.time() - iter_start
 
-            print(f"Iteration {iteration + 1}: cost={best_cost:.6f}, "
-                  f"reduction={cost_reduction:.6f}, time={iter_time:.3f}s "
-                  f"(lin={times_linearize[-1]:.3f}s, back={times_backward[-1]:.3f}s, fwd={times_forward[-1]:.3f}s)")
+            if self.verbose:
+                print(f"Iteration {iteration + 1}: cost={best_cost:.6f}, "
+                      f"reduction={cost_reduction:.6f}, time={iter_time:.3f}s "
+                      f"(lin={times_linearize[-1]:.3f}s, back={times_backward[-1]:.3f}s, fwd={times_forward[-1]:.3f}s)")
 
             if cost_reduction < self.tol and cost_reduction >= 0:
-                print(f"Converged! (reduction={cost_reduction:.6f} < tol={self.tol})")
+                if self.verbose:
+                    print(f"Converged! (reduction={cost_reduction:.6f} < tol={self.tol})")
                 break
 
         info = {
@@ -541,7 +541,7 @@ def setup_dyn(insertion: float = 94.3) -> crm_python.CRMDynamics:
     return dyn
 
 
-def reaching_demo(use_implicit: bool = True) -> Dict:
+def reaching_demo(use_implicit: bool = True, verbose: bool = False) -> Dict:
     """Point reaching demo: move tip to target position."""
     print("\n" + "="*60)
     print("REACHING DEMO" + (" (Implicit AD)" if use_implicit else " (Full FD)"))
@@ -550,7 +550,8 @@ def reaching_demo(use_implicit: bool = True) -> Dict:
     # Setup
     insertion = 94.3
     dyn = setup_dyn(insertion=insertion)
-    controller = iLQRController(dyn, insertion, horizon=30, max_iters=15, use_implicit=use_implicit)
+    controller = iLQRController(dyn, insertion, horizon=30, max_iters=15,
+                                use_implicit=use_implicit, verbose=verbose)
 
     # Initial state (tip position from initialization, in mm)
     tip_pos = np.array(dyn.get_tip_position(), dtype=np.float64)
@@ -589,7 +590,7 @@ def reaching_demo(use_implicit: bool = True) -> Dict:
     return info
 
 
-def tracking_demo(use_implicit: bool = True) -> Dict:
+def tracking_demo(use_implicit: bool = True, verbose: bool = False) -> Dict:
     """Trajectory tracking demo: follow a sinusoidal path."""
     print("\n" + "="*60)
     print("TRACKING DEMO" + (" (Implicit AD)" if use_implicit else " (Full FD)"))
@@ -615,7 +616,8 @@ def tracking_demo(use_implicit: bool = True) -> Dict:
     target_final = ref_traj[-1, :3]
 
     insertion = 94.3
-    controller = iLQRController(dyn, insertion, horizon=30, max_iters=10, use_implicit=use_implicit)
+    controller = iLQRController(dyn, insertion, horizon=30, max_iters=10,
+                                use_implicit=use_implicit, verbose=verbose)
 
     # Initial state
     tip_pos = np.array(dyn.get_tip_position(), dtype=np.float64)
@@ -638,17 +640,17 @@ def tracking_demo(use_implicit: bool = True) -> Dict:
     return info
 
 
-def comparison_experiment():
+def comparison_experiment(verbose: bool = False):
     """Compare Implicit AD vs Full FD."""
     print("\n" + "="*80)
     print("COMPARISON EXPERIMENT: Implicit AD vs Full FD")
     print("="*80)
 
     # Run with implicit AD
-    result_implicit = reaching_demo(use_implicit=True)
+    result_implicit = reaching_demo(use_implicit=True, verbose=verbose)
 
     # Run with full FD
-    result_fd = reaching_demo(use_implicit=False)
+    result_fd = reaching_demo(use_implicit=False, verbose=verbose)
 
     # Compare
     print("\n" + "="*80)
@@ -681,16 +683,18 @@ def main():
                         default="reaching", help="Demo mode")
     parser.add_argument("--method", choices=["implicit", "fd"],
                         default="implicit", help="Linearization method")
+    parser.add_argument("--verbose", "-v", action="store_true",
+                        help="Enable verbose output (iteration details)")
     args = parser.parse_args()
 
     use_implicit = (args.method == "implicit")
 
     if args.mode == "reaching":
-        reaching_demo(use_implicit=use_implicit)
+        reaching_demo(use_implicit=use_implicit, verbose=args.verbose)
     elif args.mode == "tracking":
-        tracking_demo(use_implicit=use_implicit)
+        tracking_demo(use_implicit=use_implicit, verbose=args.verbose)
     elif args.mode == "compare":
-        comparison_experiment()
+        comparison_experiment(verbose=args.verbose)
 
 
 if __name__ == "__main__":

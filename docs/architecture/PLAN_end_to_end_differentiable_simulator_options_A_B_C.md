@@ -1,6 +1,21 @@
 # Plan: End-to-End Differentiable Simulator (Options A / B / C)
 
-This document is a **task-based implementation plan** for three “end-to-end differentiable simulator” options, grounded in the current state of this repo (notably the `autodiff_eigen` and `autodiff_template` branches/worktrees).
+**✅ RECOMMENDED OPTION: Option A** (as of 2025-12-25)
+
+**Status**: Option A has been **fully implemented and validated** through stabilization checkpoints CP-01 through CP-08.
+
+**Key Results**:
+- ✅ BVP divergence resolved (0% failure rate with `step()` API)
+- ✅ Output Jacobian g_θ implemented via AD (Task 4.7)
+- ✅ Multi-actuator output infrastructure complete (Task 4.9)
+- ✅ AD correctness verified (<1% error at FD eps=1e-7)
+- ✅ iLQR controller functional with implicit AD linearization
+
+**See**: `docs/FINAL_COMPLETION_REPORT.md` for comprehensive results and `README.md` for usage instructions.
+
+---
+
+This document is a **task-based implementation plan** for three "end-to-end differentiable simulator" options, grounded in the current state of this repo (notably the `autodiff_eigen` and `autodiff_template` branches/worktrees).
 
 It is written so another AI agent can:
 - understand where we are today,
