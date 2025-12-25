@@ -1012,13 +1012,78 @@ public:
             nL_guess[j][2] = 0.0;
         }
 
-        // Validate rotation matrix orthogonality
-        double det = R_L[0][0] * (R_L[0][4] * R_L[0][8] - R_L[0][5] * R_L[0][7])
-                   - R_L[0][1] * (R_L[0][3] * R_L[0][8] - R_L[0][5] * R_L[0][6])
-                   + R_L[0][2] * (R_L[0][3] * R_L[0][7] - R_L[0][4] * R_L[0][6]);
+        // Phase 3 Task 3.3: Validate rotation matrix orthogonality for ALL actuators
+        constexpr double kOrthogonalityTolerance = 1e-3;
 
-        if (std::abs(det - 1.0) > 0.01) {
-            py::print("Warning: Coil rotation matrix det =", det, "(should be 1.0)");
+        auto gram_schmidt_orthonormalize = [](double R[9]) {
+            // Gram-Schmidt orthonormalization for 3x3 rotation matrix (row-major)
+            // R = [r0, r1, r2] where each ri is a 3-vector (column)
+
+            // Extract columns
+            double r0[3] = {R[0], R[3], R[6]};
+            double r1[3] = {R[1], R[4], R[7]};
+            double r2[3] = {R[2], R[5], R[8]};
+
+            // Orthogonalize r1 against r0
+            double dot01 = r0[0]*r1[0] + r0[1]*r1[1] + r0[2]*r1[2];
+            r1[0] -= dot01 * r0[0];
+            r1[1] -= dot01 * r0[1];
+            r1[2] -= dot01 * r0[2];
+
+            // Orthogonalize r2 against r0 and r1
+            double dot02 = r0[0]*r2[0] + r0[1]*r2[1] + r0[2]*r2[2];
+            double dot12 = r1[0]*r2[0] + r1[1]*r2[1] + r1[2]*r2[2];
+            r2[0] -= dot02 * r0[0] + dot12 * r1[0];
+            r2[1] -= dot02 * r0[1] + dot12 * r1[1];
+            r2[2] -= dot02 * r0[2] + dot12 * r1[2];
+
+            // Normalize all columns
+            auto normalize = [](double v[3]) {
+                double norm = std::sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]);
+                if (norm > 1e-12) {
+                    v[0] /= norm;
+                    v[1] /= norm;
+                    v[2] /= norm;
+                }
+            };
+
+            normalize(r0);
+            normalize(r1);
+            normalize(r2);
+
+            // Write back to R (row-major)
+            R[0] = r0[0]; R[1] = r1[0]; R[2] = r2[0];
+            R[3] = r0[1]; R[4] = r1[1]; R[5] = r2[1];
+            R[6] = r0[2]; R[7] = r1[2]; R[8] = r2[2];
+        };
+
+        for (int j = 0; j < cparams->no_act_set && j < NUM_ACT_SET; j++) {
+            // Compute determinant
+            double det = R_L[j][0] * (R_L[j][4] * R_L[j][8] - R_L[j][5] * R_L[j][7])
+                       - R_L[j][1] * (R_L[j][3] * R_L[j][8] - R_L[j][5] * R_L[j][6])
+                       + R_L[j][2] * (R_L[j][3] * R_L[j][7] - R_L[j][4] * R_L[j][6]);
+
+            // Check if matrix has drifted beyond tolerance
+            if (std::abs(det - 1.0) > kOrthogonalityTolerance) {
+                if (const char* debug = std::getenv("CRM_DEBUG_FK_INIT")) {
+                    if (std::string(debug) == "1") {
+                        py::print("Warning: Actuator", j, "rotation matrix det =", det,
+                                  "(should be 1.0), applying Gram-Schmidt correction");
+                    }
+                }
+
+                // Apply Gram-Schmidt orthonormalization
+                gram_schmidt_orthonormalize(R_L[j]);
+
+                // Verify correction
+                double det_corrected = R_L[j][0] * (R_L[j][4] * R_L[j][8] - R_L[j][5] * R_L[j][7])
+                                     - R_L[j][1] * (R_L[j][3] * R_L[j][8] - R_L[j][5] * R_L[j][6])
+                                     + R_L[j][2] * (R_L[j][3] * R_L[j][7] - R_L[j][4] * R_L[j][6]);
+
+                if (std::abs(det_corrected - 1.0) > kOrthogonalityTolerance) {
+                    py::print("Error: Actuator", j, "rotation matrix correction failed, det =", det_corrected);
+                }
+            }
         }
 
         return true;
@@ -1189,9 +1254,20 @@ public:
         vel_buf(1) = v_L[0][1];
         vel_buf(2) = v_L[0][2];
 
+        // Phase 4 Task 4.1: Add coil_velocities array for multi-actuator support
+        const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+        py::array_t<double> coil_velocities({num_sets, 3});
+        auto coil_vel = coil_velocities.mutable_unchecked<2>();
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                coil_vel(j, i) = x_coil[j][i];
+            }
+        }
+
         py::dict result;
         result["tip_position"] = tip_pos;
         result["tip_velocity"] = tip_vel;
+        result["coil_velocities"] = coil_velocities;  // Phase 4 Task 4.1: Multi-actuator velocities
         result["converged"] = (localmin == 0) && !diverged;
         result["localmin"] = localmin;
         result["diverged"] = diverged;
@@ -1389,6 +1465,18 @@ public:
         BVPParams.dynamics.integrator_type = integrator_type;
         BVPParams.dynamics.last_diverged = false;
 
+        // Phase 3 Task 3.1: Damping-Compensated Initial Guess
+        // When the seed has non-zero velocity, the initial guess should account for
+        // damping forces. This improves BVP convergence for moving seed states.
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            // Linear damping compensation: nL_guess += damping.linear * v_seed
+            // damping_local[j][0:2] are linear damping coefficients
+            for (int i = 0; i < 3; i++) {
+                mL_guess_local[j][i] += damping_local[j][i + 3] * w_L_local[j][i];
+                nL_guess_local[j][i] += damping_local[j][i] * v_L_local[j][i];
+            }
+        }
+
         // Solve BVP
         double out_u0[3];
         double out_mL[NUM_ACT_SET][3], out_nL[NUM_ACT_SET][3];
@@ -1397,8 +1485,205 @@ public:
         double ftip_guess[3] = {0.0, 0.0, 0.0};
         int localmin;
 
+        // Phase 3 Task 3.2: Internal Velocity Continuation Loop & Warm-Up
+        // Try direct solve first
         DynamicsBVP(BVPParams, xf_local, mL_guess_local, nL_guess_local, ftip_guess,
                     out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin);
+
+        // If BVP failed (localmin != 0), enter velocity continuation recovery
+        if (localmin != 0) {
+            // Save original velocities
+            double v_L_original[NUM_ACT_SET][3];
+            double w_L_original[NUM_ACT_SET][3];
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    v_L_original[j][i] = v_L_local[j][i];
+                    w_L_original[j][i] = w_L_local[j][i];
+                }
+            }
+
+            // Continuation ramp: gradually increase velocity from 0% to 100% over 5 steps
+            constexpr int kContinuationSteps = 5;
+            bool continuation_succeeded = true;
+
+            for (int step = 0; step <= kContinuationSteps; step++) {
+                const double alpha = static_cast<double>(step) / static_cast<double>(kContinuationSteps);
+
+                // Scale velocities
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        v_L_local[j][i] = alpha * v_L_original[j][i];
+                        w_L_local[j][i] = alpha * w_L_original[j][i];
+                    }
+                }
+
+                // Rebuild BVPParams with scaled velocities
+                CRMShootingMethodParams BVPParams_ramp = CRMDYNConstructShootingMethodParamSet(
+                    *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+                    ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+                    actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+                );
+                BVPParams_ramp.dynamics.integrator_type = integrator_type;
+                BVPParams_ramp.dynamics.last_diverged = false;
+
+                // Recompute damping-compensated guess for this velocity level
+                double mL_guess_ramp[NUM_ACT_SET][3];
+                double nL_guess_ramp[NUM_ACT_SET][3];
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        // Start from previous converged solution (or initial guess for step 0)
+                        mL_guess_ramp[j][i] = (step > 0) ? out_mL[j][i] : mL_guess_local[j][i];
+                        nL_guess_ramp[j][i] = (step > 0) ? out_nL[j][i] : nL_guess_local[j][i];
+                    }
+                }
+
+                // Solve at this velocity level
+                int localmin_ramp;
+                DynamicsBVP(BVPParams_ramp, xf_local, mL_guess_ramp, nL_guess_ramp, ftip_guess,
+                            out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin_ramp);
+
+                if (localmin_ramp != 0) {
+                    continuation_succeeded = false;
+                    break;
+                }
+            }
+
+            if (continuation_succeeded) {
+                // Multi-pass refinement (warm-up): perform 2 additional calls at 100% velocity
+                // to let the trust-region solver refine its internal Jacobian map
+                for (int warmup = 0; warmup < 2; warmup++) {
+                    // Restore original velocities
+                    for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                        for (int i = 0; i < 3; i++) {
+                            v_L_local[j][i] = v_L_original[j][i];
+                            w_L_local[j][i] = w_L_original[j][i];
+                        }
+                    }
+
+                    CRMShootingMethodParams BVPParams_warmup = CRMDYNConstructShootingMethodParamSet(
+                        *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+                        ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+                        actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+                    );
+                    BVPParams_warmup.dynamics.integrator_type = integrator_type;
+                    BVPParams_warmup.dynamics.last_diverged = false;
+
+                    // Use previous converged solution as guess
+                    double mL_guess_warmup[NUM_ACT_SET][3];
+                    double nL_guess_warmup[NUM_ACT_SET][3];
+                    for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                        for (int i = 0; i < 3; i++) {
+                            mL_guess_warmup[j][i] = out_mL[j][i];
+                            nL_guess_warmup[j][i] = out_nL[j][i];
+                        }
+                    }
+
+                    int localmin_warmup;
+                    DynamicsBVP(BVPParams_warmup, xf_local, mL_guess_warmup, nL_guess_warmup, ftip_guess,
+                                out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin_warmup);
+
+                    if (localmin_warmup != 0) {
+                        continuation_succeeded = false;
+                        break;
+                    }
+                }
+
+                if (continuation_succeeded) {
+                    localmin = 0;  // Mark as successful
+                }
+            }
+
+            // Failure recovery fallback: if homotopy failed, try static reset and retry once
+            if (!continuation_succeeded) {
+                // Reset to zero velocity and solve
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        v_L_local[j][i] = 0.0;
+                        w_L_local[j][i] = 0.0;
+                    }
+                }
+
+                CRMShootingMethodParams BVPParams_static = CRMDYNConstructShootingMethodParamSet(
+                    *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+                    ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+                    actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+                );
+                BVPParams_static.dynamics.integrator_type = integrator_type;
+                BVPParams_static.dynamics.last_diverged = false;
+
+                // Use original guess for static solve
+                double mL_guess_static[NUM_ACT_SET][3];
+                double nL_guess_static[NUM_ACT_SET][3];
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        mL_guess_static[j][i] = mL_guess_local[j][i];
+                        nL_guess_static[j][i] = nL_guess_local[j][i];
+                    }
+                }
+
+                int localmin_static;
+                DynamicsBVP(BVPParams_static, xf_local, mL_guess_static, nL_guess_static, ftip_guess,
+                            out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin_static);
+
+                if (localmin_static == 0) {
+                    // Static solve succeeded, retry the full ramp once more
+                    for (int step = 0; step <= kContinuationSteps; step++) {
+                        const double alpha = static_cast<double>(step) / static_cast<double>(kContinuationSteps);
+
+                        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                            for (int i = 0; i < 3; i++) {
+                                v_L_local[j][i] = alpha * v_L_original[j][i];
+                                w_L_local[j][i] = alpha * w_L_original[j][i];
+                            }
+                        }
+
+                        CRMShootingMethodParams BVPParams_retry = CRMDYNConstructShootingMethodParamSet(
+                            *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+                            ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+                            actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+                        );
+                        BVPParams_retry.dynamics.integrator_type = integrator_type;
+                        BVPParams_retry.dynamics.last_diverged = false;
+
+                        double mL_guess_retry[NUM_ACT_SET][3];
+                        double nL_guess_retry[NUM_ACT_SET][3];
+                        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                            for (int i = 0; i < 3; i++) {
+                                mL_guess_retry[j][i] = (step > 0) ? out_mL[j][i] : out_mL[j][i];
+                                nL_guess_retry[j][i] = (step > 0) ? out_nL[j][i] : out_nL[j][i];
+                            }
+                        }
+
+                        int localmin_retry;
+                        DynamicsBVP(BVPParams_retry, xf_local, mL_guess_retry, nL_guess_retry, ftip_guess,
+                                    out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin_retry);
+
+                        if (localmin_retry != 0) {
+                            break;
+                        }
+
+                        if (step == kContinuationSteps && localmin_retry == 0) {
+                            localmin = 0;  // Retry succeeded
+                        }
+                    }
+                }
+            }
+
+            // Restore original velocities to BVPParams for subsequent IVP solve
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    v_L_local[j][i] = v_L_original[j][i];
+                    w_L_local[j][i] = w_L_original[j][i];
+                }
+            }
+            BVPParams = CRMDYNConstructShootingMethodParamSet(
+                *catheter.getParams(), catheter.config, insertion_length, ActuationCurrents,
+                ContactMode, TipConstraintPoint, TipForce, integrationStepSize,
+                actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt_local
+            );
+            BVPParams.dynamics.integrator_type = integrator_type;
+            BVPParams.dynamics.last_diverged = false;
+        }
 
         // Solve IVP
         double xf_new[NUM_STATES];
@@ -1428,6 +1713,16 @@ public:
         vel(0) = x_coil[0][0];
         vel(1) = x_coil[0][1];
         vel(2) = x_coil[0][2];
+
+        // Phase 4 Task 4.1: Add coil_velocities array for multi-actuator support
+        // Return all coil velocities (num_sets, 3) instead of just tip velocity
+        py::array_t<double> coil_velocities({num_sets, 3});
+        auto coil_vel = coil_velocities.mutable_unchecked<2>();
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                coil_vel(j, i) = x_coil[j][i];
+            }
+        }
 
         // Return next seed (or the original seed on failure)
         py::array_t<double> v_next({num_sets, 3});
@@ -1465,7 +1760,8 @@ public:
 
         py::dict result;
         result["tip_position"] = tip_pos;
-        result["tip_velocity"] = tip_vel;
+        result["tip_velocity"] = tip_vel;  // Keep for backward compatibility
+        result["coil_velocities"] = coil_velocities;  // Phase 4 Task 4.1: Multi-actuator velocities
         result["converged"] = converged;
         result["localmin"] = localmin;
         result["diverged"] = diverged;
@@ -2305,11 +2601,18 @@ public:
             return y;
         };
 
-        // Current vector (assume 3D for now, matching Torch pipeline).
+        // Task 1.2: Current vector (3D) + insertion_length for 4D control Jacobian
         Eigen::Vector3d curr0(0.0, 0.0, 0.0);
         auto curr_buf = currents.request();
         const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
         for (int i = 0; i < 3; i++) curr0(i) = (i < curr_buf.size) ? curr_ptr[i] : 0.0;
+
+        // Build 4D control vector [currents(3), insertion_length(1)]
+        Eigen::VectorXd controls_with_insertion(4);
+        controls_with_insertion(0) = curr0(0);
+        controls_with_insertion(1) = curr0(1);
+        controls_with_insertion(2) = curr0(2);
+        controls_with_insertion(3) = insertion_length;
 
         // Compute residual at (x*,theta) for diagnostics.
         Eigen::VectorXd tau0_flat;
@@ -2432,6 +2735,7 @@ public:
 
         // Compute ∂F/∂u (currents) using AD when available (Task 1.5)
         bool have_ad_jxu = false;
+        Eigen::MatrixXd Jxu_ad;  // Task 1.2: Declare outside try block for later access
         if (x_dim == NUM_DYN_RESIDUAL && num_sets == 1) {
             try {
                 // Build DYNNLEParams at (curr0, seed0) and compute Jxu = dF/du at x* via autodiff.
@@ -2508,9 +2812,12 @@ public:
                 }
 
                 Eigen::VectorXd Fad;
-                Eigen::MatrixXd Jxu_ad = DYNNLEquationControlJacobianEigenAD(x_star_scaled, curr0, DYNNLEParams, &Fad);
-                if (Jxu_ad.rows() == x_dim && Jxu_ad.cols() == 3 && Jxu_ad.allFinite()) {
-                    Jxth.leftCols(3) = Jxu_ad;
+                // Task 1.2: Pass 4D control vector to compute gradients w.r.t. [currents, insertion_length]
+                Jxu_ad = DYNNLEquationControlJacobianEigenAD(x_star_scaled, controls_with_insertion, DYNNLEParams, &Fad);
+                if (Jxu_ad.rows() == x_dim && Jxu_ad.cols() == 4 && Jxu_ad.allFinite()) {
+                    // Extract grad_currents (first 3 columns) and grad_insertion (4th column)
+                    Jxth.leftCols(3) = Jxu_ad.leftCols(3);  // grad_currents
+                    // Note: grad_insertion will be extracted below and returned separately
                     have_ad_jxu = true;
                 }
             } catch (const std::exception& e) {
@@ -2660,10 +2967,26 @@ public:
         auto Aout = A_out.mutable_unchecked<2>();
         for (int i = 0; i < output_dim; i++) for (int j = 0; j < seed_dim; j++) Aout(i, j) = dydth(i, 3 + j);
 
+        // Task 1.2: Extract grad_insertion if available from AD
+        py::array_t<double> grad_insertion_out({output_dim});
+        auto grad_ins = grad_insertion_out.mutable_unchecked<1>();
+        if (have_ad_jxu) {
+            // We have Jxu_ad which is (x_dim, 4) with col 3 being ∂F/∂insertion
+            // Use implicit diff: dy/d insertion = gx * (dx/d insertion) where dx/d insertion = -Jxx^{-1} * Jx_insertion
+            Eigen::VectorXd Jx_insertion = Jxu_ad.col(3);  // Extract 4th column
+            Eigen::VectorXd dxd_insertion = qr.solve(-Jx_insertion);  // dx/d insertion
+            Eigen::VectorXd dyd_insertion = gx * dxd_insertion;  // dy/d insertion (no gy term since output doesn't directly depend on insertion)
+            for (int i = 0; i < output_dim; i++) grad_ins(i) = dyd_insertion(i);
+        } else {
+            // Fallback: grad_insertion not available
+            for (int i = 0; i < output_dim; i++) grad_ins(i) = 0.0;
+        }
+
         py::dict result;
         result["next_state"] = next_state;
         result["B"] = B_out;
         result["A"] = A_out;
+        result["grad_insertion"] = grad_insertion_out;  // Task 1.2: Return insertion gradient
         result["seed_dim"] = seed_dim;
         result["base"] = base;
         result["residual_norm"] = residual_norm;

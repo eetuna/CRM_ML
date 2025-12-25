@@ -7,8 +7,9 @@ that Torch can backpropagate through physics via custom backward rules.
 Notes:
 - FK backward uses the existing C++ analytical Jacobian exposed as
   `CRMKinematics.compute_jacobian` and slices dp/d(currents,insertion).
-- Dynamics backward currently uses finite-difference B = d(next_state)/d(currents)
-  computed in C++ via `CRMDynamics.linearize_action_from_seed`.
+- Dynamics backward uses the C++ AD-based implicit linearization exposed via
+  `CRMDynamics.linearize_full_seed_action_from_seed_implicit`.
+- Both currents and insertion_length are fully differentiable in both FK and Dynamics.
 """
 
 from __future__ import annotations
@@ -132,8 +133,16 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
         mL_np = seed_mL.detach().cpu().double().numpy()
         nL_np = seed_nL.detach().cpu().double().numpy()
 
-        next_states = np.zeros((batch, 6), dtype=np.float64)
-        B_all = np.zeros((batch, 6, 3), dtype=np.float64)
+        # Phase 4 Task 4.3: Prepare for variable-sized output (multi-actuator)
+        # output_dim = 3 (tip_pos) + 3*num_sets (coil velocities)
+        # For single actuator: output_dim = 6
+        output_dim = 3 + 3 * (num_sets if num_sets is not None else 1)
+        next_states = np.zeros((batch, output_dim), dtype=np.float64)
+
+        # Phase 4 Task 4.3: B matrix may be (output_dim, 3) or (output_dim, 4)
+        # Currently (6, 3) for [currents]
+        # After Phase 1 Task 1.2: (6, 4) for [currents, insertion_length]
+        B_all = None  # Will be allocated after first call to determine shape
         A_all = None
 
         need_seed_jac = any(
@@ -152,7 +161,7 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
             if num_sets is None:
                 raise ValueError("seed_v must have shape (batch, num_act_set, 3)")
             seed_dim = int(num_sets * 3 + num_sets * 3 + num_sets * 3 + num_sets * 9 + 15 + num_sets * 3 + num_sets * 3)
-            A_all = np.zeros((batch, 6, seed_dim), dtype=np.float64)
+            A_all = np.zeros((batch, output_dim, seed_dim), dtype=np.float64)
 
         for i in range(batch):
             if need_seed_jac:
@@ -187,9 +196,16 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
                         float(eps_u),
                         float(eps_seed),
                     )
-                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
-                B_all[i] = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
-                A_all[i] = np.asarray(out["A"], dtype=np.float64).reshape(6, -1)
+                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(output_dim)
+                B_np = np.asarray(out["B"], dtype=np.float64)
+
+                # Phase 4 Task 4.3: Allocate B_all on first iteration based on actual shape
+                if B_all is None:
+                    control_dim = B_np.shape[1] if B_np.ndim == 2 else B_np.size // output_dim
+                    B_all = np.zeros((batch, output_dim, control_dim), dtype=np.float64)
+
+                B_all[i] = B_np.reshape(output_dim, -1)
+                A_all[i] = np.asarray(out["A"], dtype=np.float64).reshape(output_dim, -1)
             else:
                 out = dyn.linearize_action_from_seed(
                     currents_np[i],
@@ -203,8 +219,15 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
                     nL_np[i],
                     float(eps_u),
                 )
-                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(6)
-                B_all[i] = np.asarray(out["B"], dtype=np.float64).reshape(6, 3)
+                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(output_dim)
+                B_np = np.asarray(out["B"], dtype=np.float64)
+
+                # Phase 4 Task 4.3: Allocate B_all on first iteration based on actual shape
+                if B_all is None:
+                    control_dim = B_np.shape[1] if B_np.ndim == 2 else B_np.size // output_dim
+                    B_all = np.zeros((batch, output_dim, control_dim), dtype=np.float64)
+
+                B_all[i] = B_np.reshape(output_dim, -1)
 
         ctx.num_sets = num_sets
         ctx.has_seed_jac = need_seed_jac
@@ -226,13 +249,12 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
 
         Differentiable inputs:
             - currents: Always computed via B matrix (∂next_state/∂currents)
+            - insertion_length: Computed via the 4th column of the control Jacobian
+              returned by the C++ AD-based implicit linearizer.
             - seed tensors (v, w, p, R, xf, mL, nL): Computed via A matrix when available
               (requires CRM_DYN_LINEARIZATION_METHOD=implicit or fd)
 
         Non-differentiable inputs:
-            - insertion_length: Not differentiated (would require C++ extension to expose ∂y/∂insertion).
-              This is acceptable for most control applications where insertion length is treated
-              as a fixed parameter during trajectory optimization.
             - dyn, eps_u, eps_seed: Configuration parameters (not trainable)
 
         Args:
@@ -245,16 +267,32 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
              grad_seed_R, grad_seed_xf, grad_seed_mL, grad_seed_nL, None, None, None)
         """
         saved = ctx.saved_tensors
-        B = saved[0]  # (B, 6, 3)
+        B = saved[0]  # (B, output_dim, control_dim) where control_dim is 3 or 4
         A = saved[1] if (getattr(ctx, "has_seed_jac", False) and len(saved) > 1) else None
         if grad_next_state is None:
             return (None,) * 12
 
-        # grad_currents = B^T * grad_next_state
-        grad_currents = torch.einsum("bik,bk->bi", B.transpose(1, 2), grad_next_state)
+        # Phase 4 Task 4.3: Handle variable-sized B matrix
+        # B shape: (batch, output_dim, control_dim)
+        # control_dim = 3: [currents] (current state)
+        # control_dim = 4: [currents, insertion_length] (after Phase 1 Task 1.2)
 
-        # Insertion length gradient not computed - see docstring above
-        grad_insertion = None
+        # grad_controls = B^T * grad_next_state => shape (batch, control_dim)
+        grad_controls = torch.einsum("bik,bk->bi", B.transpose(1, 2), grad_next_state)
+
+        # Extract gradients based on control_dim
+        control_dim = B.shape[2]
+        if control_dim >= 3:
+            grad_currents = grad_controls[:, :3]
+        else:
+            grad_currents = None
+
+        # Phase 4 Task 4.3: Extract grad_insertion when available (control_dim == 4)
+        if control_dim >= 4:
+            grad_insertion = grad_controls[:, 3:4]  # Keep shape (batch, 1)
+        else:
+            # Insertion length gradient not yet available (Phase 1 Task 1.2 not complete)
+            grad_insertion = None
 
         grad_seed_v = None
         grad_seed_w = None

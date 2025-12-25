@@ -37,6 +37,16 @@ LearnableParamsAD<Scalar>::LearnableParamsAD(const DYNNLEqnParams& params, int f
     for (int i = 0; i < 3; ++i) {
         MagMoment(i) = Scalar(params.MagMoment[0](i));
     }
+
+    // Populate CATAM for all actuators
+    catam.resize(params.no_act_set);
+    for (int j = 0; j < params.no_act_set; ++j) {
+        for (int r = 0; r < 3; ++r) {
+            for (int c = 0; c < 3; ++c) {
+                catam[j](r, c) = Scalar(params.CoilAlignmentTurnAreaMatrix[j](r, c));
+            }
+        }
+    }
 }
 
 template <typename Scalar>
@@ -44,6 +54,7 @@ DynamicsContextAD<Scalar>::DynamicsContextAD(const DYNNLEqnParams& params, int f
     : DELTA_T(params.dynamics.DELTA_T),
       integrator_type(params.dynamics.integrator_type),
       learnable(params, flex_seg_idx),
+      insertion_length(Scalar(params.InsertedLength)),
       geometry(&params)
 {
     // Extract physical constants

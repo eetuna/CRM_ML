@@ -41,6 +41,7 @@ struct LearnableParamsAD {
     Eigen::Matrix<Scalar, 6, 1> damping;   ///< Linear (3) + angular (3) damping coefficients
     Scalar actMass;                         ///< Actuator mass
     Eigen::Matrix<Scalar, 3, 1> MagMoment; ///< Magnetic moment vector
+    std::vector<Mat3<Scalar>> catam;       ///< Coil-Alignment-Turn-Area Matrix for each actuator (NUM_ACT_SET)
 
     // Flexible segment parameters (from flex_seg[0] for single-actuator systems)
     Eigen::Matrix<Scalar, 3, 1> K_diag;    ///< Diagonal of stiffness matrix K
@@ -53,6 +54,7 @@ struct LearnableParamsAD {
         : damping(Eigen::Matrix<Scalar, 6, 1>::Zero()),
           actMass(Scalar(0.0)),
           MagMoment(Eigen::Matrix<Scalar, 3, 1>::Zero()),
+          catam(),
           K_diag(Eigen::Matrix<Scalar, 3, 1>::Zero()),
           ustar(Eigen::Matrix<Scalar, 3, 1>::Zero())
     {}
@@ -277,6 +279,9 @@ struct DynamicsContextAD {
     Eigen::Vector3d g;            ///< Gravity vector
     Eigen::Matrix3d actInertia;   ///< Actuator inertia matrix (3x3)
 
+    // Task 1.2: Insertion length as AD variable for differentiation
+    Scalar insertion_length;      ///< Inserted length (can be AD type for differentiation)
+
     // NEW: Pointer to geometry data (not owned, read-only access)
     const DYNNLEqnParams* geometry;  ///< Pointer for accessing xi, xf, TipForce, SegBounds, etc. Must outlive this context.
 
@@ -290,6 +295,7 @@ struct DynamicsContextAD {
           B0(Eigen::Vector3d::Zero()),
           g(Eigen::Vector3d::Zero()),
           actInertia(Eigen::Matrix3d::Zero()),
+          insertion_length(Scalar(0.0)),
           geometry(nullptr)
     {}
 
@@ -310,6 +316,7 @@ struct DynamicsContextAD {
           B0(Eigen::Vector3d::Zero()),
           g(Eigen::Vector3d::Zero()),
           actInertia(Eigen::Matrix3d::Zero()),
+          insertion_length(Scalar(0.0)),
           geometry(nullptr)
     {
         actuators.reserve(ctx.size());
@@ -362,6 +369,7 @@ struct DynamicsContextAD {
           B0(other.B0),
           g(other.g),
           actInertia(other.actInertia),
+          insertion_length(Scalar(other.insertion_length)),
           geometry(other.geometry)
     {
         // Convert actuators
@@ -400,6 +408,15 @@ struct DynamicsContextAD {
             learnable.MagMoment(i) = Scalar(other.learnable.MagMoment(i));
             learnable.K_diag(i) = Scalar(other.learnable.K_diag(i));
             learnable.ustar(i) = Scalar(other.learnable.ustar(i));
+        }
+        // Task 1.1: Convert catam
+        learnable.catam.resize(other.learnable.catam.size());
+        for (size_t j = 0; j < other.learnable.catam.size(); ++j) {
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    learnable.catam[j](r, c) = Scalar(other.learnable.catam[j](r, c));
+                }
+            }
         }
     }
 

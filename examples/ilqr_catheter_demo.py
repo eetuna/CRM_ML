@@ -79,7 +79,7 @@ class iLQRController:
         # Using step() API which is more stable than step_from_seed()
         self.current_scale = 0.1  # Maximum current amplitude in Amps
 
-    def _linearize(self, currents_normalized: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def _linearize(self, currents_normalized: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         """
         Linearize dynamics around current state.
 
@@ -90,6 +90,7 @@ class iLQRController:
             next_state: (6,) next state
             A: (6, seed_dim) state Jacobian
             B: (6, 3) control Jacobian (scaled for normalized inputs)
+            grad_ins: (6,) gradient w.r.t. insertion length
         """
         # Convert normalized currents to physical currents
         currents_physical = currents_normalized * self.current_scale
@@ -114,11 +115,12 @@ class iLQRController:
         next_state = np.array(result['next_state'], dtype=np.float64)  # (6,)
         A = np.array(result['A'], dtype=np.float64)  # (6, seed_dim)
         B_physical = np.array(result['B'], dtype=np.float64)  # (6, 3)
+        grad_ins = np.array(result.get('grad_insertion', np.zeros(6)), dtype=np.float64)
 
         # Scale B matrix for normalized inputs: B_normalized = B_physical * current_scale
         B = B_physical * self.current_scale
 
-        return next_state, A, B
+        return next_state, A, B, grad_ins
 
     def _step_forward(self, currents_normalized: np.ndarray, seed_state: Dict) -> Tuple[np.ndarray, Dict]:
         """
@@ -150,7 +152,9 @@ class iLQRController:
         result = self.dyn.step(currents_physical, self.insertion_length)
 
         tip_pos = np.array(result['tip_position'], dtype=np.float64)
-        tip_vel = np.array(result['tip_velocity'], dtype=np.float64)
+        # Phase 4: Use new coil_velocities API (coil 0 is tip)
+        coil_vels = np.array(result['coil_velocities'], dtype=np.float64)
+        tip_vel = coil_vels[0]
         state = np.concatenate([tip_pos, tip_vel])
 
         # Get new seed state from internal state
@@ -448,7 +452,7 @@ class iLQRController:
             A_list = []
             B_list = []
             for t in range(T):
-                _, A_t, B_t = self._linearize(actions[t], seeds[t])
+                _, A_t, B_t, _ = self._linearize(actions[t], seeds[t])
                 A_list.append(A_t)
                 B_list.append(B_t)
             times_linearize.append(time.time() - t_lin_start)

@@ -351,6 +351,165 @@ void RK4_coildyn(double in_x_n[NUM_COIL_STATES], double in_n[3], double g[3],  d
     for (int i = 0; i < 6; ++i) out_xdot_n[i] = k1[i];
 }
 
+// Phase 2 Task 2.1: Adaptive stepping thresholds and safety check for forward path
+// Matches constants from CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp
+static constexpr double kAngularAccelThreshold = 1000.0;  // rad/s²
+static constexpr int kMaxSubdivisionLevels = 4;           // 2^4 = 16x refinement max
+
+/**
+ * @brief Check if angular acceleration is within safe bounds for adaptive stepping
+ * @param xdot Twist derivative [vdot, wdot] where wdot is angular acceleration
+ * @return true if acceleration is safe (finite and below threshold)
+ */
+static bool is_acceleration_safe_double(const double xdot[6]) {
+    // Angular acceleration is the last 3 components of xdot
+    const double wdot_x = xdot[3];
+    const double wdot_y = xdot[4];
+    const double wdot_z = xdot[5];
+
+    const double wdot_mag_sq = wdot_x * wdot_x + wdot_y * wdot_y + wdot_z * wdot_z;
+    const double wdot_mag = std::sqrt(wdot_mag_sq);
+
+    return std::isfinite(wdot_mag) && wdot_mag < kAngularAccelThreshold;
+}
+
+/**
+ * @brief Adaptive RK4 integrator with recursive subdivision for stiff dynamics
+ * @param twist_in Input twist state [v, w]
+ * @param R_in Input rotation matrix (9 elements, row-major)
+ * @param p_in Input position (3 elements)
+ * @param n_L Internal load (3 elements)
+ * @param g Gravity vector (3 elements)
+ * @param actMass Actuator mass
+ * @param actInertia Actuator inertia matrix (9 elements)
+ * @param damping Damping coefficients (6 elements)
+ * @param B0 Magnetic field (3 elements)
+ * @param muhat Magnetic moment hat matrix (9 elements)
+ * @param m_L Internal moment (3 elements)
+ * @param h Step size
+ * @param subdivision_level Current recursion depth
+ * @param twist_out Output twist state
+ * @param R_out Output rotation matrix
+ * @param p_out Output position
+ * @param xdot_final Output derivative
+ * @return true if step succeeded, false if max subdivisions exceeded with unsafe acceleration
+ */
+static bool rk4_step_adaptive_double(
+    const double twist_in[6],
+    const double R_in[9],
+    const double p_in[3],
+    const double n_L[3],
+    double g[3],
+    double actMass,
+    double actInertia[9],
+    const double damping[6],
+    const double B0[3],
+    const double muhat[9],
+    const double m_L[3],
+    double h,
+    int subdivision_level,
+    double twist_out[6],
+    double R_out[9],
+    double p_out[3],
+    double xdot_final[6])
+{
+    // Compute RK4 stage 1
+    double k1[6];
+    CoilIntegrad(twist_in, n_L, g, const_cast<double*>(R_in), actMass, actInertia, damping, B0, muhat, m_L, k1);
+
+    // Check acceleration magnitude - subdivide if needed
+    if (!is_acceleration_safe_double(k1) && subdivision_level < kMaxSubdivisionLevels) {
+        // Subdivide: two half-steps
+        const double h_half = h * 0.5;
+
+        // First half-step
+        double twist_mid[6], R_mid[9], p_mid[3], xdot_mid[6];
+        if (!rk4_step_adaptive_double(twist_in, R_in, p_in, n_L, g, actMass, actInertia,
+                                      damping, B0, muhat, m_L, h_half, subdivision_level + 1,
+                                      twist_mid, R_mid, p_mid, xdot_mid)) {
+            return false;  // Subdivision failed
+        }
+
+        // Second half-step
+        if (!rk4_step_adaptive_double(twist_mid, R_mid, p_mid, n_L, g, actMass, actInertia,
+                                      damping, B0, muhat, m_L, h_half, subdivision_level + 1,
+                                      twist_out, R_out, p_out, xdot_final)) {
+            return false;  // Subdivision failed
+        }
+
+        return true;  // Successful subdivision
+    }
+
+    // If acceleration is safe OR max subdivisions reached, proceed with normal RK4
+
+    // RK4 Stage 2
+    double twist_2[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_2[i] = twist_in[i] + h * k1[i] * 0.5;
+    }
+    double R_2[9], p_2[3];
+    DYNSE3_TimeSpace(const_cast<double*>(R_in), const_cast<double*>(p_in), h * 0.5, const_cast<double*>(twist_in), R_2, p_2);
+
+    double k2[6];
+    CoilIntegrad(twist_2, n_L, g, R_2, actMass, actInertia, damping, B0, muhat, m_L, k2);
+
+    // RK4 Stage 3 - use twist_for_R3 for SE3 update to match AD implementation
+    double twist_3[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_3[i] = twist_in[i] + h * k2[i] * 0.5;
+    }
+    double R_3[9], p_3[3];
+    double twist_for_R3[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_for_R3[i] = twist_in[i] + h * k1[i] * 0.5;
+    }
+    DYNSE3_TimeSpace(const_cast<double*>(R_in), const_cast<double*>(p_in), h * 0.5, twist_for_R3, R_3, p_3);
+
+    double k3[6];
+    CoilIntegrad(twist_3, n_L, g, R_3, actMass, actInertia, damping, B0, muhat, m_L, k3);
+
+    // RK4 Stage 4 - use twist_for_R4 for SE3 update to match AD implementation
+    double twist_4[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_4[i] = twist_in[i] + h * k3[i];
+    }
+    double R_4[9], p_4[3];
+    double twist_for_R4[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_for_R4[i] = twist_in[i] + h * k2[i];
+    }
+    DYNSE3_TimeSpace(const_cast<double*>(R_in), const_cast<double*>(p_in), h, twist_for_R4, R_4, p_4);
+
+    double k4[6];
+    CoilIntegrad(twist_4, n_L, g, R_4, actMass, actInertia, damping, B0, muhat, m_L, k4);
+
+    // RK4 update
+    double twist_np1[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_np1[i] = twist_in[i] + h * (k1[i] + 2.0*k2[i] + 2.0*k3[i] + k4[i]) / 6.0;
+    }
+
+    // SE3 update using weighted average twist (midpoint rule for stability)
+    double twist_avg[6];
+    for (int i = 0; i < 6; ++i) {
+        twist_avg[i] = 0.5 * (twist_in[i] + twist_np1[i]);
+    }
+    DYNSE3_TimeSpace(const_cast<double*>(R_in), const_cast<double*>(p_in), h, twist_avg, R_out, p_out);
+
+    // Copy outputs
+    for (int i = 0; i < 6; ++i) {
+        twist_out[i] = twist_np1[i];
+        xdot_final[i] = k1[i];  // Return initial derivative for diagnostics
+    }
+
+    // Check if max subdivisions reached but still unsafe
+    if (!is_acceleration_safe_double(k1) && subdivision_level >= kMaxSubdivisionLevels) {
+        return false;  // Max subdivisions exceeded with unsafe acceleration
+    }
+
+    return true;  // Success
+}
+
 void CoilDynamicsRK4(double in_coil_state[NUM_COIL_STATES], double in_n[3], double g[3],
                      double actMass, double actInertia[9], double damping[6], double DELTA_T, double in_B0[3], double in_muhat[9],
                      double in_mL[3], double out_coil_state[NUM_COIL_STATES], double out_xdot_n[6], bool* out_diverged) {
@@ -372,12 +531,47 @@ void CoilDynamicsRK4(double in_coil_state[NUM_COIL_STATES], double in_n[3], doub
 
     int N = ceil(DELTA_T / t_step);
     for (int idx = 0; idx < N; ++idx) {
-        RK4_coildyn(x_n, in_n, g, actMass, actInertia, damping, in_B0, in_muhat, in_mL, x_np1, xdot_n);
+        // Phase 2 Task 2.2: Use adaptive RK4 instead of basic RK4_coildyn
+        // Extract current state components
+        double twist_n[6];
+        double R_n[9];
+        double p_n[3];
+        for (int i = 0; i < 6; ++i) twist_n[i] = x_n[i];
+        for (int i = 0; i < 3; ++i) p_n[i] = x_n[i + 6];
+        for (int i = 0; i < 9; ++i) R_n[i] = x_n[i + 9];
 
+        // Prepare output buffers for adaptive step
+        double twist_np1[6];
+        double R_np1[9];
+        double p_np1[3];
+
+        // Call adaptive RK4 with subdivision_level starting at 0
+        bool step_succeeded = rk4_step_adaptive_double(
+            twist_n, R_n, p_n, in_n, g, actMass, actInertia,
+            damping, in_B0, in_muhat, in_mL, t_step, 0,
+            twist_np1, R_np1, p_np1, xdot_n);
+
+        // Check if adaptive step failed (max subdivisions exceeded)
+        if (!step_succeeded) {
+            if (out_diverged != nullptr) {
+                *out_diverged = true;
+            }
+            for (int i = 0; i < NUM_COIL_STATES; ++i) out_coil_state[i] = kDivergenceValue;
+            for (int i = 0; i < 6; ++i) out_xdot_n[i] = 0.0;
+            return;
+        }
+
+        // Pack results back into x_np1
+        for (int i = 0; i < 6; ++i) x_np1[i] = twist_np1[i];
+        for (int i = 0; i < 3; ++i) x_np1[i + 6] = p_np1[i];
+        for (int i = 0; i < 9; ++i) x_np1[i + 9] = R_np1[i];
+
+        // Copy to x_n for next iteration
         for (int i = 0; i < NUM_COIL_STATES; ++i) {
             x_n[i] = x_np1[i];
         }
 
+        // Check for divergence (existing logic)
         const double twist_mag = std::sqrt(x_n[0] * x_n[0] + x_n[1] * x_n[1] + x_n[2] * x_n[2]
                                            + x_n[3] * x_n[3] + x_n[4] * x_n[4] + x_n[5] * x_n[5]);
         const double p_mag = std::sqrt(x_n[6] * x_n[6] + x_n[7] * x_n[7] + x_n[8] * x_n[8]);

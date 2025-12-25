@@ -99,6 +99,9 @@ class CatheterState:
     # Curvature at base
     curvature: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
+    # Linear velocities for all actuators (num_act_set, 3)
+    coil_velocities: Optional[np.ndarray] = None
+
     # Convergence flag
     converged: bool = True
 
@@ -113,6 +116,7 @@ class CatheterState:
             velocity=self.velocity.copy(),
             rotation=self.rotation.copy(),
             curvature=self.curvature.copy(),
+            coil_velocities=self.coil_velocities.copy() if self.coil_velocities is not None else None,
             converged=self.converged
         )
 
@@ -335,7 +339,7 @@ class CRMWrapper:
             dt: Time step (uses default if None)
 
         Returns:
-            Dictionary with tip_position, tip_velocity, converged
+            Dictionary with tip_position, tip_velocity, coil_velocities, converged
         """
         currents = np.asarray(currents, dtype=np.float64).flatten()
         if self._flip_third_current and len(currents) >= 3:
@@ -722,11 +726,13 @@ class CRMSimulator:
         result = self.wrapper.step_dynamics(currents, insertion_length)
         self.state.position = result['tip_position']
         self.state.velocity = result['tip_velocity']
+        self.state.coil_velocities = result.get('coil_velocities')
         self.state.converged = result['converged']
 
         self.history.append({
             'position': self.state.position.copy(),
             'velocity': self.state.velocity.copy(),
+            'coil_velocities': self.state.coil_velocities.copy() if self.state.coil_velocities is not None else None,
             'currents': np.asarray(currents).copy()
         })
         return self.state

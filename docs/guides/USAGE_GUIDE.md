@@ -738,6 +738,144 @@ optimizer = torch.optim.Adam(model_B.parameters(), lr=1e-4)
 # ... fine-tune ...
 ```
 
+## Differentiable Physics Gradients
+
+The CRM_ML simulator provides high-fidelity gradients via Option A (C++ AD + Implicit Differentiation). These gradients allow you to optimize control inputs and physical parameters directly.
+
+### 1. Control Gradients (Currents & Insertion)
+
+You can compute how the future tip position and coil velocities change with respect to the actuation currents and the catheter insertion length.
+
+```python
+from crm_ml_rl.wrappers import crm_python
+import numpy as np
+
+dyn = crm_python.CRMDynamics()
+dyn.load_parameters("data/catheter_params/CatheterParameterSet_1_dyn.txt", "...")
+
+# Current state (from a previous step or rollout)
+seed = dyn.get_seed_state()
+currents = np.array([0.1, 0.0, 0.0])
+insertion = 94.3
+
+# Compute Implicit Linearization
+result = dyn.linearize_full_seed_action_from_seed_implicit(
+    currents, insertion,
+    seed['v'], seed['w'], seed['p'], seed['R'], seed['xf'],
+    seed['mL'], seed['nL']
+)
+
+# Extract Gradients
+B_matrix = result['B']  # Shape (6, 3) -> dy / d(currents)
+grad_ins = result['grad_insertion']  # Shape (6,) -> dy / d(insertion_length)
+
+print(f"Sensitivity to Current X: {B_matrix[:, 0]}")
+print(f"Sensitivity to Pushing/Pulling: {grad_ins}")
+```
+
+### 2. Parameter Gradients (System ID)
+
+You can also compute gradients with respect to internal physical parameters like damping and stiffness.
+
+```python
+# Compute Jacobian w.r.t physical parameters (theta)
+param_result = dyn.compute_parameter_jacobian(
+    currents, insertion,
+    seed['v'], seed['w'], seed['p'], seed['R'], seed['xf']
+)
+
+J_theta = param_result['J_theta'] # Gradient of residual w.r.t params
+names = param_result['param_names'] # ['damping_0', ..., 'K_diag_0', ...]
+
+for name, grad in zip(names, J_theta.T):
+    print(f"Residual sensitivity to {name}: {np.linalg.norm(grad)}")
+```
+
+---
+
+## RL Training with Custom Models
+
+The RL agents can utilize the differentiable simulator for Model-Based RL (e.g., Dyna or MPC).
+
+### 1. Using Differentiable Dynamics in PyTorch
+
+```python
+from crm_ml_rl.wrappers.torch_physics import TorchCRMPhysics
+import torch
+
+physics = TorchCRMPhysics(
+    param_file="data/catheter_params/CatheterParameterSet_1_dyn.txt",
+    config_file="data/catheter_params/CatheterSpatialConfiguration_1.txt"
+)
+
+# Tensors with gradient tracking
+currents = torch.tensor([[0.1, 0.0, 0.0]], requires_grad=True)
+insertion = torch.tensor([94.3], requires_grad=True)
+
+# Forward pass through differentiable physics
+next_state = physics.dyn_step(currents, insertion, seed_v, seed_w, ...)
+
+# Loss and Backprop
+loss = torch.norm(next_state - target)
+loss.backward()
+
+print(f"Current Gradient: {currents.grad}")
+print(f"Insertion Gradient: {insertion.grad}")
+```
+
+---
+
+## Advanced Usage & Stability
+
+### 1. Robust Sequential Stepping
+
+Always use the `step()` API for sequential rollouts. If you must use `step_from_seed()` (e.g. for branching or planning), the system now uses **Homotopy Continuation** to help the BVP solver converge in moving frames.
+
+```python
+# The system automatically attempts a continuation ramp if direct solve fails
+result = dyn.step_from_seed(currents, insertion, v, w, p, R, xf)
+if result['converged']:
+    print("BVP converged (possibly via homotopy loop)")
+```
+
+### 2. Multi-Actuator Output
+
+When `NUM_ACT_SET > 1`, use `coil_velocities` to access state information for all joints.
+
+```python
+result = dyn.step(currents, insertion)
+# coil_velocities shape is (num_actuators, 3)
+for i, vel in enumerate(result['coil_velocities']):
+    print(f"Actuator {i} linear velocity: {vel}")
+```
+
+## Quick Start Scripts
+
+The following scripts under `scripts/` provide immediate entry points for validation and baseline testing.
+
+### 1. Data Generation Sanity Check
+```bash
+python3 scripts/check_data_generation.py
+```
+Uses CRM C++ if available, otherwise falls back to simplified dynamics.
+
+### 2. PID Baseline
+```bash
+python3 scripts/pid_baseline.py --env reaching --episodes 5
+```
+Tune parameters using `--kp`, `--ki`, and `--kd`.
+
+### 3. Controller Comparison
+```bash
+python3 scripts/compare_controllers.py --env reaching --episodes 3 --ppo-steps 2000 --mb-candidates 16
+```
+Quickly compare PID vs. model-free PPO vs. simple model-based shooter.
+
+### 4. RL Training
+```bash
+python3 scripts/example_train_rl.py --algorithm ppo --timesteps 100000
+```
+
 ---
 
 ## Training and Evaluation
