@@ -1,0 +1,26 @@
+# Build artifacts
+build/
+dist/
+*.egg-info/
+__pycache__/
+*.so
+*.o
+*.pyc
+
+# PyTorch extension build
+*.pyd
+*.dll
+
+# CMake
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*~
+
+# Test outputs
+.pytest_cache/
