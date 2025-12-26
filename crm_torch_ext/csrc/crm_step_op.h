@@ -67,4 +67,38 @@ std::vector<torch::Tensor> crm_step_backward(
     torch::Tensor seed_nL
 );
 
+/**
+ * @brief Initialize CRM parameters from files
+ *
+ * Must be called before using crm_step.
+ *
+ * @param param_file Path to parameter file
+ * @param config_file Path to configuration file
+ */
+void initialize_params(const std::string& param_file, const std::string& config_file);
+
+/**
+ * @brief Set timestep for dynamics integration
+ * @param dt Timestep in seconds
+ */
+void set_timestep(double dt);
+
+/**
+ * @brief Set integrator type
+ * @param integrator "abm4" or "rk4"
+ */
+void set_integrator(const std::string& integrator);
+
+/**
+ * @brief Set integration step size
+ * @param step_size Integration step size in mm
+ */
+void set_integration_step_size(double step_size);
+
+/**
+ * @brief Set damping coefficients
+ * @param damping Array of 6 damping coefficients [vx, vy, vz, wx, wy, wz]
+ */
+void set_damping(const std::vector<double>& damping);
+
 } // namespace crm_torch

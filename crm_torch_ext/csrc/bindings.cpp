@@ -104,4 +104,25 @@ PYBIND11_MODULE(_crm_torch_ext, m) {
           py::arg("seed_xf"),
           py::arg("seed_mL"),
           py::arg("seed_nL"));
+
+    m.def("initialize_params", &crm_torch::initialize_params,
+          "Initialize CRM parameters from files",
+          py::arg("param_file"),
+          py::arg("config_file"));
+
+    m.def("set_timestep", &crm_torch::set_timestep,
+          "Set dynamics timestep (seconds)",
+          py::arg("dt"));
+
+    m.def("set_integrator", &crm_torch::set_integrator,
+          "Set integrator type ('abm4' or 'rk4')",
+          py::arg("integrator"));
+
+    m.def("set_integration_step_size", &crm_torch::set_integration_step_size,
+          "Set integration step size (mm)",
+          py::arg("step_size"));
+
+    m.def("set_damping", &crm_torch::set_damping,
+          "Set damping coefficients [vx, vy, vz, wx, wy, wz]",
+          py::arg("damping"));
 }
