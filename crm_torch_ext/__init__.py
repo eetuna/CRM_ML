@@ -12,7 +12,21 @@ try:
     # Expose the main operator
     crm_step = _crm_torch_ext.crm_step
 
-    __all__ = ['crm_step']
+    # Expose parameter management functions
+    initialize_params = _crm_torch_ext.initialize_params
+    set_timestep = _crm_torch_ext.set_timestep
+    set_integrator = _crm_torch_ext.set_integrator
+    set_integration_step_size = _crm_torch_ext.set_integration_step_size
+    set_damping = _crm_torch_ext.set_damping
+
+    __all__ = [
+        'crm_step',
+        'initialize_params',
+        'set_timestep',
+        'set_integrator',
+        'set_integration_step_size',
+        'set_damping',
+    ]
 
 except ImportError as e:
     import warnings

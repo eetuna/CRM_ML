@@ -416,6 +416,248 @@ torch::Tensor crm_step_forward(
     return next_state;
 }
 
+// Helper function to compute implicit differentiation Jacobians
+// This implements the same logic as linearize_full_seed_action_from_seed_implicit in crm_bindings.cpp
+std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
+    const Eigen::Vector3d& currents,
+    double insertion_length,
+    int num_sets,
+    const double v_L[NUM_ACT_SET][3],
+    const double w_L[NUM_ACT_SET][3],
+    const double p_L[NUM_ACT_SET][3],
+    const double R_L[NUM_ACT_SET][9],
+    const double xf[NUM_STATES],
+    const double mL_star[NUM_ACT_SET][3],
+    const double nL_star[NUM_ACT_SET][3],
+    const CRMCatheterModelParams* cparams,
+    const CatheterConfiguration& config,
+    double dt,
+    double integration_step_size,
+    IntegratorType integrator_type,
+    const double damping[NUM_ACT_SET][6],
+    const double actInertia[NUM_ACT_SET][9]
+) {
+    // Scale m and n values (matching Python bindings)
+    // Note: IVALUE_SCALE_M and IVALUE_SCALE_N are defined as macros in CRMDYN.hpp
+    // Python bindings use 1e-2 and 1e-1, but the header defines them as 10000.0
+    // We use the same values as Python bindings for consistency
+    const double scale_m = 1e-2;
+    const double scale_n = 1e-1;
+
+    int x_dim = num_sets * 6;  // mL (3) + nL (3) per actuator set
+
+    Eigen::VectorXd x_star_scaled(x_dim);
+    for (int j = 0; j < num_sets; j++) {
+        for (int i = 0; i < 3; i++) {
+            x_star_scaled(j * 6 + i) = mL_star[j][i] / scale_m;
+            x_star_scaled(j * 6 + 3 + i) = nL_star[j][i] / scale_n;
+        }
+    }
+
+    // Build BVPParams
+    double ActuationCurrents[NUM_ACT_SET][3] = {};
+    for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+        for (int i = 0; i < 3; i++) {
+            ActuationCurrents[j][i] = currents(i);
+        }
+    }
+
+    ContactModeType ContactMode = ContactModeType::FREE_TIP;
+    double TipForce[3] = {0.0, 0.0, 0.0};
+    double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
+
+    // Copy arrays to avoid mutation
+    double v_L_local[NUM_ACT_SET][3], w_L_local[NUM_ACT_SET][3];
+    double p_L_local[NUM_ACT_SET][3], R_L_local[NUM_ACT_SET][9];
+    double damping_local[NUM_ACT_SET][6], actInertia_local[NUM_ACT_SET][9];
+
+    for (int j = 0; j < NUM_ACT_SET; j++) {
+        for (int i = 0; i < 3; i++) {
+            v_L_local[j][i] = v_L[j][i];
+            w_L_local[j][i] = w_L[j][i];
+            p_L_local[j][i] = p_L[j][i];
+        }
+        for (int i = 0; i < 9; i++) {
+            R_L_local[j][i] = R_L[j][i];
+            actInertia_local[j][i] = actInertia[j][i];
+        }
+        for (int i = 0; i < 6; i++) {
+            damping_local[j][i] = damping[j][i];
+        }
+    }
+
+    CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
+        *cparams, config, insertion_length, ActuationCurrents,
+        ContactMode, TipConstraintPoint, TipForce, integration_step_size,
+        actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt
+    );
+    BVPParams.dynamics.integrator_type = integrator_type;
+    BVPParams.dynamics.last_diverged = false;
+
+    // Prep DYNNLE params
+    const bool FinalValueOnly = true;
+    DYNNLEqnParams DYNNLEParams(BVPParams.no_flex_seg, BVPParams.no_rigid_seg,
+                                BVPParams.no_act_set, BVPParams.no_locmarkers,
+                                BVPParams.no_fcum_steps);
+
+    double x_0[NUM_STATES];
+    for (int i = 0; i < NUM_STATES; i++) {
+        if (i < 3) x_0[i] = BVPParams.p0[i];
+        else if (i < 12) x_0[i] = BVPParams.R0[i - 3];
+        else x_0[i] = 0.0;
+    }
+
+    double mL_guess_local[NUM_ACT_SET][3]{}, nL_guess_local[NUM_ACT_SET][3]{};
+    for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+        for (int i = 0; i < 3; i++) {
+            mL_guess_local[j][i] = mL_star[j][i];
+            nL_guess_local[j][i] = nL_star[j][i];
+        }
+    }
+
+    double actInertia_prep[NUM_ACT_SET][9]{}, damping_prep[NUM_ACT_SET][6]{};
+    double v_L_pre[NUM_ACT_SET][3]{}, w_L_pre[NUM_ACT_SET][3];
+    double p_pre[NUM_ACT_SET][3]{}, R_pre[NUM_ACT_SET][9]{};
+
+    for (int j = 0; j < BVPParams.no_act_set; ++j) {
+        const auto& act = BVPParams.dynamics.actuators[j];
+        for (int i = 0; i < 3; ++i) {
+            v_L_pre[j][i] = act.v_L_pre(i);
+            w_L_pre[j][i] = act.w_L_pre(i);
+            p_pre[j][i] = act.p_pre(i);
+        }
+        for (int i = 0; i < 9; ++i) {
+            actInertia_prep[j][i] = act.inertia(i / 3, i % 3);
+            R_pre[j][i] = act.R_pre(i / 3, i % 3);
+        }
+        for (int i = 0; i < 6; ++i) {
+            damping_prep[j][i] = act.damping(i);
+        }
+    }
+
+    CRMDYNSolverIVP_Prep(
+        BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set,
+        BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+        x_0, BVPParams.IntegrationStepSize,
+        BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+        BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+        BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+        BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+        BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_prep, damping_prep,
+        BVPParams.dynamics.DELTA_T,
+        v_L_pre, w_L_pre, p_pre, R_pre,
+        mL_guess_local, nL_guess_local,
+        FinalValueOnly, DYNNLEParams
+    );
+
+    DYNNLEParams.ContactMode = ContactModeType::FREE_TIP;
+    for (int i = 0; i < 3; i++) {
+        DYNNLEParams.TipForce[i] = 0.0;
+        DYNNLEParams.TipConstraintPoint[i] = 0.0;
+        DYNNLEParams.ftip_initialguess[i] = 0.0;
+    }
+
+    for (int i = 0; i < NUM_STATES; i++) {
+        DYNNLEParams.xf[i] = xf[i];
+    }
+
+    // Step 1: Compute J_xx using autodiff
+    Eigen::VectorXd residual_out;
+    Eigen::MatrixXd J_xx = CRMCatheterModel::DYNNLEquationJacobianEigenAD(
+        x_star_scaled, DYNNLEParams, &residual_out);
+
+    // Step 2: Compute J_xu (control Jacobian) using autodiff
+    Eigen::VectorXd controls_with_insertion(4);
+    controls_with_insertion(0) = currents(0);
+    controls_with_insertion(1) = currents(1);
+    controls_with_insertion(2) = currents(2);
+    controls_with_insertion(3) = insertion_length;
+
+    Eigen::MatrixXd J_xu = CRMCatheterModel::DYNNLEquationControlJacobianEigenAD(
+        x_star_scaled, controls_with_insertion, DYNNLEParams, nullptr);
+
+    // Step 3: Solve IFT: dx/du = -J_xx^{-1} @ J_xu
+    Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(J_xx);
+    Eigen::MatrixXd dx_du = qr.solve(-J_xu);  // (x_dim, 4)
+
+    // Step 4: Compute output Jacobian g_x = dy/dx using finite differences
+    // Output is [tip_pos (3), coil_vel (3 * num_sets)]
+    int output_dim = 3 + 3 * num_sets;
+    Eigen::MatrixXd g_x(output_dim, x_dim);
+    g_x.setZero();
+
+    const double eps_x = 1e-5;
+
+    // Lambda to evaluate output at perturbed x
+    auto eval_output = [&](const Eigen::VectorXd& x_perturbed) -> Eigen::VectorXd {
+        // Unscale to get physical mL, nL
+        double mL_phys[NUM_ACT_SET][3]{}, nL_phys[NUM_ACT_SET][3]{};
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_phys[j][i] = scale_m * x_perturbed(j * 6 + i);
+                nL_phys[j][i] = scale_n * x_perturbed(j * 6 + 3 + i);
+            }
+        }
+
+        // Compute u0 and tau from residual equation (we need these for IVP)
+        std::vector<double> x_arr(x_dim);
+        for (int i = 0; i < x_dim; i++) x_arr[i] = x_perturbed(i);
+
+        std::vector<double> residual_tmp(x_dim);
+        double u0_tmp[3], tau_tmp[NUM_ACT_SET * 3];
+        DYNNLEquation(x_arr.data(), residual_tmp.data(), DYNNLEParams, u0_tmp, tau_tmp);
+
+        double tau_phys[NUM_ACT_SET][3]{};
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                tau_phys[j][i] = tau_tmp[j * 3 + i];
+            }
+        }
+
+        // Run IVP
+        double xf_new[NUM_STATES], x_coil[NUM_ACT_SET][NUM_COIL_STATES];
+        double ReportedMarkerPos[5][3];
+        double ftip[3] = {0.0, 0.0, 0.0};
+
+        DYNSolverIVP(BVPParams, u0_tmp, mL_phys, nL_phys, tau_phys, ftip,
+                     true, xf_new, x_coil, ReportedMarkerPos);
+
+        // Extract output
+        Eigen::VectorXd output(output_dim);
+        output(0) = xf_new[0];
+        output(1) = xf_new[1];
+        output(2) = xf_new[2];
+        for (int j = 0; j < num_sets; j++) {
+            for (int i = 0; i < 3; i++) {
+                output(3 + j * 3 + i) = x_coil[j][i];
+            }
+        }
+        return output;
+    };
+
+    // Compute g_x via finite differences
+    for (int j = 0; j < x_dim; j++) {
+        Eigen::VectorXd x_plus = x_star_scaled;
+        Eigen::VectorXd x_minus = x_star_scaled;
+        x_plus(j) += eps_x;
+        x_minus(j) -= eps_x;
+
+        Eigen::VectorXd y_plus = eval_output(x_plus);
+        Eigen::VectorXd y_minus = eval_output(x_minus);
+
+        g_x.col(j) = (y_plus - y_minus) / (2.0 * eps_x);
+    }
+
+    // Step 5: Apply chain rule: B = g_x @ dx/du
+    Eigen::MatrixXd B = g_x * dx_du;  // (output_dim, 4)
+
+    // For A, we need dx/dseed which requires J_xs (seed Jacobian)
+    // For now, return empty A matrix (will implement seed gradients if needed)
+    Eigen::MatrixXd A = Eigen::MatrixXd::Zero(output_dim, 1);  // Placeholder
+
+    return {B, A};
+}
+
 std::vector<torch::Tensor> crm_step_backward(
     torch::Tensor grad_output,
     torch::Tensor currents,
@@ -451,79 +693,155 @@ std::vector<torch::Tensor> crm_step_backward(
     TORCH_CHECK(output_dim == 3 + 3 * num_sets,
                 "grad_output size must match output_dim = 3 + 3 * num_sets");
 
-    // TODO CP-C04: Implement proper gradient computation
-    // Current limitation: Finite differences don't work reliably for BVP solvers
-    // because small perturbations can cause convergence failures.
-    //
-    // Proper implementation requires implicit differentiation using autodiff,
-    // matching the Python bindings' linearize_full_seed_action_from_seed_implicit().
-    //
-    // For now, return zero gradients to allow forward-only usage.
-    // Users should use zero-order optimization (e.g., CMA-ES, genetic algorithms)
-    // or manual finite differences at the policy level.
+    // CP-C04 Implementation: Implicit differentiation using autodiff
+    // This matches the Python bindings' linearize_full_seed_action_from_seed_implicit()
 
-    // Compute seed dimension
-    int64_t seed_dim = num_sets * 3 +  // v
-                       num_sets * 3 +  // w
-                       num_sets * 3 +  // p
-                       num_sets * 9 +  // R
-                       15 +            // xf
-                       num_sets * 3 +  // mL
-                       num_sets * 3;   // nL
+    try {
+        // Extract input arrays
+        auto currents_acc = currents.accessor<double, 1>();
+        auto ins_acc = insertion_length.accessor<double, 1>();
+        auto v_acc = seed_v.accessor<double, 2>();
+        auto w_acc = seed_w.accessor<double, 2>();
+        auto p_acc = seed_p.accessor<double, 2>();
+        auto R_acc = seed_R.accessor<double, 2>();
+        auto xf_acc = seed_xf.accessor<double, 1>();
+        auto mL_acc = seed_mL.accessor<double, 2>();
+        auto nL_acc = seed_nL.accessor<double, 2>();
 
-    // Return zero Jacobians (stub implementation)
-    auto options = torch::TensorOptions().dtype(torch::kFloat64);
-    int64_t control_dim = 4;  // [currents (3), insertion_length (1)]
-    torch::Tensor B = torch::zeros({output_dim, control_dim}, options);
-    torch::Tensor A = torch::zeros({output_dim, seed_dim}, options);
+        // Build C++ arrays
+        Eigen::Vector3d currents_vec;
+        for (int i = 0; i < 3; i++) currents_vec(i) = currents_acc[i];
 
-    // Compute gradients via chain rule
-    // grad_controls = B^T @ grad_output
-    torch::Tensor grad_controls = torch::matmul(B.transpose(0, 1), grad_output);
+        double ins_len = ins_acc[0];
 
-    // Extract control gradients
-    auto grad_currents = grad_controls.slice(0, 0, 3).clone();  // First 3 elements
-    auto grad_insertion = grad_controls.slice(0, 3, 4).clone();  // 4th element
+        double v_L[NUM_ACT_SET][3] = {}, w_L[NUM_ACT_SET][3] = {};
+        double p_L[NUM_ACT_SET][3] = {}, R_L[NUM_ACT_SET][9] = {};
+        double xf_local[NUM_STATES] = {};
+        double mL_star[NUM_ACT_SET][3] = {}, nL_star[NUM_ACT_SET][3] = {};
 
-    // grad_seed = A^T @ grad_output
-    torch::Tensor grad_seed_flat = torch::matmul(A.transpose(0, 1), grad_output);
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                v_L[j][i] = v_acc[j][i];
+                w_L[j][i] = w_acc[j][i];
+                p_L[j][i] = p_acc[j][i];
+                mL_star[j][i] = mL_acc[j][i];
+                nL_star[j][i] = nL_acc[j][i];
+            }
+            for (int i = 0; i < 9; i++) {
+                R_L[j][i] = R_acc[j][i];
+            }
+        }
 
-    // Unflatten seed gradients (matching Python wrapper structure)
-    int64_t dim_v = num_sets * 3;
-    int64_t dim_w = num_sets * 3;
-    int64_t dim_p = num_sets * 3;
-    int64_t dim_R = num_sets * 9;
-    int64_t dim_xf = 15;
-    int64_t dim_mL = num_sets * 3;
-    int64_t dim_nL = num_sets * 3;
+        for (int i = 0; i < NUM_STATES; i++) {
+            xf_local[i] = xf_acc[i];
+        }
 
-    int64_t i_v0 = 0;
-    int64_t i_w0 = i_v0 + dim_v;
-    int64_t i_p0 = i_w0 + dim_w;
-    int64_t i_R0 = i_p0 + dim_p;
-    int64_t i_xf0 = i_R0 + dim_R;
-    int64_t i_mL0 = i_xf0 + dim_xf;
-    int64_t i_nL0 = i_mL0 + dim_mL;
+        // Get parameters
+        CRMParams& params = CRMParams::getInstance();
+        const CRMCatheterModelParams* cparams = params.getParams();
+        const CatheterConfiguration& config = params.getConfig();
+        const double dt = params.getDt();
+        const double integration_step_size = params.getIntegrationStepSize();
+        const IntegratorType integrator_type = params.getIntegratorType();
 
-    auto grad_seed_v = grad_seed_flat.slice(0, i_v0, i_w0).reshape({num_sets, 3});
-    auto grad_seed_w = grad_seed_flat.slice(0, i_w0, i_p0).reshape({num_sets, 3});
-    auto grad_seed_p = grad_seed_flat.slice(0, i_p0, i_R0).reshape({num_sets, 3});
-    auto grad_seed_R = grad_seed_flat.slice(0, i_R0, i_xf0).reshape({num_sets, 9});
-    auto grad_seed_xf = grad_seed_flat.slice(0, i_xf0, i_mL0).clone();  // [15]
-    auto grad_seed_mL = grad_seed_flat.slice(0, i_mL0, i_nL0).reshape({num_sets, 3});
-    auto grad_seed_nL = grad_seed_flat.slice(0, i_nL0, seed_dim).reshape({num_sets, 3});
+        double damping_local[NUM_ACT_SET][6];
+        double actInertia_local[NUM_ACT_SET][9];
+        params.getDamping(damping_local);
+        params.getActInertia(actInertia_local);
 
-    return {
-        grad_currents,
-        grad_insertion,
-        grad_seed_v,
-        grad_seed_w,
-        grad_seed_p,
-        grad_seed_R,
-        grad_seed_xf,
-        grad_seed_mL,
-        grad_seed_nL
-    };
+        // Compute Jacobians
+        auto [B, A] = compute_implicit_jacobians(
+            currents_vec, ins_len, num_sets,
+            v_L, w_L, p_L, R_L, xf_local, mL_star, nL_star,
+            cparams, config, dt, integration_step_size, integrator_type,
+            damping_local, actInertia_local
+        );
+
+        // Convert Eigen to Torch
+        auto options = torch::TensorOptions().dtype(torch::kFloat64);
+
+        torch::Tensor B_torch = torch::zeros({output_dim, 4}, options);
+        auto B_acc = B_torch.accessor<double, 2>();
+        for (int i = 0; i < output_dim; i++) {
+            for (int j = 0; j < 4; j++) {
+                B_acc[i][j] = B(i, j);
+            }
+        }
+
+        // Compute gradients via chain rule: grad_controls = B^T @ grad_output
+        torch::Tensor grad_controls = torch::matmul(B_torch.transpose(0, 1), grad_output);
+
+        auto grad_currents = grad_controls.slice(0, 0, 3).clone();
+        auto grad_insertion = grad_controls.slice(0, 3, 4).clone();
+
+        // For now, return zero seed gradients (A computation would go here)
+        int64_t seed_dim = num_sets * 3 + num_sets * 3 + num_sets * 3 +
+                           num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
+
+        torch::Tensor grad_seed_flat = torch::zeros({seed_dim}, options);
+
+        // Unflatten seed gradients
+        int64_t dim_v = num_sets * 3;
+        int64_t dim_w = num_sets * 3;
+        int64_t dim_p = num_sets * 3;
+        int64_t dim_R = num_sets * 9;
+        int64_t dim_xf = 15;
+        int64_t dim_mL = num_sets * 3;
+        int64_t dim_nL = num_sets * 3;
+
+        int64_t i_v0 = 0;
+        int64_t i_w0 = i_v0 + dim_v;
+        int64_t i_p0 = i_w0 + dim_w;
+        int64_t i_R0 = i_p0 + dim_p;
+        int64_t i_xf0 = i_R0 + dim_R;
+        int64_t i_mL0 = i_xf0 + dim_xf;
+        int64_t i_nL0 = i_mL0 + dim_mL;
+
+        auto grad_seed_v = grad_seed_flat.slice(0, i_v0, i_w0).reshape({num_sets, 3});
+        auto grad_seed_w = grad_seed_flat.slice(0, i_w0, i_p0).reshape({num_sets, 3});
+        auto grad_seed_p = grad_seed_flat.slice(0, i_p0, i_R0).reshape({num_sets, 3});
+        auto grad_seed_R = grad_seed_flat.slice(0, i_R0, i_xf0).reshape({num_sets, 9});
+        auto grad_seed_xf = grad_seed_flat.slice(0, i_xf0, i_mL0).clone();
+        auto grad_seed_mL = grad_seed_flat.slice(0, i_mL0, i_nL0).reshape({num_sets, 3});
+        auto grad_seed_nL = grad_seed_flat.slice(0, i_nL0, seed_dim).reshape({num_sets, 3});
+
+        return {
+            grad_currents,
+            grad_insertion,
+            grad_seed_v,
+            grad_seed_w,
+            grad_seed_p,
+            grad_seed_R,
+            grad_seed_xf,
+            grad_seed_mL,
+            grad_seed_nL
+        };
+
+    } catch (const std::exception& e) {
+        std::cerr << "Warning: Implicit differentiation failed: " << e.what() << std::endl;
+        std::cerr << "Falling back to zero gradients." << std::endl;
+
+        // Fallback: return zeros
+        auto options = torch::TensorOptions().dtype(torch::kFloat64);
+        int64_t seed_dim = num_sets * 3 + num_sets * 3 + num_sets * 3 +
+                           num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
+
+        auto grad_currents = torch::zeros({3}, options);
+        auto grad_insertion = torch::zeros({1}, options);
+        auto grad_seed_v = torch::zeros({num_sets, 3}, options);
+        auto grad_seed_w = torch::zeros({num_sets, 3}, options);
+        auto grad_seed_p = torch::zeros({num_sets, 3}, options);
+        auto grad_seed_R = torch::zeros({num_sets, 9}, options);
+        auto grad_seed_xf = torch::zeros({15}, options);
+        auto grad_seed_mL = torch::zeros({num_sets, 3}, options);
+        auto grad_seed_nL = torch::zeros({num_sets, 3}, options);
+
+        return {
+            grad_currents, grad_insertion,
+            grad_seed_v, grad_seed_w, grad_seed_p, grad_seed_R, grad_seed_xf,
+            grad_seed_mL, grad_seed_nL
+        };
+    }
 }
 
 // Parameter management functions

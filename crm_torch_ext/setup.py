@@ -14,11 +14,12 @@ from torch.utils.cpp_extension import BuildExtension, CppExtension
 
 # Get the project root directory
 PROJECT_ROOT = Path(__file__).parent.parent.absolute()
+EXT_ROOT = Path(__file__).parent.absolute()
 
-# Source files for the extension
+# Source files for the extension (relative to crm_torch_ext directory)
 extension_sources = [
-    'csrc/crm_step_op.cpp',
-    'csrc/bindings.cpp',
+    str(EXT_ROOT / 'csrc' / 'crm_step_op.cpp'),
+    str(EXT_ROOT / 'csrc' / 'bindings.cpp'),
 ]
 
 # Include directories
