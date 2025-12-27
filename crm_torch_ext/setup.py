@@ -53,7 +53,7 @@ extra_compile_args = {
 # Define the extension module
 ext_modules = [
     CppExtension(
-        name='crm_torch_ext._crm_torch_ext',
+        name='_crm_torch_ext',
         sources=extension_sources,
         include_dirs=include_dirs,
         library_dirs=library_dirs,

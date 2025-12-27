@@ -429,6 +429,8 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
     const double xf[NUM_STATES],
     const double mL_star[NUM_ACT_SET][3],
     const double nL_star[NUM_ACT_SET][3],
+    const double mL_seed[NUM_ACT_SET][3],
+    const double nL_seed[NUM_ACT_SET][3],
     const CRMCatheterModelParams* cparams,
     const CatheterConfiguration& config,
     double dt,
@@ -451,6 +453,14 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
         for (int i = 0; i < 3; i++) {
             x_star_scaled(j * 6 + i) = mL_star[j][i] / scale_m;
             x_star_scaled(j * 6 + 3 + i) = nL_star[j][i] / scale_n;
+        }
+    }
+
+    if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+        if (std::string(debug) == "1") {
+            std::cout << "[JACOBIAN] x_star_scaled: " << x_star_scaled.transpose() << std::endl;
+            std::cout << "[JACOBIAN] mL_star[0]: " << mL_star[0][0] << ", " << mL_star[0][1] << ", " << mL_star[0][2] << std::endl;
+            std::cout << "[JACOBIAN] nL_star[0]: " << nL_star[0][0] << ", " << nL_star[0][1] << ", " << nL_star[0][2] << std::endl;
         }
     }
 
@@ -507,11 +517,13 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
         else x_0[i] = 0.0;
     }
 
+    // CRITICAL: Use the seed values (initial guess, often zeros) for IVP_Prep,
+    // NOT the converged mL_star/nL_star. This matches the Python wrapper.
     double mL_guess_local[NUM_ACT_SET][3]{}, nL_guess_local[NUM_ACT_SET][3]{};
     for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
         for (int i = 0; i < 3; i++) {
-            mL_guess_local[j][i] = mL_star[j][i];
-            nL_guess_local[j][i] = nL_star[j][i];
+            mL_guess_local[j][i] = mL_seed[j][i];
+            nL_guess_local[j][i] = nL_seed[j][i];
         }
     }
 
@@ -561,10 +573,198 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
         DYNNLEParams.xf[i] = xf[i];
     }
 
-    // Step 1: Compute J_xx using autodiff
-    Eigen::VectorXd residual_out;
-    Eigen::MatrixXd J_xx = CRMCatheterModel::DYNNLEquationJacobianEigenAD(
-        x_star_scaled, DYNNLEParams, &residual_out);
+    if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+        if (std::string(debug) == "1") {
+            std::cout << "[JACOBIAN] DYNNLEParams.xf[0:3]: " << xf[0] << ", " << xf[1] << ", " << xf[2] << std::endl;
+            std::cout << "[JACOBIAN] DYNNLEParams.xf[12:15]: " << xf[12] << ", " << xf[13] << ", " << xf[14] << std::endl;
+        }
+    }
+
+    // Step 1: Compute J_xx using autodiff (with fallback to finite differences)
+    Eigen::MatrixXd J_xx;
+    bool have_ad_jxx = false;
+
+    try {
+        Eigen::VectorXd residual_out;
+        J_xx = CRMCatheterModel::DYNNLEquationJacobianEigenAD(
+            x_star_scaled, DYNNLEParams, &residual_out);
+
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] AD returned J_xx size: " << J_xx.rows() << "x" << J_xx.cols()
+                          << ", expected: " << x_dim << "x" << x_dim << std::endl;
+                std::cout << "[JACOBIAN] J_xx.allFinite(): " << J_xx.allFinite() << std::endl;
+                if (!J_xx.allFinite()) {
+                    std::cout << "[JACOBIAN] J_xx has inf/nan values" << std::endl;
+                }
+            }
+        }
+
+        if (J_xx.rows() == x_dim && J_xx.cols() == x_dim && J_xx.allFinite()) {
+            have_ad_jxx = true;
+        }
+    } catch (const std::exception& e) {
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] AD exception: " << e.what() << std::endl;
+            }
+        }
+        have_ad_jxx = false;
+    } catch (...) {
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] AD unknown exception" << std::endl;
+            }
+        }
+        have_ad_jxx = false;
+    }
+
+    if (!have_ad_jxx) {
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] Autodiff J_xx failed, falling back to finite differences" << std::endl;
+            }
+        }
+
+        // Fallback to finite differences for J_xx
+        // This matches the Python wrapper approach (crm_bindings.cpp:2712-2726)
+        J_xx.resize(x_dim, x_dim);
+        J_xx.setZero();
+
+        const double eps_residual_x = 1e-5;
+
+        // Lambda to evaluate residual at a given x_scaled
+        // CRITICAL: Must rebuild DYNNLEParams with the perturbed mL/nL values!
+        auto eval_residual = [&](const Eigen::VectorXd& x_pert) -> Eigen::VectorXd {
+            // Unscale x_pert to get physical mL/nL values
+            double mL_pert[NUM_ACT_SET][3]{}, nL_pert[NUM_ACT_SET][3]{};
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    mL_pert[j][i] = scale_m * x_pert(j * 6 + i);
+                    nL_pert[j][i] = scale_n * x_pert(j * 6 + 3 + i);
+                }
+            }
+
+            // Rebuild DYNNLEParams with perturbed mL/nL as guess
+            const bool FinalValueOnly_local = true;
+            DYNNLEqnParams DYNNLEParams_local(BVPParams.no_flex_seg, BVPParams.no_rigid_seg,
+                                              BVPParams.no_act_set, BVPParams.no_locmarkers,
+                                              BVPParams.no_fcum_steps);
+
+            double x_0_local[NUM_STATES];
+            for (int i = 0; i < NUM_STATES; i++) {
+                if (i < 3) x_0_local[i] = BVPParams.p0[i];
+                else if (i < 12) x_0_local[i] = BVPParams.R0[i - 3];
+                else x_0_local[i] = 0.0;
+            }
+
+            // Use the seed values (zeros) for IVP_Prep guess, NOT the perturbed values
+            double mL_guess_eval[NUM_ACT_SET][3]{}, nL_guess_eval[NUM_ACT_SET][3]{};
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    mL_guess_eval[j][i] = mL_seed[j][i];
+                    nL_guess_eval[j][i] = nL_seed[j][i];
+                }
+            }
+
+            double actInertia_prep_eval[NUM_ACT_SET][9]{}, damping_prep_eval[NUM_ACT_SET][6]{};
+            double v_L_pre_eval[NUM_ACT_SET][3]{}, w_L_pre_eval[NUM_ACT_SET][3];
+            double p_pre_eval[NUM_ACT_SET][3]{}, R_pre_eval[NUM_ACT_SET][9]{};
+
+            for (int j = 0; j < BVPParams.no_act_set; ++j) {
+                const auto& act = BVPParams.dynamics.actuators[j];
+                for (int i = 0; i < 3; ++i) {
+                    v_L_pre_eval[j][i] = act.v_L_pre(i);
+                    w_L_pre_eval[j][i] = act.w_L_pre(i);
+                    p_pre_eval[j][i] = act.p_pre(i);
+                }
+                for (int i = 0; i < 9; ++i) {
+                    actInertia_prep_eval[j][i] = act.inertia(i / 3, i % 3);
+                    R_pre_eval[j][i] = act.R_pre(i / 3, i % 3);
+                }
+                for (int i = 0; i < 6; ++i) {
+                    damping_prep_eval[j][i] = act.damping(i);
+                }
+            }
+
+            CRMDYNSolverIVP_Prep(
+                BVPParams.no_flex_seg, BVPParams.no_rigid_seg, BVPParams.no_act_set,
+                BVPParams.no_locmarkers, BVPParams.no_fcum_steps,
+                x_0_local, BVPParams.IntegrationStepSize,
+                BVPParams.Li, BVPParams.dlambdainv, BVPParams.rho, BVPParams.SegmentTypes,
+                BVPParams.SegEndLambdas, BVPParams.LocMarkerLambdas,
+                BVPParams.K, BVPParams.Kinv, BVPParams.ustar,
+                BVPParams.MagMoment, BVPParams.fcumlambda, BVPParams.CoilAlignmentTurnAreaMatrix,
+                BVPParams.B0, BVPParams.g, BVPParams.ActMass, actInertia_prep_eval, damping_prep_eval,
+                BVPParams.dynamics.DELTA_T,
+                v_L_pre_eval, w_L_pre_eval, p_pre_eval, R_pre_eval,
+                mL_guess_eval, nL_guess_eval,
+                FinalValueOnly_local, DYNNLEParams_local
+            );
+
+            DYNNLEParams_local.ContactMode = ContactModeType::FREE_TIP;
+            for (int i = 0; i < 3; i++) {
+                DYNNLEParams_local.TipForce[i] = 0.0;
+                DYNNLEParams_local.TipConstraintPoint[i] = 0.0;
+                DYNNLEParams_local.ftip_initialguess[i] = 0.0;
+            }
+
+            for (int i = 0; i < NUM_STATES; i++) {
+                DYNNLEParams_local.xf[i] = xf[i];
+            }
+
+            // Now evaluate residual with perturbed x_pert
+            const int NLEq_Dim = x_dim;
+            std::vector<double> x_arr(NLEq_Dim);
+            for (int i = 0; i < NLEq_Dim; i++) {
+                x_arr[i] = x_pert(i);
+            }
+
+            std::vector<double> out_y(NLEq_Dim);
+            double u0_out[3];
+            double tau_out[NUM_ACT_SET * 3];
+
+            DYNNLEquation(x_arr.data(), out_y.data(), DYNNLEParams_local, u0_out, tau_out);
+
+            Eigen::VectorXd F(NLEq_Dim);
+            for (int i = 0; i < NLEq_Dim; i++) {
+                F(i) = out_y[i];
+            }
+            return F;
+        };
+
+        // Compute J_xx via finite differences: J_xx[:, j] = (F(x + eps*ej) - F(x - eps*ej)) / (2*eps)
+        for (int j = 0; j < x_dim; j++) {
+            Eigen::VectorXd xp = x_star_scaled;
+            Eigen::VectorXd xm = x_star_scaled;
+            xp(j) += eps_residual_x;
+            xm(j) -= eps_residual_x;
+
+            Eigen::VectorXd Fp = eval_residual(xp);
+            Eigen::VectorXd Fm = eval_residual(xm);
+
+            J_xx.col(j) = (Fp - Fm) * (0.5 / eps_residual_x);
+
+            if (j == 0) {
+                if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+                    if (std::string(debug) == "1") {
+                        std::cout << "[JACOBIAN FD] First column: Fp norm=" << Fp.norm() << ", Fm norm=" << Fm.norm() << std::endl;
+                        std::cout << "[JACOBIAN FD] Fp[0]=" << Fp(0) << ", Fm[0]=" << Fm(0) << std::endl;
+                        std::cout << "[JACOBIAN FD] (Fp-Fm)[0]=" << (Fp(0)-Fm(0)) << std::endl;
+                        std::cout << "[JACOBIAN FD] xp[0]=" << xp(0) << ", xm[0]=" << xm(0) << std::endl;
+                        std::cout << "[JACOBIAN FD] x_star_scaled[0]=" << x_star_scaled(0) << std::endl;
+                        std::cout << "[JACOBIAN FD] J_xx col 0 norm=" << J_xx.col(0).norm() << std::endl;
+                    }
+                }
+            }
+        }
+    }
+
+    if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+        if (std::string(debug) == "1") {
+            std::cout << "[JACOBIAN] J_xx norm: " << J_xx.norm() << ", has NaN: " << (!J_xx.allFinite()) << std::endl;
+        }
+    }
 
     // Step 2: Compute J_xu (control Jacobian) using autodiff
     Eigen::VectorXd controls_with_insertion(4);
@@ -573,12 +773,208 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
     controls_with_insertion(2) = currents(2);
     controls_with_insertion(3) = insertion_length;
 
-    Eigen::MatrixXd J_xu = CRMCatheterModel::DYNNLEquationControlJacobianEigenAD(
-        x_star_scaled, controls_with_insertion, DYNNLEParams, nullptr);
+    Eigen::MatrixXd J_xu;
+    bool have_ad_jxu = false;
+
+    try {
+        J_xu = CRMCatheterModel::DYNNLEquationControlJacobianEigenAD(
+            x_star_scaled, controls_with_insertion, DYNNLEParams, nullptr);
+
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] AD returned J_xu size: " << J_xu.rows() << "x" << J_xu.cols()
+                          << ", expected: " << x_dim << "x4" << std::endl;
+                std::cout << "[JACOBIAN] J_xu.allFinite(): " << J_xu.allFinite() << std::endl;
+            }
+        }
+
+        if (J_xu.rows() == x_dim && J_xu.cols() == 4 && J_xu.allFinite()) {
+            have_ad_jxu = true;
+        }
+    } catch (const std::exception& e) {
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] AD J_xu exception: " << e.what() << std::endl;
+            }
+        }
+        have_ad_jxu = false;
+    } catch (...) {
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] AD J_xu unknown exception" << std::endl;
+            }
+        }
+        have_ad_jxu = false;
+    }
+
+    if (!have_ad_jxu) {
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[JACOBIAN] Autodiff J_xu failed, falling back to finite differences" << std::endl;
+            }
+        }
+
+        // Fallback to finite differences for J_xu
+        // Compute ∂F/∂u for currents and insertion_length
+        J_xu.resize(x_dim, 4);
+        J_xu.setZero();
+
+        const double eps_residual_theta = 1e-5;
+
+        // Lambda to evaluate residual at a given (x, currents, insertion)
+        // We need to rebuild BVPParams and DYNNLEParams with new currents
+        auto eval_residual_with_controls = [&](const Eigen::VectorXd& x_pert,
+                                                 const Eigen::Vector3d& curr_pert,
+                                                 double ins_pert) -> Eigen::VectorXd {
+            // Rebuild BVPParams with perturbed currents/insertion
+            double ActuationCurrents_local[NUM_ACT_SET][3] = {};
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    ActuationCurrents_local[j][i] = curr_pert(i);
+                }
+            }
+
+            ContactModeType ContactMode_local = ContactModeType::FREE_TIP;
+            double TipForce_local[3] = {0.0, 0.0, 0.0};
+            double TipConstraintPoint_local[3] = {0.0, 0.0, 0.0};
+
+            // Build new BVPParams with perturbed controls
+            CRMShootingMethodParams BVPParams_local = CRMDYNConstructShootingMethodParamSet(
+                *cparams, config, ins_pert, ActuationCurrents_local,
+                ContactMode_local, TipConstraintPoint_local, TipForce_local, integration_step_size,
+                actInertia_local, v_L_local, w_L_local, p_L_local, R_L_local, damping_local, dt
+            );
+            BVPParams_local.dynamics.integrator_type = integrator_type;
+            BVPParams_local.dynamics.last_diverged = false;
+
+            // Prep DYNNLE params
+            const bool FinalValueOnly_local = true;
+            DYNNLEqnParams DYNNLEParams_local(BVPParams_local.no_flex_seg, BVPParams_local.no_rigid_seg,
+                                              BVPParams_local.no_act_set, BVPParams_local.no_locmarkers,
+                                              BVPParams_local.no_fcum_steps);
+
+            double x_0_local[NUM_STATES];
+            for (int i = 0; i < NUM_STATES; i++) {
+                if (i < 3) x_0_local[i] = BVPParams_local.p0[i];
+                else if (i < 12) x_0_local[i] = BVPParams_local.R0[i - 3];
+                else x_0_local[i] = 0.0;
+            }
+
+            double mL_guess_fd[NUM_ACT_SET][3]{}, nL_guess_fd[NUM_ACT_SET][3]{};
+            for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                for (int i = 0; i < 3; i++) {
+                    mL_guess_fd[j][i] = mL_seed[j][i];
+                    nL_guess_fd[j][i] = nL_seed[j][i];
+                }
+            }
+
+            double actInertia_prep_local[NUM_ACT_SET][9]{}, damping_prep_local[NUM_ACT_SET][6]{};
+            double v_L_pre_local[NUM_ACT_SET][3]{}, w_L_pre_local[NUM_ACT_SET][3];
+            double p_pre_local[NUM_ACT_SET][3]{}, R_pre_local[NUM_ACT_SET][9]{};
+
+            for (int j = 0; j < BVPParams_local.no_act_set; ++j) {
+                const auto& act = BVPParams_local.dynamics.actuators[j];
+                for (int i = 0; i < 3; ++i) {
+                    v_L_pre_local[j][i] = act.v_L_pre(i);
+                    w_L_pre_local[j][i] = act.w_L_pre(i);
+                    p_pre_local[j][i] = act.p_pre(i);
+                }
+                for (int i = 0; i < 9; ++i) {
+                    actInertia_prep_local[j][i] = act.inertia(i / 3, i % 3);
+                    R_pre_local[j][i] = act.R_pre(i / 3, i % 3);
+                }
+                for (int i = 0; i < 6; ++i) {
+                    damping_prep_local[j][i] = act.damping(i);
+                }
+            }
+
+            CRMDYNSolverIVP_Prep(
+                BVPParams_local.no_flex_seg, BVPParams_local.no_rigid_seg, BVPParams_local.no_act_set,
+                BVPParams_local.no_locmarkers, BVPParams_local.no_fcum_steps,
+                x_0_local, BVPParams_local.IntegrationStepSize,
+                BVPParams_local.Li, BVPParams_local.dlambdainv, BVPParams_local.rho, BVPParams_local.SegmentTypes,
+                BVPParams_local.SegEndLambdas, BVPParams_local.LocMarkerLambdas,
+                BVPParams_local.K, BVPParams_local.Kinv, BVPParams_local.ustar,
+                BVPParams_local.MagMoment, BVPParams_local.fcumlambda, BVPParams_local.CoilAlignmentTurnAreaMatrix,
+                BVPParams_local.B0, BVPParams_local.g, BVPParams_local.ActMass, actInertia_prep_local, damping_prep_local,
+                BVPParams_local.dynamics.DELTA_T,
+                v_L_pre_local, w_L_pre_local, p_pre_local, R_pre_local,
+                mL_guess_fd, nL_guess_fd,
+                FinalValueOnly_local, DYNNLEParams_local
+            );
+
+            DYNNLEParams_local.ContactMode = ContactModeType::FREE_TIP;
+            for (int i = 0; i < 3; i++) {
+                DYNNLEParams_local.TipForce[i] = 0.0;
+                DYNNLEParams_local.TipConstraintPoint[i] = 0.0;
+                DYNNLEParams_local.ftip_initialguess[i] = 0.0;
+            }
+
+            for (int i = 0; i < NUM_STATES; i++) {
+                DYNNLEParams_local.xf[i] = xf[i];
+            }
+
+            // Evaluate residual
+            const int NLEq_Dim = x_dim;
+            std::vector<double> x_arr(NLEq_Dim);
+            for (int i = 0; i < NLEq_Dim; i++) {
+                x_arr[i] = x_pert(i);
+            }
+
+            std::vector<double> out_y(NLEq_Dim);
+            double u0_out[3];
+            double tau_out[NUM_ACT_SET * 3];
+
+            DYNNLEquation(x_arr.data(), out_y.data(), DYNNLEParams_local, u0_out, tau_out);
+
+            Eigen::VectorXd F(NLEq_Dim);
+            for (int i = 0; i < NLEq_Dim; i++) {
+                F(i) = out_y[i];
+            }
+            return F;
+        };
+
+        // Compute J_xu via finite differences
+        // J_xu[:, 0:3] = ∂F/∂currents
+        for (int j = 0; j < 3; j++) {
+            Eigen::Vector3d curr_p = currents;
+            Eigen::Vector3d curr_m = currents;
+            curr_p(j) += eps_residual_theta;
+            curr_m(j) -= eps_residual_theta;
+
+            Eigen::VectorXd Fp = eval_residual_with_controls(x_star_scaled, curr_p, insertion_length);
+            Eigen::VectorXd Fm = eval_residual_with_controls(x_star_scaled, curr_m, insertion_length);
+
+            J_xu.col(j) = (Fp - Fm) * (0.5 / eps_residual_theta);
+        }
+
+        // J_xu[:, 3] = ∂F/∂insertion_length
+        {
+            double ins_p = insertion_length + eps_residual_theta;
+            double ins_m = insertion_length - eps_residual_theta;
+
+            Eigen::VectorXd Fp = eval_residual_with_controls(x_star_scaled, currents, ins_p);
+            Eigen::VectorXd Fm = eval_residual_with_controls(x_star_scaled, currents, ins_m);
+
+            J_xu.col(3) = (Fp - Fm) * (0.5 / eps_residual_theta);
+        }
+    }
+
+    if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+        if (std::string(debug) == "1") {
+            std::cout << "[JACOBIAN] J_xu norm: " << J_xu.norm() << ", has NaN: " << (!J_xu.allFinite()) << std::endl;
+        }
+    }
 
     // Step 3: Solve IFT: dx/du = -J_xx^{-1} @ J_xu
     Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(J_xx);
     Eigen::MatrixXd dx_du = qr.solve(-J_xu);  // (x_dim, 4)
+
+    if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+        if (std::string(debug) == "1") {
+            std::cout << "[JACOBIAN] dx_du norm: " << dx_du.norm() << ", has NaN: " << (!dx_du.allFinite()) << std::endl;
+        }
+    }
 
     // Step 4: Compute output Jacobian g_x = dy/dx using finite differences
     // Output is [tip_pos (3), coil_vel (3 * num_sets)]
@@ -670,6 +1066,9 @@ std::vector<torch::Tensor> crm_step_backward(
     torch::Tensor seed_mL,
     torch::Tensor seed_nL
 ) {
+    std::cerr << "[DEBUG] crm_step_backward called!" << std::endl;
+    std::cerr.flush();
+
     // Input validation
     TORCH_CHECK(grad_output.dim() == 1, "grad_output must be 1D");
 
@@ -705,8 +1104,8 @@ std::vector<torch::Tensor> crm_step_backward(
         auto p_acc = seed_p.accessor<double, 2>();
         auto R_acc = seed_R.accessor<double, 2>();
         auto xf_acc = seed_xf.accessor<double, 1>();
-        auto mL_acc = seed_mL.accessor<double, 2>();
-        auto nL_acc = seed_nL.accessor<double, 2>();
+        auto mL_guess_acc = seed_mL.accessor<double, 2>();
+        auto nL_guess_acc = seed_nL.accessor<double, 2>();
 
         // Build C++ arrays
         Eigen::Vector3d currents_vec;
@@ -717,15 +1116,15 @@ std::vector<torch::Tensor> crm_step_backward(
         double v_L[NUM_ACT_SET][3] = {}, w_L[NUM_ACT_SET][3] = {};
         double p_L[NUM_ACT_SET][3] = {}, R_L[NUM_ACT_SET][9] = {};
         double xf_local[NUM_STATES] = {};
-        double mL_star[NUM_ACT_SET][3] = {}, nL_star[NUM_ACT_SET][3] = {};
+        double mL_guess[NUM_ACT_SET][3] = {}, nL_guess[NUM_ACT_SET][3] = {};
 
         for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
             for (int i = 0; i < 3; i++) {
                 v_L[j][i] = v_acc[j][i];
                 w_L[j][i] = w_acc[j][i];
                 p_L[j][i] = p_acc[j][i];
-                mL_star[j][i] = mL_acc[j][i];
-                nL_star[j][i] = nL_acc[j][i];
+                mL_guess[j][i] = mL_guess_acc[j][i];
+                nL_guess[j][i] = nL_guess_acc[j][i];
             }
             for (int i = 0; i < 9; i++) {
                 R_L[j][i] = R_acc[j][i];
@@ -749,13 +1148,98 @@ std::vector<torch::Tensor> crm_step_backward(
         params.getDamping(damping_local);
         params.getActInertia(actInertia_local);
 
-        // Compute Jacobians
+        // CRITICAL FIX: Re-solve BVP to get converged mL_star and nL_star
+        // The input seed_mL and seed_nL are just guesses (often zeros)
+        // We need the actual converged solution from the BVP solver
+        // This matches the Python bindings approach (line 2292 in crm_bindings.cpp)
+
+        double ActuationCurrents[NUM_ACT_SET][3] = {};
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                ActuationCurrents[j][i] = currents_vec(i);
+            }
+        }
+
+        ContactModeType ContactMode = ContactModeType::FREE_TIP;
+        double TipForce[3] = {0.0, 0.0, 0.0};
+        double TipConstraintPoint[3] = {0.0, 0.0, 0.0};
+
+        CRMShootingMethodParams BVPParams = CRMDYNConstructShootingMethodParamSet(
+            *cparams, config, ins_len, ActuationCurrents,
+            ContactMode, TipConstraintPoint, TipForce, integration_step_size,
+            actInertia_local, v_L, w_L, p_L, R_L, damping_local, dt
+        );
+        BVPParams.dynamics.integrator_type = integrator_type;
+        BVPParams.dynamics.last_diverged = false;
+
+        // Apply damping compensation to guess (matching forward pass)
+        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess[j][i] += damping_local[j][i + 3] * w_L[j][i];
+                nL_guess[j][i] += damping_local[j][i] * v_L[j][i];
+            }
+        }
+
+        // Solve BVP to get converged mL_star and nL_star
+        double out_u0[3];
+        double mL_star[NUM_ACT_SET][3], nL_star[NUM_ACT_SET][3];
+        double out_tau[NUM_ACT_SET][3];
+        double ftip_calc[3], ftip_guess[3] = {0.0, 0.0, 0.0};
+        int localmin;
+
+        DynamicsBVP(BVPParams, xf_local, mL_guess, nL_guess, ftip_guess,
+                    out_u0, mL_star, nL_star, out_tau, ftip_calc, localmin);
+
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[BACKWARD] BVP solve result:" << std::endl;
+                std::cout << "  localmin: " << localmin << std::endl;
+                std::cout << "  mL_star[0]: " << mL_star[0][0] << ", " << mL_star[0][1] << ", " << mL_star[0][2] << std::endl;
+                std::cout << "  nL_star[0]: " << nL_star[0][0] << ", " << nL_star[0][1] << ", " << nL_star[0][2] << std::endl;
+            }
+        }
+
+        if (localmin != 0) {
+            std::cerr << "Warning: BVP did not converge in backward pass (localmin=" << localmin << ")" << std::endl;
+            std::cerr << "Falling back to zero gradients." << std::endl;
+
+            // Return zero gradients
+            auto options = torch::TensorOptions().dtype(torch::kFloat64);
+            int64_t seed_dim = num_sets * 3 + num_sets * 3 + num_sets * 3 +
+                               num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
+
+            auto grad_currents = torch::zeros({3}, options);
+            auto grad_insertion = torch::zeros({1}, options);
+            auto grad_seed_v = torch::zeros({num_sets, 3}, options);
+            auto grad_seed_w = torch::zeros({num_sets, 3}, options);
+            auto grad_seed_p = torch::zeros({num_sets, 3}, options);
+            auto grad_seed_R = torch::zeros({num_sets, 9}, options);
+            auto grad_seed_xf = torch::zeros({15}, options);
+            auto grad_seed_mL = torch::zeros({num_sets, 3}, options);
+            auto grad_seed_nL = torch::zeros({num_sets, 3}, options);
+
+            return {
+                grad_currents, grad_insertion,
+                grad_seed_v, grad_seed_w, grad_seed_p, grad_seed_R, grad_seed_xf,
+                grad_seed_mL, grad_seed_nL
+            };
+        }
+
+        // Now compute Jacobians using the converged mL_star and nL_star
+        // Also pass the seed values (mL_guess, nL_guess) for IVP_Prep initialization
         auto [B, A] = compute_implicit_jacobians(
             currents_vec, ins_len, num_sets,
-            v_L, w_L, p_L, R_L, xf_local, mL_star, nL_star,
+            v_L, w_L, p_L, R_L, xf_local, mL_star, nL_star, mL_guess, nL_guess,
             cparams, config, dt, integration_step_size, integrator_type,
             damping_local, actInertia_local
         );
+
+        if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+            if (std::string(debug) == "1") {
+                std::cout << "[BACKWARD] B matrix (first row): " << B.row(0) << std::endl;
+                std::cout << "[BACKWARD] B norm: " << B.norm() << std::endl;
+            }
+        }
 
         // Convert Eigen to Torch
         auto options = torch::TensorOptions().dtype(torch::kFloat64);
