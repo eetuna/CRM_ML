@@ -355,8 +355,7 @@ torch::Tensor crm_step_forward(
             std::cout.flush();
         }
     }
-    std::cerr << "DEBUG: Reached IVP call point!" << std::endl;
-
+    
     // Solve IVP to get next state (matching Python bindings implementation)
     // Important: Restore ORIGINAL seed velocities before IVP (they may have been modified during continuation)
     // The IVP integration needs the correct initial velocities from the seed state
@@ -1030,9 +1029,6 @@ std::vector<torch::Tensor> crm_step_backward(
     torch::Tensor seed_mL,
     torch::Tensor seed_nL
 ) {
-    std::cerr << "[DEBUG] crm_step_backward called!" << std::endl;
-    std::cerr.flush();
-
     // Input validation
     TORCH_CHECK(grad_output.dim() == 1, "grad_output must be 1D");
 

@@ -10,12 +10,12 @@
 
 ## Executive Summary
 
-Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobians) into a native PyTorch C++ extension operator. This eliminates Python-level overhead and provides a standard distribution mechanism.
+Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobians) into a native PyTorch C++ extension operator. This eliminates Python-level overhead and provides a high-performance alternative to the Python wrapper.
 
 ### Scope
 - **Forward**: Call existing C++ `step_from_seed()`
 - **Backward**: Use existing `linearize_full_seed_action_from_seed_implicit()` for gradients
-- **Package**: Installable via `pip` with standard Torch extension workflow
+- **Build**: Local compilation via `python setup.py build_ext --inplace` to avoid system-level install issues
 - **Batch**: Support for batched tensor inputs where possible
 
 ### Non-Scope (Explicit Exclusions)
@@ -66,8 +66,8 @@ Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobi
    - Include paths for existing CRM headers
    - Link against existing CRM library
    - Compiler flags matching existing build
-2. Create `pyproject.toml` for modern pip compatibility
-3. Test that `pip install -e crm_torch_ext/` runs (even if compile fails initially)
+2. Create `pyproject.toml` for modern compatibility
+3. Test that `python crm_torch_ext/setup.py build_ext --inplace` runs (even if compile fails initially)
 
 **Dependencies:**
 - Must link against: `crm_dynamics` (existing library)
@@ -178,7 +178,7 @@ Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobi
 4. Register with pybind11 in `bindings.cpp`
 
 **Acceptance Criteria:**
-- [ ] `import crm_torch_ext` works
+- [ ] `import crm_torch_ext` works (with repository in `PYTHONPATH`)
 - [ ] `crm_torch_ext.crm_step(...)` is callable
 - [ ] Autograd graph builds correctly (`.grad_fn` populated)
 
@@ -326,11 +326,11 @@ Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobi
 
 ---
 
-## Phase 5: Packaging & Documentation
+## Phase 5: Build & Documentation
 
-### Task 5.1: Package for pip Install
+### Task 5.1: Configure Local Build
 
-**Objective:** Make extension installable via `pip install .`
+**Objective:** Ensure extension is correctly built locally.
 
 **Actions:**
 1. Finalize `setup.py` with:
@@ -338,14 +338,14 @@ Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobi
    - Dependencies (`torch`, `numpy`)
    - Package metadata
 2. Create `MANIFEST.in` for source distribution
-3. Test: `pip install ./crm_torch_ext && python -c "import crm_torch_ext"`
+3. Test: `python crm_torch_ext/setup.py build_ext --inplace && python -c "import crm_torch_ext"` (ensure `PYTHONPATH` includes `.`)
 
 **Acceptance Criteria:**
-- [ ] `pip install .` works in fresh virtualenv
+- [ ] `python crm_torch_ext/setup.py build_ext --inplace` works without system errors
 - [ ] `import crm_torch_ext` succeeds
 - [ ] Basic smoke test passes
 
-**Checkpoint:** CP-C11 - pip installable
+**Checkpoint:** CP-C11 - Locally buildable
 
 ---
 
@@ -356,7 +356,7 @@ Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobi
 **Actions:**
 1. Add docstrings to Python bindings
 2. Create `crm_torch_ext/README.md`:
-   - Installation instructions
+   - Build instructions (`build_ext --inplace`)
    - API reference
    - Example usage
    - Performance notes
@@ -411,7 +411,7 @@ Option C packages the existing Option A infrastructure (C++ dynamics + AD Jacobi
 | CP-C08 | Full parity validated | 3 | CP-C07 |
 | CP-C09 | Performance benchmarked | 4 | CP-C08 |
 | CP-C10 | Batched support (opt) | 4 | CP-C09 |
-| CP-C11 | pip installable | 5 | CP-C08 |
+| CP-C11 | Locally buildable | 5 | CP-C08 |
 | CP-C12 | Documentation complete | 5 | CP-C11 |
 | CP-C13 | Integration complete | 5 | CP-C12 |
 

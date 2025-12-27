@@ -43,9 +43,6 @@ public:
         torch::autograd::AutogradContext* ctx,
         torch::autograd::tensor_list grad_outputs
     ) {
-        std::cerr << "[BINDINGS] CRMStepFunction::backward() called!" << std::endl;
-        std::cerr.flush();
-
         // Retrieve saved tensors
         auto saved = ctx->get_saved_variables();
         auto currents = saved[0];
@@ -58,18 +55,12 @@ public:
         auto seed_mL = saved[7];
         auto seed_nL = saved[8];
 
-        std::cerr << "[BINDINGS] About to call crm_torch::crm_step_backward()" << std::endl;
-        std::cerr.flush();
-
         // Call backward implementation
         auto grads = crm_torch::crm_step_backward(
             grad_outputs[0],
             currents, insertion_length,
             seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL
         );
-
-        std::cerr << "[BINDINGS] crm_torch::crm_step_backward() returned" << std::endl;
-        std::cerr.flush();
 
         // Convert to tensor_list (autograd expects this type)
         return torch::autograd::tensor_list(grads);
