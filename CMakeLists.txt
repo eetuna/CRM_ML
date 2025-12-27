@@ -46,6 +46,8 @@ add_library(CRMCPPLib STATIC
 	${CRMSOURCES}
 	)
 
+set_target_properties(CRMCPPLib PROPERTIES POSITION_INDEPENDENT_CODE ON)
+
 target_include_directories(CRMCPPLib PUBLIC
 	"${PROJECT_SOURCE_DIR}/src"
 	"${PROJECT_SOURCE_DIR}/src/numerical"

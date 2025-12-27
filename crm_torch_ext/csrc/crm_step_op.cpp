@@ -441,10 +441,10 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
 ) {
     // Scale m and n values (matching Python bindings)
     // Note: IVALUE_SCALE_M and IVALUE_SCALE_N are defined as macros in CRMDYN.hpp
-    // Python bindings use 1e-2 and 1e-1, but the header defines them as 10000.0
-    // We use the same values as Python bindings for consistency
-    const double scale_m = 1e-2;
-    const double scale_n = 1e-1;
+    // Python bindings use mL_star / IVALUE_SCALE_M where IVALUE_SCALE_M = 10000.0
+    // We must match this exactly.
+    const double scale_m = IVALUE_SCALE_M;
+    const double scale_n = IVALUE_SCALE_N;
 
     int x_dim = num_sets * 6;  // mL (3) + nL (3) per actuator set
 
@@ -458,6 +458,7 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
 
     if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
         if (std::string(debug) == "1") {
+            std::cout << "[JACOBIAN] scale_m: " << scale_m << ", IVALUE_SCALE_M: " << IVALUE_SCALE_M << std::endl;
             std::cout << "[JACOBIAN] x_star_scaled: " << x_star_scaled.transpose() << std::endl;
             std::cout << "[JACOBIAN] mL_star[0]: " << mL_star[0][0] << ", " << mL_star[0][1] << ", " << mL_star[0][2] << std::endl;
             std::cout << "[JACOBIAN] nL_star[0]: " << nL_star[0][0] << ", " << nL_star[0][1] << ", " << nL_star[0][2] << std::endl;
@@ -631,6 +632,7 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
         J_xx.resize(x_dim, x_dim);
         J_xx.setZero();
 
+        // Reduce epsilon for small scaled variables
         const double eps_residual_x = 1e-5;
 
         // Lambda to evaluate residual at a given x_scaled
@@ -745,15 +747,14 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
 
             J_xx.col(j) = (Fp - Fm) * (0.5 / eps_residual_x);
 
-            if (j == 0) {
-                if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
-                    if (std::string(debug) == "1") {
-                        std::cout << "[JACOBIAN FD] First column: Fp norm=" << Fp.norm() << ", Fm norm=" << Fm.norm() << std::endl;
-                        std::cout << "[JACOBIAN FD] Fp[0]=" << Fp(0) << ", Fm[0]=" << Fm(0) << std::endl;
-                        std::cout << "[JACOBIAN FD] (Fp-Fm)[0]=" << (Fp(0)-Fm(0)) << std::endl;
-                        std::cout << "[JACOBIAN FD] xp[0]=" << xp(0) << ", xm[0]=" << xm(0) << std::endl;
-                        std::cout << "[JACOBIAN FD] x_star_scaled[0]=" << x_star_scaled(0) << std::endl;
-                        std::cout << "[JACOBIAN FD] J_xx col 0 norm=" << J_xx.col(0).norm() << std::endl;
+            if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
+                if (std::string(debug) == "1") {
+                    if (j == 0 || !Fp.allFinite() || !Fm.allFinite() || Fp.norm() > 1e5) {
+                        std::cout << "[JACOBIAN FD] col " << j << ": xp[j]=" << xp(j) << ", xm[j]=" << xm(j) << std::endl;
+                        std::cout << "[JACOBIAN FD] Fp norm=" << Fp.norm() << ", Fm norm=" << Fm.norm() << std::endl;
+                        if (Fp.norm() > 1e5) {
+                            std::cout << "[JACOBIAN FD] WARNING: Large residual norm detected (Divergence?)" << std::endl;
+                        }
                     }
                 }
             }
@@ -976,79 +977,42 @@ std::pair<Eigen::MatrixXd, Eigen::MatrixXd> compute_implicit_jacobians(
         }
     }
 
-    // Step 4: Compute output Jacobian g_x = dy/dx using finite differences
+    // Step 4: Compute output Jacobians gx = dy/dx and gth = dy/dtheta using AD
     // Output is [tip_pos (3), coil_vel (3 * num_sets)]
     int output_dim = 3 + 3 * num_sets;
-    Eigen::MatrixXd g_x(output_dim, x_dim);
-    g_x.setZero();
+    int seed_dim = num_sets * 3 + num_sets * 3 + num_sets * 3 +
+                   num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
+    Eigen::MatrixXd gx(output_dim, x_dim);
+    Eigen::MatrixXd gth(output_dim, 3 + seed_dim);
 
-    const double eps_x = 1e-5;
+    // Assemble seed_flat for AD call
+    // seed_flat layout: [v (num_sets*3), w (num_sets*3), p (num_sets*3), R (num_sets*9), xf (15), mL (num_sets*3), nL (num_sets*3)]
+    Eigen::VectorXd seed_flat(seed_dim);
+    int idx = 0;
+    for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = v_L[j][i];
+    for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = w_L[j][i];
+    for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = p_L[j][i];
+    for (int j = 0; j < num_sets; j++) for (int i = 0; i < 9; i++) seed_flat(idx++) = R_L[j][i];
+    for (int i = 0; i < NUM_STATES; i++) seed_flat(idx++) = xf[i];
+    for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = mL_seed[j][i];
+    for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) seed_flat(idx++) = nL_seed[j][i];
 
-    // Lambda to evaluate output at perturbed x
-    auto eval_output = [&](const Eigen::VectorXd& x_perturbed) -> Eigen::VectorXd {
-        // Unscale to get physical mL, nL
-        double mL_phys[NUM_ACT_SET][3]{}, nL_phys[NUM_ACT_SET][3]{};
-        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
-            for (int i = 0; i < 3; i++) {
-                mL_phys[j][i] = scale_m * x_perturbed(j * 6 + i);
-                nL_phys[j][i] = scale_n * x_perturbed(j * 6 + 3 + i);
-            }
-        }
+    CRMCatheterModel::dynnl_ad_eigen::DYNNLEquationOutputJacobianEigenAD(
+        x_star_scaled, currents, seed_flat, DYNNLEParams, gx, gth
+    );
 
-        // Compute u0 and tau from residual equation (we need these for IVP)
-        std::vector<double> x_arr(x_dim);
-        for (int i = 0; i < x_dim; i++) x_arr[i] = x_perturbed(i);
+    // Step 5: Apply chain rule: B = ∂y/∂u + (∂y/∂x) * (dx/du)
+    // gth layout: [∂y/∂currents (3), ∂y/∂seed (seed_dim)]
+    // We only need ∂y/∂currents for B. Insertion length grad will be added if available.
+    Eigen::MatrixXd B = Eigen::MatrixXd::Zero(output_dim, 4);
+    B.leftCols(3) = gth.leftCols(3) + gx * dx_du.leftCols(3);
 
-        std::vector<double> residual_tmp(x_dim);
-        double u0_tmp[3], tau_tmp[NUM_ACT_SET * 3];
-        DYNNLEquation(x_arr.data(), residual_tmp.data(), DYNNLEParams, u0_tmp, tau_tmp);
+    // Handle insertion length gradient (column 3 of B)
+    // dy/d_ins = gx * (dx/d_ins) - no direct dependency of output on insertion length in eval_output_AD
+    B.col(3) = gx * dx_du.col(3);
 
-        double tau_phys[NUM_ACT_SET][3]{};
-        for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
-            for (int i = 0; i < 3; i++) {
-                tau_phys[j][i] = tau_tmp[j * 3 + i];
-            }
-        }
-
-        // Run IVP
-        double xf_new[NUM_STATES], x_coil[NUM_ACT_SET][NUM_COIL_STATES];
-        double ReportedMarkerPos[5][3];
-        double ftip[3] = {0.0, 0.0, 0.0};
-
-        DYNSolverIVP(BVPParams, u0_tmp, mL_phys, nL_phys, tau_phys, ftip,
-                     true, xf_new, x_coil, ReportedMarkerPos);
-
-        // Extract output
-        Eigen::VectorXd output(output_dim);
-        output(0) = xf_new[0];
-        output(1) = xf_new[1];
-        output(2) = xf_new[2];
-        for (int j = 0; j < num_sets; j++) {
-            for (int i = 0; i < 3; i++) {
-                output(3 + j * 3 + i) = x_coil[j][i];
-            }
-        }
-        return output;
-    };
-
-    // Compute g_x via finite differences
-    for (int j = 0; j < x_dim; j++) {
-        Eigen::VectorXd x_plus = x_star_scaled;
-        Eigen::VectorXd x_minus = x_star_scaled;
-        x_plus(j) += eps_x;
-        x_minus(j) -= eps_x;
-
-        Eigen::VectorXd y_plus = eval_output(x_plus);
-        Eigen::VectorXd y_minus = eval_output(x_minus);
-
-        g_x.col(j) = (y_plus - y_minus) / (2.0 * eps_x);
-    }
-
-    // Step 5: Apply chain rule: B = g_x @ dx/du
-    Eigen::MatrixXd B = g_x * dx_du;  // (output_dim, 4)
-
-    // For A, we need dx/dseed which requires J_xs (seed Jacobian)
-    // For now, return empty A matrix (will implement seed gradients if needed)
+    // For A (dy/dseed), we need gth.rightCols(seed_dim) + gx * dx/dseed
+    // For now, return zero A matrix (will implement if needed)
     Eigen::MatrixXd A = Eigen::MatrixXd::Zero(output_dim, 1);  // Placeholder
 
     return {B, A};
@@ -1173,10 +1137,15 @@ std::vector<torch::Tensor> crm_step_backward(
         BVPParams.dynamics.last_diverged = false;
 
         // Apply damping compensation to guess (matching forward pass)
+        // We use a separate array for this so we preserve the original seed (mL_guess)
+        // for passing to compute_implicit_jacobians later.
+        double mL_guess_compensated[NUM_ACT_SET][3];
+        double nL_guess_compensated[NUM_ACT_SET][3];
+        
         for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
             for (int i = 0; i < 3; i++) {
-                mL_guess[j][i] += damping_local[j][i + 3] * w_L[j][i];
-                nL_guess[j][i] += damping_local[j][i] * v_L[j][i];
+                mL_guess_compensated[j][i] = mL_guess[j][i] + damping_local[j][i + 3] * w_L[j][i];
+                nL_guess_compensated[j][i] = nL_guess[j][i] + damping_local[j][i] * v_L[j][i];
             }
         }
 
@@ -1187,7 +1156,7 @@ std::vector<torch::Tensor> crm_step_backward(
         double ftip_calc[3], ftip_guess[3] = {0.0, 0.0, 0.0};
         int localmin;
 
-        DynamicsBVP(BVPParams, xf_local, mL_guess, nL_guess, ftip_guess,
+        DynamicsBVP(BVPParams, xf_local, mL_guess_compensated, nL_guess_compensated, ftip_guess,
                     out_u0, mL_star, nL_star, out_tau, ftip_calc, localmin);
 
         if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
