@@ -28,6 +28,12 @@ try:
 except Exception:  # pragma: no cover
     HAS_CPP_BINDINGS = False
 
+try:
+    import crm_torch_ext
+    HAS_TORCH_EXT = True
+except ImportError:
+    HAS_TORCH_EXT = False
+
 
 def _as_float(x) -> float:
     return float(x.item() if isinstance(x, torch.Tensor) else x)
@@ -353,10 +359,14 @@ class TorchCRMPhysics:
     Convenience wrapper holding C++ objects and exposing differentiable calls.
     """
 
-    def __init__(self, param_file: str, config_file: str, device: str = "cpu"):
+    def __init__(self, param_file: str, config_file: str, device: str = "cpu", use_cpp_extension: bool = False):
         if not HAS_CPP_BINDINGS:
             raise RuntimeError("C++ bindings unavailable (crm_python import failed).")
+        
         self.device = torch.device(device)
+        self.use_cpp_extension = use_cpp_extension
+
+        # Initialize existing Python bindings
         self.kin = crm_python.CRMKinematics()
         self.dyn = crm_python.CRMDynamics()
         ok1 = self.kin.load_parameters(param_file, config_file)
@@ -364,6 +374,17 @@ class TorchCRMPhysics:
         if not (ok1 and ok2):
             raise RuntimeError("Failed to load CRM data/simulation_parameters/config into C++ bindings.")
         self.dyn.set_integrator("rk4")
+
+        # Initialize C++ extension if requested
+        if self.use_cpp_extension:
+            if not HAS_TORCH_EXT:
+                import warnings
+                warnings.warn("use_cpp_extension=True but crm_torch_ext not installed. Falling back to Python wrapper.")
+                self.use_cpp_extension = False
+            else:
+                # Initialize static parameters in extension singleton
+                crm_torch_ext.initialize_params(param_file, config_file)
+                crm_torch_ext.set_integrator("rk4")
 
     def fk(self, currents: torch.Tensor, insertion_length: torch.Tensor) -> torch.Tensor:
         return CRMFKFunction.apply(currents, insertion_length, self.kin)
@@ -381,11 +402,73 @@ class TorchCRMPhysics:
         seed_nL: Optional[torch.Tensor] = None,
         eps_u: float = 1e-4,
         eps_seed: float = 1e-4,
-    ) -> torch.Tensor:
+        return_full_state: bool = False,
+    ) -> torch.Tensor | Tuple[torch::Tensor, ...]:
         if seed_mL is None:
             seed_mL = torch.zeros_like(seed_v)
         if seed_nL is None:
             seed_nL = torch.zeros_like(seed_v)
+
+        if self.use_cpp_extension:
+            # C++ Extension Path (Fast)
+            batch_dim = currents.shape[0]
+            if batch_dim == 1:
+                # Squeeze to match unbatched extension call
+                c_sq = currents.squeeze(0)
+                
+                # Ensure insertion is [1]
+                if insertion_length.ndim == 1 and insertion_length.shape[0] == 1:
+                    ins_arg = insertion_length
+                elif insertion_length.ndim == 0:
+                    ins_arg = insertion_length.unsqueeze(0)
+                else:
+                    ins_arg = insertion_length.reshape(1)
+
+                sv_sq = seed_v.squeeze(0)
+                sw_sq = seed_w.squeeze(0)
+                sp_sq = seed_p.squeeze(0)
+                sR_sq = seed_R.squeeze(0)
+                sxf_sq = seed_xf.squeeze(0)
+                smL_sq = seed_mL.squeeze(0)
+                snL_sq = seed_nL.squeeze(0)
+
+                # Call returns [next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL]
+                res_list = crm_torch_ext.crm_step(
+                    c_sq, ins_arg, sv_sq, sw_sq, sp_sq, sR_sq, sxf_sq, smL_sq, snL_sq
+                )
+                
+                # Reshape all outputs back to batch dimensions
+                res_list_batched = [t.unsqueeze(0) for t in res_list]
+                
+                if return_full_state:
+                    return tuple(res_list_batched)
+                return res_list_batched[0]
+            else:
+                # Manual loop for batch > 1
+                all_results = []
+                for i in range(batch_dim):
+                    ins_i = insertion_length[i] if insertion_length.ndim > 0 else insertion_length
+                    res_i = crm_torch_ext.crm_step(
+                        currents[i], ins_i,
+                        seed_v[i], seed_w[i], seed_p[i], seed_R[i], seed_xf[i], seed_mL[i], seed_nL[i]
+                    )
+                    all_results.append(res_i)
+                
+                # Transpose list of lists to list of stacks
+                num_outputs = len(all_results[0])
+                final_outputs = []
+                for j in range(num_outputs):
+                    final_outputs.append(torch.stack([res[j] for res in all_results]))
+                
+                if return_full_state:
+                    return tuple(final_outputs)
+                return final_outputs[0]
+
+        # Python Wrapper Path (Legacy/Fallback)
+        # Note: legacy path doesn't easily support return_full_state yet in same format
+        if return_full_state:
+             raise NotImplementedError("return_full_state=True only supported with use_cpp_extension=True")
+
         return CRMDynamicsStepFunction.apply(
             currents,
             insertion_length,

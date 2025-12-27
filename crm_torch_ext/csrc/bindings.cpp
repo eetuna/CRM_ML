@@ -14,7 +14,7 @@ namespace py = pybind11;
  */
 class CRMStepFunction : public torch::autograd::Function<CRMStepFunction> {
 public:
-    static torch::Tensor forward(
+    static torch::autograd::variable_list forward(
         torch::autograd::AutogradContext* ctx,
         torch::Tensor currents,
         torch::Tensor insertion_length,
@@ -33,10 +33,15 @@ public:
         });
 
         // Call forward implementation
-        return crm_torch::crm_step_forward(
+        auto result_vec = crm_torch::crm_step_forward(
             currents, insertion_length,
             seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL
         );
+
+        // Convert std::vector to autograd::variable_list
+        torch::autograd::variable_list result_list;
+        for (auto& t : result_vec) result_list.push_back(t);
+        return result_list;
     }
 
     static torch::autograd::tensor_list backward(
@@ -56,6 +61,8 @@ public:
         auto seed_nL = saved[8];
 
         // Call backward implementation
+        // Only grad_outputs[0] (w.r.t next_state) is used for now.
+        // If other outputs (updated seeds) have gradients, they would be in grad_outputs[1:7]
         auto grads = crm_torch::crm_step_backward(
             grad_outputs[0],
             currents, insertion_length,
@@ -72,7 +79,7 @@ public:
  *
  * This is the function exposed to Python users.
  */
-torch::Tensor crm_step(
+std::vector<torch::Tensor> crm_step(
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,

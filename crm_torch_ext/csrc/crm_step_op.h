@@ -22,9 +22,9 @@ namespace crm_torch {
  * @param seed_xf Tip state [15]
  * @param seed_mL Bending moments [num_sets, 3]
  * @param seed_nL Shear forces [num_sets, 3]
- * @return torch::Tensor Next state (tip position + velocities) [output_dim]
+ * @return std::vector<torch::Tensor> [next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL, localmin]
  */
-torch::Tensor crm_step_forward(
+std::vector<torch::Tensor> crm_step_forward(
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,

@@ -16,7 +16,52 @@ namespace crm_torch {
 
 using namespace CRMCatheterModel;
 
-torch::Tensor crm_step_forward(
+/**
+ * @brief Orthonormalize a 3x3 rotation matrix using Gram-Schmidt process
+ * @param R Pointer to 9-element array (row-major)
+ */
+void gram_schmidt_orthonormalize(double R[9]) {
+    // Extract columns (R is row-major: [r00, r01, r02, r10, r11, r12, r20, r21, r22])
+    // Column 0: R[0], R[3], R[6]
+    // Column 1: R[1], R[4], R[7]
+    // Column 2: R[2], R[5], R[8]
+
+    double r0[3] = {R[0], R[3], R[6]};
+    double r1[3] = {R[1], R[4], R[7]};
+    double r2[3] = {R[2], R[5], R[8]};
+
+    // Normalize r0
+    double n0 = std::sqrt(r0[0]*r0[0] + r0[1]*r0[1] + r0[2]*r0[2]);
+    if (n0 > 1e-12) { r0[0] /= n0; r0[1] /= n0; r0[2] /= n0; }
+
+    // Orthogonalize r1 against r0
+    double dot01 = r0[0]*r1[0] + r0[1]*r1[1] + r0[2]*r1[2];
+    r1[0] -= dot01 * r0[0];
+    r1[1] -= dot01 * r0[1];
+    r1[2] -= dot01 * r0[2];
+
+    // Normalize r1
+    double n1 = std::sqrt(r1[0]*r1[0] + r1[1]*r1[1] + r1[2]*r1[2]);
+    if (n1 > 1e-12) { r1[0] /= n1; r1[1] /= n1; r1[2] /= n1; }
+
+    // Orthogonalize r2 against r0 and r1
+    double dot02 = r0[0]*r2[0] + r0[1]*r2[1] + r0[2]*r2[2];
+    double dot12 = r1[0]*r2[0] + r1[1]*r2[1] + r1[2]*r2[2];
+    r2[0] -= (dot02 * r0[0] + dot12 * r1[0]);
+    r2[1] -= (dot02 * r0[1] + dot12 * r1[1]);
+    r2[2] -= (dot02 * r0[2] + dot12 * r1[2]);
+
+    // Normalize r2
+    double n2 = std::sqrt(r2[0]*r2[0] + r2[1]*r2[1] + r2[2]*r2[2]);
+    if (n2 > 1e-12) { r2[0] /= n2; r2[1] /= n2; r2[2] /= n2; }
+
+    // Write back to R (row-major)
+    R[0] = r0[0]; R[1] = r1[0]; R[2] = r2[0];
+    R[3] = r0[1]; R[4] = r1[1]; R[5] = r2[1];
+    R[6] = r0[2]; R[7] = r1[2]; R[8] = r2[2];
+}
+
+std::vector<torch::Tensor> crm_step_forward(
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,
@@ -338,13 +383,62 @@ torch::Tensor crm_step_forward(
             DynamicsBVP(BVPParams_static, xf_local, mL_guess_static, nL_guess_static, ftip_guess,
                         out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin_static);
 
-            if (localmin_static != 0) {
-                throw std::runtime_error(
-                    "DynamicsBVP failed to converge (localmin=" + std::to_string(localmin_static) +
-                    "). Try different initial conditions or check inputs.");
-            }
+            if (localmin_static == 0) {
+                localmin = 0;  // Static solve succeeded
+            } else {
+                // Last ditch effort: Current/Force Continuation Ramp
+                // Gradually increase currents from 0 to target
+                constexpr int kCurrentRampSteps = 5;
+                bool ramp_succeeded = false;
 
-            localmin = 0;  // Mark as successful
+                for (int step = 1; step <= kCurrentRampSteps; step++) {
+                    const double alpha = static_cast<double>(step) / static_cast<double>(kCurrentRampSteps);
+                    
+                    double ActuationCurrents_ramp[NUM_ACT_SET][3];
+                    for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                        for (int i = 0; i < 3; i++) {
+                            ActuationCurrents_ramp[j][i] = alpha * ActuationCurrents[j][i];
+                        }
+                    }
+
+                    CRMShootingMethodParams BVPParams_curr = CRMDYNConstructShootingMethodParamSet(
+                        *cparams, config, ins_len, ActuationCurrents_ramp,
+                        ContactMode, TipConstraintPoint, TipForce, integration_step_size,
+                        actInertia_local, v_L, w_L, p_L, R_L, damping_local, dt_local
+                    );
+                    BVPParams_curr.dynamics.integrator_type = integrator_type;
+
+                    double mL_guess_curr[NUM_ACT_SET][3], nL_guess_curr[NUM_ACT_SET][3];
+                    for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                        for (int i = 0; i < 3; i++) {
+                            // Start from previous ramp step's solution (or original guess for step 1)
+                            mL_guess_curr[j][i] = (step > 1) ? out_mL[j][i] : mL_guess_local[j][i];
+                            nL_guess_curr[j][i] = (step > 1) ? out_nL[j][i] : nL_guess_local[j][i];
+                        }
+                    }
+
+                    int localmin_curr;
+                    DynamicsBVP(BVPParams_curr, xf_local, mL_guess_curr, nL_guess_curr, ftip_guess,
+                                out_u0, out_mL, out_nL, out_tau, ftip_calc, localmin_curr);
+
+                    if (localmin_curr != 0) {
+                        ramp_succeeded = false;
+                        break;
+                    }
+                    if (step == kCurrentRampSteps) ramp_succeeded = true;
+                }
+
+                if (ramp_succeeded) {
+                    localmin = 0;
+                } else {
+                    // Fail soft: matching Python bindings behavior
+                    if (const char* debug = std::getenv("CRM_DEBUG_BVP")) {
+                        std::cerr << "Warning: DynamicsBVP failed to converge (localmin=" << localmin_static 
+                                  << ") after all continuation attempts. Returning best-effort result." << std::endl;
+                    }
+                    localmin = localmin_static; 
+                }
+            }
         }
     }
 
@@ -393,26 +487,82 @@ torch::Tensor crm_step_forward(
         }
     }
 
-    // Extract next state from IVP solution
-    // Return format: [tip_pos (3), coil_velocities (num_sets * 3)]
-    auto options = torch::TensorOptions().dtype(torch::kFloat64);
-    torch::Tensor next_state = torch::zeros({output_dim}, options);
-    auto out_acc = next_state.accessor<double, 1>();
+    // Prepare Return Tensors
+    auto return_options = torch::TensorOptions().dtype(torch::kFloat64);
+    
+    // [0] next_state (observation)
+    torch::Tensor next_state = torch::zeros({output_dim}, return_options);
+    auto next_state_acc = next_state.accessor<double, 1>();
 
-    // Tip position from xf_new (first 3 elements)
-    out_acc[0] = xf_new[0];  // tip_x
-    out_acc[1] = xf_new[1];  // tip_y
-    out_acc[2] = xf_new[2];  // tip_z
-
-    // Coil velocities from x_coil (indices 0-2 are velocities)
-    // This matches Python bindings: coil_vel(j, i) = x_coil[j][i]
-    for (int j = 0; j < num_sets; j++) {
-        for (int i = 0; i < 3; i++) {
-            out_acc[3 + j * 3 + i] = x_coil[j][i];
+    if (localmin == 0) {
+        // SUCCESS: Use IVP results
+        next_state_acc[0] = xf_new[0];
+        next_state_acc[1] = xf_new[1];
+        next_state_acc[2] = xf_new[2];
+        for (int j = 0; j < num_sets; j++) {
+            for (int i = 0; i < 3; i++) next_state_acc[3 + j * 3 + i] = x_coil[j][i];
         }
-    }
 
-    return next_state;
+        // [1] next_v
+        torch::Tensor next_v = torch::zeros({num_sets, 3}, return_options);
+        auto next_v_acc = next_v.accessor<double, 2>();
+        for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) next_v_acc[j][i] = x_coil[j][i];
+
+        // [2] next_w
+        torch::Tensor next_w = torch::zeros({num_sets, 3}, return_options);
+        auto next_w_acc = next_w.accessor<double, 2>();
+        for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) next_w_acc[j][i] = x_coil[j][i + 3];
+
+        // [3] next_p
+        torch::Tensor next_p = torch::zeros({num_sets, 3}, return_options);
+        auto next_p_acc = next_p.accessor<double, 2>();
+        for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) next_p_acc[j][i] = x_coil[j][i + 6];
+
+        // [4] next_R
+        torch::Tensor next_R = torch::zeros({num_sets, 9}, return_options);
+        auto next_R_acc = next_R.accessor<double, 2>();
+        for (int j = 0; j < num_sets; j++) {
+            double R_tmp[9];
+            for (int i = 0; i < 9; i++) R_tmp[i] = x_coil[j][i + 9];
+            gram_schmidt_orthonormalize(R_tmp);
+            for (int i = 0; i < 9; i++) next_R_acc[j][i] = R_tmp[i];
+        }
+
+        // [5] next_xf
+        torch::Tensor next_xf = torch::zeros({15}, return_options);
+        auto next_xf_acc = next_xf.accessor<double, 1>();
+        for (int i = 0; i < 15; i++) next_xf_acc[i] = xf_new[i];
+        double R_xf[9];
+        for (int i = 0; i < 9; i++) R_xf[i] = xf_new[i + 3];
+        gram_schmidt_orthonormalize(R_xf);
+        for (int i = 0; i < 9; i++) next_xf_acc[i + 3] = R_xf[i];
+
+        // [6] next_mL
+        torch::Tensor next_mL = torch::zeros({num_sets, 3}, return_options);
+        auto next_mL_acc = next_mL.accessor<double, 2>();
+        for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) next_mL_acc[j][i] = out_mL[j][i];
+
+        // [7] next_nL
+        torch::Tensor next_nL = torch::zeros({num_sets, 3}, return_options);
+        auto next_nL_acc = next_nL.accessor<double, 2>();
+        for (int j = 0; j < num_sets; j++) for (int i = 0; i < 3; i++) next_nL_acc[j][i] = out_nL[j][i];
+
+        // [8] localmin
+        torch::Tensor localmin_tensor = torch::tensor({0.0}, return_options);
+
+        return {next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL, localmin_tensor};
+    } else {
+        // FAILURE: Latch to original seeds, return zero velocities
+        // Observation: Keep tip position from seed_xf, but zero velocities
+        next_state_acc[0] = xf_local[12];
+        next_state_acc[1] = xf_local[13];
+        next_state_acc[2] = xf_local[14];
+        // Coil velocities are already zeroed by torch::zeros
+
+        // Return clones of inputs to maintain graph consistency
+        torch::Tensor localmin_tensor = torch::tensor({static_cast<double>(localmin)}, return_options);
+        return {next_state, seed_v.clone(), seed_w.clone(), seed_p.clone(), seed_R.clone(), seed_xf.clone(), seed_mL.clone(), seed_nL.clone(), localmin_tensor};
+    }
 }
 
 // Helper function to compute implicit differentiation Jacobians
@@ -1155,12 +1305,56 @@ std::vector<torch::Tensor> crm_step_backward(
         DynamicsBVP(BVPParams, xf_local, mL_guess_compensated, nL_guess_compensated, ftip_guess,
                     out_u0, mL_star, nL_star, out_tau, ftip_calc, localmin);
 
+        if (localmin != 0) {
+            // Try Current/Force Continuation Ramp in backward pass too
+            constexpr int kCurrentRampSteps = 5;
+            bool ramp_succeeded = false;
+
+            for (int step = 1; step <= kCurrentRampSteps; step++) {
+                const double alpha = static_cast<double>(step) / static_cast<double>(kCurrentRampSteps);
+                double ActuationCurrents_ramp[NUM_ACT_SET][3];
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                    for (int i = 0; i < 3; i++) ActuationCurrents_ramp[j][i] = alpha * ActuationCurrents[j][i];
+                }
+
+                CRMShootingMethodParams BVPParams_curr = CRMDYNConstructShootingMethodParamSet(
+                    *cparams, config, ins_len, ActuationCurrents_ramp,
+                    ContactMode, TipConstraintPoint, TipForce, integration_step_size,
+                    actInertia_local, v_L, w_L, p_L, R_L, damping_local, dt
+                );
+                BVPParams_curr.dynamics.integrator_type = integrator_type;
+
+                double mL_guess_curr[NUM_ACT_SET][3], nL_guess_curr[NUM_ACT_SET][3];
+                for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
+                    for (int i = 0; i < 3; i++) {
+                        mL_guess_curr[j][i] = (step > 1) ? mL_star[j][i] : mL_guess_compensated[j][i];
+                        nL_guess_curr[j][i] = (step > 1) ? nL_star[j][i] : nL_guess_compensated[j][i];
+                    }
+                }
+
+                int localmin_curr;
+                DynamicsBVP(BVPParams_curr, xf_local, mL_guess_curr, nL_guess_curr, ftip_guess,
+                            out_u0, mL_star, nL_star, out_tau, ftip_calc, localmin_curr);
+
+                if (localmin_curr != 0) {
+                    ramp_succeeded = false;
+                    break;
+                }
+                if (step == kCurrentRampSteps) ramp_succeeded = true;
+            }
+
+            if (ramp_succeeded) {
+                localmin = 0;
+            }
+        }
+
         if (const char* debug = std::getenv("CRM_DEBUG_BACKWARD")) {
             if (std::string(debug) == "1") {
                 std::cout << "[BACKWARD] BVP solve result:" << std::endl;
                 std::cout << "  localmin: " << localmin << std::endl;
-                std::cout << "  mL_star[0]: " << mL_star[0][0] << ", " << mL_star[0][1] << ", " << mL_star[0][2] << std::endl;
-                std::cout << "  nL_star[0]: " << nL_star[0][0] << ", " << nL_star[0][1] << ", " << nL_star[0][2] << std::endl;
+                if (localmin == 0) {
+                    std::cout << "  mL_star[0]: " << mL_star[0][0] << ", " << mL_star[0][1] << ", " << mL_star[0][2] << std::endl;
+                }
             }
         }
 
@@ -1170,9 +1364,6 @@ std::vector<torch::Tensor> crm_step_backward(
 
             // Return zero gradients
             auto options = torch::TensorOptions().dtype(torch::kFloat64);
-            int64_t seed_dim = num_sets * 3 + num_sets * 3 + num_sets * 3 +
-                               num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
-
             auto grad_currents = torch::zeros({3}, options);
             auto grad_insertion = torch::zeros({1}, options);
             auto grad_seed_v = torch::zeros({num_sets, 3}, options);
