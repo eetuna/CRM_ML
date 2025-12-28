@@ -96,8 +96,11 @@ class CRMDynamicsStep(torch.autograd.Function):
         """
         Backward pass: compute gradients via implicit differentiation.
 
-        Phase 3: To be implemented using linearize_full_seed_action_from_seed_implicit.
-        For now, returns zero gradients.
+        Phase 3A (Implemented): Computes current gradients via Option A's implicit linearization.
+        Uses linearize_full_seed_action_from_seed_implicit to get B Jacobian (∂y/∂currents).
+        Computes grad_currents = B^T @ grad_output.
+
+        Seed gradients: Currently zero (Phase 3B - can be added if needed).
         """
         if not _extension_available:
             raise RuntimeError("C++ extension not available")

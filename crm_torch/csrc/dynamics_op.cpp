@@ -186,11 +186,18 @@ dynamics_backward(
     const std::string& config_file,
     double eps_seed
 ) {
-    // Phase 3 implementation - will compute gradients using implicit differentiation
-    // For now, return None placeholders
+    // Phase 3A: Compute gradients using Option A's implicit linearization
+    // Currently implements: grad_currents (∂Loss/∂currents)
+    // Seed gradients: Set to zero for MVP (can be added in Phase 3B)
+
+    // Validate inputs
+    validate_tensor(grad_output, "grad_output");
+    validate_tensor(currents, "currents");
+
     int64_t batch_size = get_batch_size(currents);
     int64_t num_sets = seed_v.size(1);
 
+    // Allocate gradient tensors
     auto grad_currents = torch::zeros_like(currents);
     auto grad_insertion = torch::zeros_like(insertion_length);
     auto grad_seed_v = torch::zeros_like(seed_v);
@@ -201,6 +208,128 @@ dynamics_backward(
     auto grad_seed_mL = torch::zeros_like(seed_mL);
     auto grad_seed_nL = torch::zeros_like(seed_nL);
 
+    // Get raw pointers for gradient accumulation
+    double* grad_curr_ptr = grad_currents.data_ptr<double>();
+
+    // Acquire GIL for Python calls
+    py::gil_scoped_acquire acquire;
+    py::module_ crm_python = py::module_::import("crm_ml_rl.wrappers.crm_python");
+    py::object CRMDynamics = crm_python.attr("CRMDynamics");
+
+    // Create single dynamics instance (reused for all batch elements)
+    py::object dyn = CRMDynamics();
+    bool loaded = dyn.attr("load_parameters")(param_file, config_file).cast<bool>();
+    if (!loaded) {
+        throw std::runtime_error("Failed to load CRM parameters from " + param_file);
+    }
+
+    // Process each batch element sequentially
+    for (int64_t i = 0; i < batch_size; ++i) {
+        try {
+            // Extract currents for this sample
+            double curr_i[3];
+            for (int j = 0; j < 3; ++j) {
+                curr_i[j] = currents[i][j].item<double>();
+            }
+            double ins_i = get_scalar(insertion_length, i);
+
+            // Extract seed state for this sample
+            py::array_t<double> v_np(std::vector<py::ssize_t>{num_sets, 3});
+            py::array_t<double> w_np(std::vector<py::ssize_t>{num_sets, 3});
+            py::array_t<double> p_np(std::vector<py::ssize_t>{num_sets, 3});
+            py::array_t<double> R_np(std::vector<py::ssize_t>{num_sets, 9});
+            py::array_t<double> xf_np(std::vector<py::ssize_t>{15});
+            py::array_t<double> mL_np(std::vector<py::ssize_t>{num_sets, 3});
+            py::array_t<double> nL_np(std::vector<py::ssize_t>{num_sets, 3});
+
+            auto v_buf = v_np.mutable_unchecked<2>();
+            auto w_buf = w_np.mutable_unchecked<2>();
+            auto p_buf = p_np.mutable_unchecked<2>();
+            auto R_buf = R_np.mutable_unchecked<2>();
+            auto xf_buf = xf_np.mutable_unchecked<1>();
+            auto mL_buf = mL_np.mutable_unchecked<2>();
+            auto nL_buf = nL_np.mutable_unchecked<2>();
+
+            // Copy seed data from torch tensors to numpy arrays
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    v_buf(j, k) = seed_v[i][j][k].item<double>();
+                    w_buf(j, k) = seed_w[i][j][k].item<double>();
+                    p_buf(j, k) = seed_p[i][j][k].item<double>();
+                    mL_buf(j, k) = seed_mL[i][j][k].item<double>();
+                    nL_buf(j, k) = seed_nL[i][j][k].item<double>();
+                }
+                for (int64_t k = 0; k < 9; ++k) {
+                    R_buf(j, k) = seed_R[i][j][k].item<double>();
+                }
+            }
+            for (int64_t k = 0; k < 15; ++k) {
+                xf_buf(k) = seed_xf[i][k].item<double>();
+            }
+
+            // Create currents numpy array
+            py::array_t<double> curr_np(std::vector<py::ssize_t>{3});
+            auto curr_buf = curr_np.mutable_unchecked<1>();
+            for (int j = 0; j < 3; ++j) {
+                curr_buf(j) = curr_i[j];
+            }
+
+            // Call Option A's implicit linearization
+            // This computes A = ∂y/∂x_seed and B = ∂y/∂currents
+            py::dict result = dyn.attr("linearize_full_seed_action_from_seed_implicit")(
+                curr_np, ins_i,
+                v_np, w_np, p_np, R_np, xf_np,
+                mL_np, nL_np,
+                eps_seed,  // eps_residual_x
+                eps_seed,  // eps_residual_theta
+                eps_seed,  // eps_g_x
+                eps_seed,  // eps_g_theta
+                false      // return_debug
+            ).cast<py::dict>();
+
+            // Extract B Jacobian: ∂y/∂currents (shape: 6 x 3)
+            py::array_t<double> B_np = result["B"].cast<py::array_t<double>>();
+            auto B_buf = B_np.unchecked<2>();
+
+            // Verify B shape
+            if (B_buf.shape(0) != 6 || B_buf.shape(1) != 3) {
+                throw std::runtime_error(
+                    "Expected B to have shape (6, 3), got (" +
+                    std::to_string(B_buf.shape(0)) + ", " +
+                    std::to_string(B_buf.shape(1)) + ")"
+                );
+            }
+
+            // Extract grad_output for this sample (shape: 6)
+            double grad_y[6];
+            for (int j = 0; j < 6; ++j) {
+                grad_y[j] = grad_output[i][j].item<double>();
+            }
+
+            // Compute grad_currents = B^T @ grad_y (vector-Jacobian product)
+            // B is (6, 3), grad_y is (6,) -> result is (3,)
+            // For each current dimension j:
+            //   grad_currents[j] = sum_k B[k, j] * grad_y[k]
+            for (int j = 0; j < 3; ++j) {
+                double grad_u_j = 0.0;
+                for (int k = 0; k < 6; ++k) {
+                    grad_u_j += B_buf(k, j) * grad_y[k];
+                }
+                grad_curr_ptr[i * 3 + j] = grad_u_j;
+            }
+
+            // Phase 3B TODO: Compute seed gradients from A Jacobian
+            // For now, seed gradients remain zero (initialized above)
+
+        } catch (const std::exception& e) {
+            throw std::runtime_error("Batch element " + std::to_string(i) +
+                                   " backward pass failed: " + std::string(e.what()));
+        }
+    }
+
+    // Return gradients for all inputs
+    // grad_insertion is zero (insertion_length typically not differentiated)
+    // grad_seed_* are zero (Phase 3A MVP - currents only)
     return std::make_tuple(
         grad_currents, grad_insertion, grad_seed_v, grad_seed_w,
         grad_seed_p, grad_seed_R, grad_seed_xf, grad_seed_mL, grad_seed_nL
