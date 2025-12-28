@@ -101,4 +101,18 @@ void set_integration_step_size(double step_size);
  */
 void set_damping(const std::vector<double>& damping);
 
+/**
+ * @brief Initialize dynamics state from Forward Kinematics
+ *
+ * Solves the static BVP to find the physically valid starting configuration.
+ *
+ * @param currents Initial currents [3]
+ * @param insertion_length Initial insertion length [1]
+ * @return std::vector<torch::Tensor> [v, w, p, R, xf, mL, nL]
+ */
+std::vector<torch::Tensor> crm_initialize_from_fk(
+    torch::Tensor currents,
+    torch::Tensor insertion_length
+);
+
 } // namespace crm_torch

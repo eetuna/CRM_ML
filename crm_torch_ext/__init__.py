@@ -14,6 +14,7 @@ try:
 
     # Expose parameter management functions
     initialize_params = _crm_torch_ext.initialize_params
+    initialize_from_fk = _crm_torch_ext.initialize_from_fk
     set_timestep = _crm_torch_ext.set_timestep
     set_integrator = _crm_torch_ext.set_integrator
     set_integration_step_size = _crm_torch_ext.set_integration_step_size
@@ -22,6 +23,7 @@ try:
     __all__ = [
         'crm_step',
         'initialize_params',
+        'initialize_from_fk',
         'set_timestep',
         'set_integrator',
         'set_integration_step_size',
@@ -29,6 +31,7 @@ try:
     ]
 
 except ImportError as e:
+    print(f"CRITICAL ERROR: Failed to import crm_torch_ext C++ extension: {e}")
     import warnings
     warnings.warn(
         f"Failed to import crm_torch_ext C++ extension: {e}\n"

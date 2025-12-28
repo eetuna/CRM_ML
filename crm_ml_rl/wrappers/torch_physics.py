@@ -385,9 +385,79 @@ class TorchCRMPhysics:
                 # Initialize static parameters in extension singleton
                 crm_torch_ext.initialize_params(param_file, config_file)
                 crm_torch_ext.set_integrator("rk4")
+                crm_torch_ext.set_integration_step_size(0.1)
+
+    def set_timestep(self, dt: float):
+        """Set simulation timestep."""
+        self.dyn.set_timestep(dt)
+        if self.use_cpp_extension:
+            import crm_torch_ext
+            crm_torch_ext.set_timestep(dt)
 
     def fk(self, currents: torch.Tensor, insertion_length: torch.Tensor) -> torch.Tensor:
         return CRMFKFunction.apply(currents, insertion_length, self.kin)
+
+    def initialize_from_fk(self, currents: torch.Tensor, insertion_length: torch.Tensor) -> Tuple[torch.Tensor, ...]:
+        """
+        Compute initial physical state from Forward Kinematics.
+        
+        Robustness Strategy:
+        Always initializes from ZERO currents first to ensure a valid base state.
+        Returns the state corresponding to ZERO currents.
+        The transition to the requested 'currents' will happen during the first
+        dynamics step via the C++ solver's internal homotopy (current ramp).
+        
+        Args:
+            currents: Target starting currents [3] (Used only for shape validation)
+            insertion_length: Initial insertion length [1]
+            
+        Returns:
+            Tuple of [v, w, p, R, xf, mL, nL] tensors corresponding to ZERO currents.
+        """
+        if self.use_cpp_extension:
+            import crm_torch_ext
+            
+            # 1. Validate inputs
+            c = currents.detach().cpu().double().flatten()
+            if c.shape[0] != 3:
+                raise ValueError("Initial currents must have 3 elements")
+            
+            ins = insertion_length.detach().cpu().double().flatten()
+            if ins.shape[0] != 1:
+                raise ValueError("Insertion length must have 1 element")
+
+            # 2. Robust Initialization: Solve for ZERO currents
+            # This guarantees a valid physical seed (straight rod).
+            zero_c = torch.zeros_like(c)
+            
+            # This call should always succeed with localmin=0
+            return tuple(crm_torch_ext.initialize_from_fk(zero_c, ins))
+        else:
+            # Fallback using Python kin wrapper
+            # Use zero currents here too for consistency
+            c_np = np.zeros(3, dtype=np.float64)
+            ins_val = float(insertion_length.item())
+            
+            res = self.kin.forward_kinematics(c_np, ins_val)
+            if not res['converged']:
+                raise RuntimeError("FK did not converge even for zero currents")
+                
+            # Manually pack tensors to match extension return format
+            num_sets = self.kin.num_act_set
+            options = torch.TensorOptions().dtype(torch.kFloat64)
+            
+            v = torch.zeros((num_sets, 3), **options)
+            w = torch.zeros((num_sets, 3), **options)
+            p = torch.from_numpy(res['tip_position']).reshape(1, 3).to(**options)
+            R = torch.from_numpy(res['tip_rotation']).reshape(1, 9).to(**options)
+            xf = torch.zeros(15, **options)
+            xf[:3] = torch.from_numpy(res['tip_position'])
+            xf[3:12] = torch.from_numpy(res['tip_rotation'])
+            xf[12:15] = torch.from_numpy(res['delta_u0'])
+            mL = torch.zeros((num_sets, 3), **options)
+            nL = torch.zeros((num_sets, 3), **options)
+            
+            return (v, w, p, R, xf, mL, nL)
 
     def dyn_step(
         self,

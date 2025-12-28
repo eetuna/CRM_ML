@@ -112,6 +112,11 @@ PYBIND11_MODULE(_crm_torch_ext, m) {
           py::arg("seed_mL"),
           py::arg("seed_nL"));
 
+    m.def("initialize_from_fk", &crm_torch::crm_initialize_from_fk,
+          "Compute initial physical state from Forward Kinematics",
+          py::arg("currents"),
+          py::arg("insertion_length"));
+
     m.def("initialize_params", &crm_torch::initialize_params,
           "Initialize CRM parameters from files",
           py::arg("param_file"),
