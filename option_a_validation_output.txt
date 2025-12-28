@@ -1,0 +1,160 @@
+Warning: CasADi not installed. Some MPC features unavailable.
+
+======================================================================
+OPTION A VALIDATION: FK_DYN Test Cases
+======================================================================
+
+This validates Option A by re-running archived test trajectories
+and comparing current Option A outputs to archived dynamics results.
+
+======================================================================
+Circle Trajectory (Hold=1, 120 ramp + 200 circle)
+======================================================================
+
+Archived Data:
+  Trajectory length: 320 steps
+  Insertion length: 94.3mm
+  dt: 0.05s
+  Archived convergence: 320/320 steps
+
+Re-running Option A dynamics...
+  Step 0/320...
+  Step 100/320...
+  Step 200/320...
+  Step 300/320...
+  Current convergence: 320/320 steps
+
+[Comparison: Archived vs Current Option A]
+  Mean diff:   0.000000mm
+  Median diff: 0.000000mm
+  P95 diff:    0.000000mm
+  P99 diff:    0.000000mm
+  Max diff:    0.000000mm
+  Convergence match: ✅ YES
+
+✅ EXACT MATCH: Max diff < 0.001mm
+  Option A has NOT changed since archive
+
+======================================================================
+Circle Trajectory (Hold=2, 240 ramp + 400 circle)
+======================================================================
+
+Archived Data:
+  Trajectory length: 640 steps
+  Insertion length: 94.3mm
+  dt: 0.05s
+  Archived convergence: 640/640 steps
+
+Re-running Option A dynamics...
+  Step 0/640...
+  Step 100/640...
+  Step 200/640...
+  Step 300/640...
+  Step 400/640...
+  Step 500/640...
+  Step 600/640...
+  Current convergence: 640/640 steps
+
+[Comparison: Archived vs Current Option A]
+  Mean diff:   0.010683mm
+  Median diff: 0.004794mm
+  P95 diff:    0.039751mm
+  P99 diff:    0.072350mm
+  Max diff:    0.184266mm
+  Convergence match: ✅ YES
+
+✅ GOOD MATCH: Max diff < 1.0mm
+  Minor numerical differences (acceptable)
+
+======================================================================
+Lemniscate Trajectory (Hold=1, 120 ramp + 200 lem)
+======================================================================
+
+Archived Data:
+  Trajectory length: 320 steps
+  Insertion length: 94.3mm
+  dt: 0.05s
+  Archived convergence: 320/320 steps
+
+Re-running Option A dynamics...
+  Step 0/320...
+  Step 100/320...
+  Step 200/320...
+  Step 300/320...
+  Current convergence: 320/320 steps
+
+[Comparison: Archived vs Current Option A]
+  Mean diff:   0.013923mm
+  Median diff: 0.008240mm
+  P95 diff:    0.040042mm
+  P99 diff:    0.153808mm
+  Max diff:    0.202460mm
+  Convergence match: ✅ YES
+
+✅ GOOD MATCH: Max diff < 1.0mm
+  Minor numerical differences (acceptable)
+
+======================================================================
+Lemniscate Trajectory (Hold=2, 240 ramp + 400 lem)
+======================================================================
+
+Archived Data:
+  Trajectory length: 640 steps
+  Insertion length: 94.3mm
+  dt: 0.05s
+  Archived convergence: 640/640 steps
+
+Re-running Option A dynamics...
+  Step 0/640...
+  Step 100/640...
+  Step 200/640...
+  Step 300/640...
+  Step 400/640...
+  Step 500/640...
+  Step 600/640...
+  Current convergence: 640/640 steps
+
+[Comparison: Archived vs Current Option A]
+  Mean diff:   0.012238mm
+  Median diff: 0.005598mm
+  P95 diff:    0.042453mm
+  P99 diff:    0.159206mm
+  Max diff:    0.204142mm
+  Convergence match: ✅ YES
+
+✅ GOOD MATCH: Max diff < 1.0mm
+  Minor numerical differences (acceptable)
+
+======================================================================
+SUMMARY
+======================================================================
+
+Circle Trajectory (Hold=1, 120 ramp + 200 circle):
+  Status: ✅ EXACT MATCH
+  Mean: 0.000000mm, P95: 0.000000mm, Max: 0.000000mm
+  Convergence: 320/320 (archived: 320/320)
+
+Circle Trajectory (Hold=2, 240 ramp + 400 circle):
+  Status: ✅ GOOD MATCH
+  Mean: 0.010683mm, P95: 0.039751mm, Max: 0.184266mm
+  Convergence: 640/640 (archived: 640/640)
+
+Lemniscate Trajectory (Hold=1, 120 ramp + 200 lem):
+  Status: ✅ GOOD MATCH
+  Mean: 0.013923mm, P95: 0.040042mm, Max: 0.202460mm
+  Convergence: 320/320 (archived: 320/320)
+
+Lemniscate Trajectory (Hold=2, 240 ramp + 400 lem):
+  Status: ✅ GOOD MATCH
+  Mean: 0.012238mm, P95: 0.042453mm, Max: 0.204142mm
+  Convergence: 640/640 (archived: 640/640)
+
+======================================================================
+OVERALL ASSESSMENT
+======================================================================
+
+✅ GOOD: All tests within acceptable tolerance (<1mm)
+   Minor numerical differences (e.g., compiler, library versions)
+   Option A is functionally correct
+======================================================================
+

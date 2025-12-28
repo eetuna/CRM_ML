@@ -46,7 +46,7 @@ class Config:
 
     param_file: str = "data/catheter_params/CatheterParameterSet_1_dyn.txt"
     config_file: str = "data/catheter_params/CatheterSpatialConfiguration_1.txt"
-    insertion_length: float = 50.0
+    insertion_length: float = 94.3 # 50.0
     integration_step_size: float = 0.2  # mm (FK + Dyn along-rod)
     dt: float = 0.05  # s
 

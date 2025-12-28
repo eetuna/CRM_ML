@@ -33,6 +33,7 @@ crm_sources = [
 # Extension source files (relative to crm_torch/ directory)
 extension_sources = [
     os.path.join(os.path.dirname(__file__), 'csrc', 'crm_torch_binding.cpp'),
+    os.path.join(os.path.dirname(__file__), 'csrc', 'dynamics_op.cpp'),
 ]
 
 # Combine all sources

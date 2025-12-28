@@ -163,11 +163,17 @@ inline double get_scalar(const torch::Tensor& tensor, int64_t batch_idx) {
     check_float64(tensor, "scalar tensor");
 
     if (tensor.dim() == 0) {
-        // Scalar tensor
+        // Scalar tensor (single value for all batch elements)
         return tensor.item<double>();
     } else if (tensor.dim() == 1) {
         // Batched scalar (B,)
-        return tensor[batch_idx].item<double>();
+        if (tensor.size(0) == 1) {
+            // Single value broadcasted to all batch elements
+            return tensor[0].item<double>();
+        } else {
+            // Per-batch values
+            return tensor[batch_idx].item<double>();
+        }
     } else {
         throw std::runtime_error("Scalar tensor must be 0D or 1D, got " +
                                std::to_string(tensor.dim()) + "D");

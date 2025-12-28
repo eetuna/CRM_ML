@@ -2,43 +2,52 @@
  * crm_torch_binding.cpp
  *
  * PyTorch C++ extension entry point for CRM physics simulation.
- * Provides batched, differentiable dynamics stepping with OpenMP parallelization.
+ * Provides batched, differentiable dynamics stepping.
+ *
+ * Phase 2A: Uses Python binding calls (crm_python module).
  */
 
 #include <torch/extension.h>
 #include <pybind11/pybind11.h>
 
 #include "torch_utils.hpp"
+#include "dynamics_op.hpp"
 
 namespace py = pybind11;
 
-namespace crm_torch {
-
-/**
- * Placeholder forward function for Phase 1 build verification.
- * Will be implemented in Phase 2.
- */
-torch::Tensor dynamics_forward_placeholder(
-    torch::Tensor currents,
-    torch::Tensor insertion_length
-) {
-    // Validate inputs
-    validate_tensor(currents, "currents");
-    int64_t batch_size = get_batch_size(currents);
-
-    // Return dummy output for now (will be replaced in Phase 2)
-    return allocate_output(batch_size, 6);  // 6D output for single actuator
-}
-
-} // namespace crm_torch
-
 // PyBind11 module definition
 PYBIND11_MODULE(_crm_torch_ext, m) {
-    m.doc() = "CRM physics C++ extension for PyTorch";
+    m.doc() = "CRM physics C++ extension for PyTorch (Phase 2A)";
 
-    m.def("dynamics_forward_placeholder",
-          &crm_torch::dynamics_forward_placeholder,
+    m.def("dynamics_forward",
+          &crm_torch::dynamics_forward,
           py::arg("currents"),
           py::arg("insertion_length"),
-          "Placeholder forward dynamics (Phase 1 skeleton)");
+          py::arg("seed_v"),
+          py::arg("seed_w"),
+          py::arg("seed_p"),
+          py::arg("seed_R"),
+          py::arg("seed_xf"),
+          py::arg("seed_mL"),
+          py::arg("seed_nL"),
+          py::arg("param_file"),
+          py::arg("config_file"),
+          "Batched forward dynamics stepping");
+
+    m.def("dynamics_backward",
+          &crm_torch::dynamics_backward,
+          py::arg("grad_output"),
+          py::arg("currents"),
+          py::arg("insertion_length"),
+          py::arg("seed_v"),
+          py::arg("seed_w"),
+          py::arg("seed_p"),
+          py::arg("seed_R"),
+          py::arg("seed_xf"),
+          py::arg("seed_mL"),
+          py::arg("seed_nL"),
+          py::arg("param_file"),
+          py::arg("config_file"),
+          py::arg("eps_seed") = 1e-4,
+          "Compute gradients via implicit differentiation");
 }
