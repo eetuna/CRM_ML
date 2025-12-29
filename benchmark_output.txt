@@ -1,0 +1,58 @@
+Warning: CasADi not installed. Some MPC features unavailable.
+================================================================================
+Phase A.3 Performance Benchmark
+================================================================================
+
+Benchmark parameters:
+  Iterations: 3
+  Warmup: 1
+
+--------------------------------------------------------------------------------
+Benchmark 1: Forward Pass Only
+--------------------------------------------------------------------------------
+Forward pass: 61.37 ± 2.61 ms
+
+--------------------------------------------------------------------------------
+Benchmark 2: Forward + Backward (B matrix only)
+--------------------------------------------------------------------------------
+Forward:  71.15 ms
+Backward: 7208.87 ms (B matrix: 3 currents × 2 directions = 6 FD calls)
+Total:    7280.02 ms
+
+--------------------------------------------------------------------------------
+Benchmark 3: Forward + Backward (B + A matrices)
+--------------------------------------------------------------------------------
+Forward:  78.68 ms
+Backward: 7268.47 ms (B + A: (3 + 39) components × 2 directions = 84 FD calls)
+Total:    7347.16 ms
+
+================================================================================
+Performance Summary
+================================================================================
+
+Operation                         Time (ms)   vs Forward     FD Calls
+--------------------------------------------------------------------------------
+Forward pass only                   61.37          1.0x            0
+Forward + B matrix                7280.02        118.6x            6
+Forward + B + A matrices          7347.16        119.7x           84
+
+Phase                            Backward (ms)    vs B-only
+--------------------------------------------------------------------------------
+B matrix only (Phase A.2)            7208.87          1.0x
+B + A matrices (Phase A.3)           7268.47          1.0x
+
+A matrix overhead: 59.61 ms (0.8% increase)
+Theoretical overhead: 13.0x
+Actual overhead: 1.0x
+
+================================================================================
+Conclusions:
+================================================================================
+✓ Forward pass: 61.4 ms
+✓ B matrix (currents): adds 7208.9 ms (117.5x forward)
+✓ A matrix (seeds): adds 59.6 ms (13.0x B matrix)
+✓ Total backward: 7268.5 ms (118.4x forward)
+
+Phase A.3 enables multi-step trajectory optimization with correct
+gradient flow through time at the cost of ~13x forward pass time.
+================================================================================

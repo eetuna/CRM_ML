@@ -363,71 +363,207 @@ dynamics_backward(
                 grad_curr_ptr[i * 3 + j] = grad_u_j;
             }
 
-            // Phase 3B: Compute seed gradients from A Jacobian
-            // TODO PHASE A.2: A matrix also needs FD treatment for full correctness
-            // For now, set seed gradients to zero (only currents get correct gradients)
-            // This allows single-step optimization to work correctly
+            // PHASE A.3: Compute A matrix via finite differences for seed gradients
+            // This enables multi-step trajectory optimization by allowing gradients to flow through time
+            // A matrix has shape (6, num_seed_components) where num_seed_components = 39 for num_sets=1
 
-            // Zero out all seed gradients (will be fixed in future when A matrix FD is implemented)
+            // Total seed components: v(3) + w(3) + p(3) + R(9) + xf(15) + mL(3) + nL(3) = 39
             int64_t num_seed_components = num_sets * 3 + num_sets * 3 + num_sets * 3 +
                                          num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
 
-            // NOTE: Skipping A matrix extraction since we're using FD for B only
-            // A matrix would need similar FD treatment for multi-step trajectories
+            // Allocate A matrix (6 rows x num_seed_components cols)
+            py::array_t<double> A_np(std::vector<py::ssize_t>{6, num_seed_components});
+            auto A_buf = A_np.mutable_unchecked<2>();
 
-            // Zero out seed gradients (A matrix FD not yet implemented)
-            // This means single-step optimization works, but multi-step trajectories
-            // won't have gradients flowing through seed states
-
-            // 1. grad_seed_v (num_sets * 3 components) - set to zero
-            for (int64_t j = 0; j < num_sets; ++j) {
-                for (int64_t k = 0; k < 3; ++k) {
-                    grad_seed_v.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
+            // Initialize to zero
+            for (int j = 0; j < 6; ++j) {
+                for (int k = 0; k < num_seed_components; ++k) {
+                    A_buf(j, k) = 0.0;
                 }
             }
 
-            // 2. grad_seed_w (num_sets * 3 components) - set to zero
+            // Helper lambda to compute FD for a single seed component
+            auto compute_seed_gradient = [&](int component_idx,
+                                             py::array_t<double>& seed_array,
+                                             int flat_idx) {
+                // Get original value
+                double* seed_data = seed_array.mutable_data();
+                double original_value = seed_data[flat_idx];
+
+                // Perturb in positive direction
+                seed_data[flat_idx] = original_value + fd_eps;
+                py::dict result_plus = dyn.attr("step_from_seed")(
+                    curr_np, ins_i, v_np, w_np, p_np, R_np, xf_np,
+                    mL_np, nL_np, py::none()
+                ).cast<py::dict>();
+                py::array_t<double> pos_plus = result_plus["tip_position"].cast<py::array_t<double>>();
+                py::array_t<double> vel_plus = result_plus["tip_velocity"].cast<py::array_t<double>>();
+                auto pos_plus_buf = pos_plus.unchecked<1>();
+                auto vel_plus_buf = vel_plus.unchecked<1>();
+
+                // Perturb in negative direction
+                seed_data[flat_idx] = original_value - fd_eps;
+                py::dict result_minus = dyn.attr("step_from_seed")(
+                    curr_np, ins_i, v_np, w_np, p_np, R_np, xf_np,
+                    mL_np, nL_np, py::none()
+                ).cast<py::dict>();
+                py::array_t<double> pos_minus = result_minus["tip_position"].cast<py::array_t<double>>();
+                py::array_t<double> vel_minus = result_minus["tip_velocity"].cast<py::array_t<double>>();
+                auto pos_minus_buf = pos_minus.unchecked<1>();
+                auto vel_minus_buf = vel_minus.unchecked<1>();
+
+                // Restore original value
+                seed_data[flat_idx] = original_value;
+
+                // Compute central difference for this column
+                for (int k = 0; k < 3; ++k) {
+                    A_buf(k, component_idx) = (pos_plus_buf(k) - pos_minus_buf(k)) / (2.0 * fd_eps);
+                }
+                for (int k = 0; k < 3; ++k) {
+                    A_buf(3 + k, component_idx) = (vel_plus_buf(k) - vel_minus_buf(k)) / (2.0 * fd_eps);
+                }
+            };
+
+            // Compute A matrix columns via FD
+            int component_idx = 0;
+
+            // 1. grad_seed_v (num_sets * 3 components)
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    grad_seed_w.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
+                    compute_seed_gradient(component_idx++, v_np, j * 3 + k);
                 }
             }
 
-            // 3. grad_seed_p (num_sets * 3 components) - set to zero
+            // 2. grad_seed_w (num_sets * 3 components)
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    grad_seed_p.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
+                    compute_seed_gradient(component_idx++, w_np, j * 3 + k);
                 }
             }
 
-            // 4. grad_seed_R (num_sets * 9 components) - set to zero
+            // 3. grad_seed_p (num_sets * 3 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    compute_seed_gradient(component_idx++, p_np, j * 3 + k);
+                }
+            }
+
+            // 4. grad_seed_R (num_sets * 9 components)
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 9; ++k) {
-                    grad_seed_R.data_ptr<double>()[i * num_sets * 9 + j * 9 + k] = 0.0;
+                    compute_seed_gradient(component_idx++, R_np, j * 9 + k);
                 }
             }
 
-            // 5. grad_seed_xf (15 components) - set to zero
+            // 5. grad_seed_xf (15 components)
             for (int64_t k = 0; k < 15; ++k) {
-                grad_seed_xf.data_ptr<double>()[i * 15 + k] = 0.0;
+                compute_seed_gradient(component_idx++, xf_np, k);
             }
 
-            // 6. grad_seed_mL (num_sets * 3 components) - set to zero
+            // 6. grad_seed_mL (num_sets * 3 components)
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    grad_seed_mL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
+                    compute_seed_gradient(component_idx++, mL_np, j * 3 + k);
                 }
             }
 
-            // 7. grad_seed_nL (num_sets * 3 components) - set to zero
+            // 7. grad_seed_nL (num_sets * 3 components)
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    grad_seed_nL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
+                    compute_seed_gradient(component_idx++, nL_np, j * 3 + k);
                 }
             }
 
-            // NOTE: All seed gradients are zero until A matrix FD is implemented
-            // This is acceptable for single-step optimization (only current gradients matter)
+            // A matrix is now computed via FD - gradient chain for multi-step trajectories is complete!
+
+            // Compute seed gradients = A^T @ grad_y (vector-Jacobian product)
+            // A is (6, num_seed_components), grad_y is (6,) -> result is (num_seed_components,)
+
+            component_idx = 0;
+
+            // 1. grad_seed_v
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_val = 0.0;
+                    for (int m = 0; m < 6; ++m) {
+                        grad_val += A_buf(m, component_idx) * grad_y[m];
+                    }
+                    grad_seed_v.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_val;
+                    component_idx++;
+                }
+            }
+
+            // 2. grad_seed_w
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_val = 0.0;
+                    for (int m = 0; m < 6; ++m) {
+                        grad_val += A_buf(m, component_idx) * grad_y[m];
+                    }
+                    grad_seed_w.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_val;
+                    component_idx++;
+                }
+            }
+
+            // 3. grad_seed_p
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_val = 0.0;
+                    for (int m = 0; m < 6; ++m) {
+                        grad_val += A_buf(m, component_idx) * grad_y[m];
+                    }
+                    grad_seed_p.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_val;
+                    component_idx++;
+                }
+            }
+
+            // 4. grad_seed_R
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 9; ++k) {
+                    double grad_val = 0.0;
+                    for (int m = 0; m < 6; ++m) {
+                        grad_val += A_buf(m, component_idx) * grad_y[m];
+                    }
+                    grad_seed_R.data_ptr<double>()[i * num_sets * 9 + j * 9 + k] = grad_val;
+                    component_idx++;
+                }
+            }
+
+            // 5. grad_seed_xf
+            for (int64_t k = 0; k < 15; ++k) {
+                double grad_val = 0.0;
+                for (int m = 0; m < 6; ++m) {
+                    grad_val += A_buf(m, component_idx) * grad_y[m];
+                }
+                grad_seed_xf.data_ptr<double>()[i * 15 + k] = grad_val;
+                component_idx++;
+            }
+
+            // 6. grad_seed_mL
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_val = 0.0;
+                    for (int m = 0; m < 6; ++m) {
+                        grad_val += A_buf(m, component_idx) * grad_y[m];
+                    }
+                    grad_seed_mL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_val;
+                    component_idx++;
+                }
+            }
+
+            // 7. grad_seed_nL
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_val = 0.0;
+                    for (int m = 0; m < 6; ++m) {
+                        grad_val += A_buf(m, component_idx) * grad_y[m];
+                    }
+                    grad_seed_nL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_val;
+                    component_idx++;
+                }
+            }
+
+            // All seed gradients now computed via FD - multi-step trajectories fully supported!
 
         } catch (const std::exception& e) {
             throw std::runtime_error("Batch element " + std::to_string(i) +
