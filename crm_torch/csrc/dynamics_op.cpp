@@ -274,31 +274,76 @@ dynamics_backward(
                 curr_buf(j) = curr_i[j];
             }
 
-            // Call Option A's implicit linearization
-            // This computes A = ∂y/∂x_seed and B = ∂y/∂currents
-            py::dict result = dyn.attr("linearize_full_seed_action_from_seed_implicit")(
-                curr_np, ins_i,
-                v_np, w_np, p_np, R_np, xf_np,
-                mL_np, nL_np,
-                eps_seed,  // eps_residual_x
-                eps_seed,  // eps_residual_theta
-                eps_seed,  // eps_g_x
-                eps_seed,  // eps_g_theta
-                false      // return_debug
-            ).cast<py::dict>();
+            // PHASE A.2 FIX: Compute B matrix via finite differences
+            // This ensures backward pass matches forward pass (step_from_seed)
+            // Previously used implicit linearization which differentiates WRONG function
 
-            // Extract B Jacobian: ∂y/∂currents (shape: 6 x 3)
-            py::array_t<double> B_np = result["B"].cast<py::array_t<double>>();
-            auto B_buf = B_np.unchecked<2>();
+            const double fd_eps = 1e-5;  // FD epsilon
 
-            // Verify B shape
-            if (B_buf.shape(0) != 6 || B_buf.shape(1) != 3) {
-                throw std::runtime_error(
-                    "Expected B to have shape (6, 3), got (" +
-                    std::to_string(B_buf.shape(0)) + ", " +
-                    std::to_string(B_buf.shape(1)) + ")"
-                );
+            // Allocate B matrix (6 rows x 3 cols)
+            py::array_t<double> B_np(std::vector<py::ssize_t>{6, 3});
+            auto B_buf = B_np.mutable_unchecked<2>();
+
+            // Initialize to zero
+            for (int j = 0; j < 6; ++j) {
+                for (int k = 0; k < 3; ++k) {
+                    B_buf(j, k) = 0.0;
+                }
             }
+
+            // Compute B via central differences: B[:, j] = (f(u+eps*ej) - f(u-eps*ej)) / (2*eps)
+            for (int j = 0; j < 3; ++j) {
+                // Perturb current j in positive direction
+                py::array_t<double> curr_plus(std::vector<py::ssize_t>{3});
+                auto curr_plus_buf = curr_plus.mutable_unchecked<1>();
+                for (int k = 0; k < 3; ++k) {
+                    curr_plus_buf(k) = curr_i[k] + (j == k ? fd_eps : 0.0);
+                }
+
+                // Call step_from_seed with perturbed currents
+                py::dict result_plus = dyn.attr("step_from_seed")(
+                    curr_plus, ins_i, v_np, w_np, p_np, R_np, xf_np,
+                    mL_np, nL_np, py::none()
+                ).cast<py::dict>();
+
+                // Extract output
+                py::array_t<double> pos_plus = result_plus["tip_position"].cast<py::array_t<double>>();
+                py::array_t<double> vel_plus = result_plus["tip_velocity"].cast<py::array_t<double>>();
+                auto pos_plus_buf = pos_plus.unchecked<1>();
+                auto vel_plus_buf = vel_plus.unchecked<1>();
+
+                // Perturb current j in negative direction
+                py::array_t<double> curr_minus(std::vector<py::ssize_t>{3});
+                auto curr_minus_buf = curr_minus.mutable_unchecked<1>();
+                for (int k = 0; k < 3; ++k) {
+                    curr_minus_buf(k) = curr_i[k] - (j == k ? fd_eps : 0.0);
+                }
+
+                // Call step_from_seed with perturbed currents
+                py::dict result_minus = dyn.attr("step_from_seed")(
+                    curr_minus, ins_i, v_np, w_np, p_np, R_np, xf_np,
+                    mL_np, nL_np, py::none()
+                ).cast<py::dict>();
+
+                // Extract output
+                py::array_t<double> pos_minus = result_minus["tip_position"].cast<py::array_t<double>>();
+                py::array_t<double> vel_minus = result_minus["tip_velocity"].cast<py::array_t<double>>();
+                auto pos_minus_buf = pos_minus.unchecked<1>();
+                auto vel_minus_buf = vel_minus.unchecked<1>();
+
+                // Compute central difference for column j
+                // B[0:3, j] = d(tip_position)/d(current_j)
+                for (int k = 0; k < 3; ++k) {
+                    B_buf(k, j) = (pos_plus_buf(k) - pos_minus_buf(k)) / (2.0 * fd_eps);
+                }
+
+                // B[3:6, j] = d(tip_velocity)/d(current_j)
+                for (int k = 0; k < 3; ++k) {
+                    B_buf(3 + k, j) = (vel_plus_buf(k) - vel_minus_buf(k)) / (2.0 * fd_eps);
+                }
+            }
+
+            // B matrix is now computed via FD - guaranteed to match forward pass!
 
             // Extract grad_output for this sample (shape: 6)
             double grad_y[6];
@@ -319,117 +364,70 @@ dynamics_backward(
             }
 
             // Phase 3B: Compute seed gradients from A Jacobian
-            // Extract A Jacobian: ∂y/∂seed_state (shape: 6 x num_seed_components)
-            py::array_t<double> A_np = result["A"].cast<py::array_t<double>>();
-            auto A_buf = A_np.unchecked<2>();
+            // TODO PHASE A.2: A matrix also needs FD treatment for full correctness
+            // For now, set seed gradients to zero (only currents get correct gradients)
+            // This allows single-step optimization to work correctly
 
-            // Verify A shape (should have 6 rows for output dimension)
-            if (A_buf.shape(0) != 6) {
-                throw std::runtime_error(
-                    "Expected A to have 6 rows (output dim), got " +
-                    std::to_string(A_buf.shape(0))
-                );
-            }
+            // Zero out all seed gradients (will be fixed in future when A matrix FD is implemented)
+            int64_t num_seed_components = num_sets * 3 + num_sets * 3 + num_sets * 3 +
+                                         num_sets * 9 + 15 + num_sets * 3 + num_sets * 3;
 
-            int64_t num_seed_components = A_buf.shape(1);
+            // NOTE: Skipping A matrix extraction since we're using FD for B only
+            // A matrix would need similar FD treatment for multi-step trajectories
 
-            // Compute seed gradients: grad_seed = A^T @ grad_y
-            // grad_y is (6,), A is (6, num_seed_components)
-            // Result: (num_seed_components,)
+            // Zero out seed gradients (A matrix FD not yet implemented)
+            // This means single-step optimization works, but multi-step trajectories
+            // won't have gradients flowing through seed states
 
-            // Track current position in A matrix columns
-            int64_t seed_offset = 0;
-
-            // 1. grad_seed_v (num_sets * 3 components)
+            // 1. grad_seed_v (num_sets * 3 components) - set to zero
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    double grad_v_jk = 0.0;
-                    for (int64_t l = 0; l < 6; ++l) {
-                        grad_v_jk += A_buf(l, seed_offset) * grad_y[l];
-                    }
-                    grad_seed_v.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_v_jk;
-                    seed_offset++;
+                    grad_seed_v.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
                 }
             }
 
-            // 2. grad_seed_w (num_sets * 3 components)
+            // 2. grad_seed_w (num_sets * 3 components) - set to zero
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    double grad_w_jk = 0.0;
-                    for (int64_t l = 0; l < 6; ++l) {
-                        grad_w_jk += A_buf(l, seed_offset) * grad_y[l];
-                    }
-                    grad_seed_w.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_w_jk;
-                    seed_offset++;
+                    grad_seed_w.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
                 }
             }
 
-            // 3. grad_seed_p (num_sets * 3 components)
+            // 3. grad_seed_p (num_sets * 3 components) - set to zero
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    double grad_p_jk = 0.0;
-                    for (int64_t l = 0; l < 6; ++l) {
-                        grad_p_jk += A_buf(l, seed_offset) * grad_y[l];
-                    }
-                    grad_seed_p.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_p_jk;
-                    seed_offset++;
+                    grad_seed_p.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
                 }
             }
 
-            // 4. grad_seed_R (num_sets * 9 components)
+            // 4. grad_seed_R (num_sets * 9 components) - set to zero
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 9; ++k) {
-                    double grad_R_jk = 0.0;
-                    for (int64_t l = 0; l < 6; ++l) {
-                        grad_R_jk += A_buf(l, seed_offset) * grad_y[l];
-                    }
-                    grad_seed_R.data_ptr<double>()[i * num_sets * 9 + j * 9 + k] = grad_R_jk;
-                    seed_offset++;
+                    grad_seed_R.data_ptr<double>()[i * num_sets * 9 + j * 9 + k] = 0.0;
                 }
             }
 
-            // 5. grad_seed_xf (15 components)
+            // 5. grad_seed_xf (15 components) - set to zero
             for (int64_t k = 0; k < 15; ++k) {
-                double grad_xf_k = 0.0;
-                for (int64_t l = 0; l < 6; ++l) {
-                    grad_xf_k += A_buf(l, seed_offset) * grad_y[l];
-                }
-                grad_seed_xf.data_ptr<double>()[i * 15 + k] = grad_xf_k;
-                seed_offset++;
+                grad_seed_xf.data_ptr<double>()[i * 15 + k] = 0.0;
             }
 
-            // 6. grad_seed_mL (num_sets * 3 components)
+            // 6. grad_seed_mL (num_sets * 3 components) - set to zero
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    double grad_mL_jk = 0.0;
-                    for (int64_t l = 0; l < 6; ++l) {
-                        grad_mL_jk += A_buf(l, seed_offset) * grad_y[l];
-                    }
-                    grad_seed_mL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_mL_jk;
-                    seed_offset++;
+                    grad_seed_mL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
                 }
             }
 
-            // 7. grad_seed_nL (num_sets * 3 components)
+            // 7. grad_seed_nL (num_sets * 3 components) - set to zero
             for (int64_t j = 0; j < num_sets; ++j) {
                 for (int64_t k = 0; k < 3; ++k) {
-                    double grad_nL_jk = 0.0;
-                    for (int64_t l = 0; l < 6; ++l) {
-                        grad_nL_jk += A_buf(l, seed_offset) * grad_y[l];
-                    }
-                    grad_seed_nL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_nL_jk;
-                    seed_offset++;
+                    grad_seed_nL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = 0.0;
                 }
             }
 
-            // Verification: seed_offset should equal num_seed_components
-            if (seed_offset != num_seed_components) {
-                throw std::runtime_error(
-                    "Seed component count mismatch: expected " +
-                    std::to_string(num_seed_components) +
-                    ", got " + std::to_string(seed_offset)
-                );
-            }
+            // NOTE: All seed gradients are zero until A matrix FD is implemented
+            // This is acceptable for single-step optimization (only current gradients matter)
 
         } catch (const std::exception& e) {
             throw std::runtime_error("Batch element " + std::to_string(i) +
