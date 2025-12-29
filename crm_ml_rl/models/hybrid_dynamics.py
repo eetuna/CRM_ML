@@ -48,6 +48,7 @@ class HybridDynamicsConfig:
     num_ensemble: int = 5
     learnable_blend: bool = False
     use_torch_physics: bool = False
+    use_option_c: bool = True  # Use Option C (recommended, validated) instead of torch_physics
 
     def __post_init__(self):
         if self.hidden_dims is None:
@@ -108,7 +109,9 @@ class HybridDynamicsModel(nn.Module):
 
         # Optional: differentiable (torch) physics helpers for planning/MPC.
         self._torch_physics = None
+        self._option_c = None
         self._cpp_dyn = None
+
         if self.simulator.is_using_cpp:
             try:
                 # Private member, but stable within this repo.
@@ -116,21 +119,47 @@ class HybridDynamicsModel(nn.Module):
             except Exception:
                 self._cpp_dyn = None
 
-            try:
-                from ..wrappers.torch_physics import TorchCRMPhysics
-                if TorchCRMPhysics is not None:
-                    self._torch_physics = TorchCRMPhysics(
+            # Option C (recommended): Validated differentiable physics via crm_torch
+            if self.config.use_option_c:
+                try:
+                    from ..wrappers.option_c_physics import OptionCPhysics, OptionCConfig
+                    option_c_config = OptionCConfig(
                         param_file=self.config.param_file or "data/catheter_params/CatheterParameterSet_1_dyn.txt",
                         config_file=self.config.config_file or "data/catheter_params/CatheterSpatialConfiguration_1.txt",
-                        device=str(self.device),
+                        insertion_length=self.config.insertion_length,
+                        dt=self.config.dt,
+                        damping=self.config.damping
                     )
-            except Exception:
-                self._torch_physics = None
+                    self._option_c = OptionCPhysics(option_c_config, device=str(self.device))
+                except Exception as e:
+                    print(f"Warning: Could not initialize Option C: {e}")
+                    self._option_c = None
+
+            # Legacy torch_physics (fallback if Option C not available)
+            if not self.config.use_option_c or self._option_c is None:
+                try:
+                    from ..wrappers.torch_physics import TorchCRMPhysics
+                    if TorchCRMPhysics is not None:
+                        self._torch_physics = TorchCRMPhysics(
+                            param_file=self.config.param_file or "data/catheter_params/CatheterParameterSet_1_dyn.txt",
+                            config_file=self.config.config_file or "data/catheter_params/CatheterSpatialConfiguration_1.txt",
+                            device=str(self.device),
+                        )
+                except Exception:
+                    self._torch_physics = None
+
+        # Use Option C if available, otherwise fall back to torch_physics
+        self.use_option_c = (
+            bool(self.config.use_option_c)
+            and (self._cpp_dyn is not None)
+            and (self._option_c is not None)
+        )
 
         self.use_torch_physics = (
             bool(self.config.use_torch_physics)
             and (self._cpp_dyn is not None)
             and (self._torch_physics is not None)
+            and not self.use_option_c  # Don't use both
         )
 
         # Create residual network
@@ -283,8 +312,13 @@ class HybridDynamicsModel(nn.Module):
         if insertion_length is None:
             insertion_length = self.config.insertion_length
 
+        # Use Option C if available (recommended, validated)
+        if self.use_option_c and self._option_c is not None:
+            return self._option_c.step_differentiable(currents)
+
+        # Fallback to legacy torch_physics
         if self._cpp_dyn is None or self._torch_physics is None:
-            raise RuntimeError("Torch physics requires C++ bindings and TorchCRMPhysics.")
+            raise RuntimeError("Torch physics requires C++ bindings and TorchCRMPhysics/OptionC.")
 
         seed = self._cpp_dyn.get_seed_state()
         seed_v = torch.tensor(seed["v"], dtype=currents.dtype, device=currents.device).unsqueeze(0)
@@ -325,7 +359,7 @@ class HybridDynamicsModel(nn.Module):
         state_np = state.detach().cpu().numpy()
         action_np = action.detach().cpu().numpy()
 
-        if self.use_torch_physics:
+        if self.use_option_c or self.use_torch_physics:
             # Differentiable w.r.t. `action` only. Seeds are prepared via the C++ wrapper.
             action_device = action.to(self.device)
             next_states = []
@@ -335,24 +369,29 @@ class HybridDynamicsModel(nn.Module):
                 self.simulator.state.velocity = state_np[i, 3:].copy()
                 self.simulator.wrapper.initialize_dynamics(action_np[i], float(insertion_length))
 
-                seed = self._cpp_dyn.get_seed_state()
-                seed_v = torch.tensor(seed["v"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
-                seed_w = torch.tensor(seed["w"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
-                seed_p = torch.tensor(seed["p"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
-                seed_R = torch.tensor(seed["R"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
-                seed_xf = torch.tensor(seed["xf"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                if self.use_option_c:
+                    # Use Option C (recommended, validated)
+                    nxt = self._option_c.step_differentiable(action_device[i : i + 1])
+                else:
+                    # Use legacy torch_physics
+                    seed = self._cpp_dyn.get_seed_state()
+                    seed_v = torch.tensor(seed["v"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                    seed_w = torch.tensor(seed["w"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                    seed_p = torch.tensor(seed["p"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                    seed_R = torch.tensor(seed["R"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
+                    seed_xf = torch.tensor(seed["xf"], dtype=action_device.dtype, device=self.device).unsqueeze(0)
 
-                ins = torch.full((1,), float(insertion_length), dtype=action_device.dtype, device=self.device)
-                nxt = self._torch_physics.dyn_step(
-                    action_device[i : i + 1],
-                    ins,
-                    seed_v,
-                    seed_w,
-                    seed_p,
-                    seed_R,
-                    seed_xf,
-                    eps_u=1e-4,
-                )
+                    ins = torch.full((1,), float(insertion_length), dtype=action_device.dtype, device=self.device)
+                    nxt = self._torch_physics.dyn_step(
+                        action_device[i : i + 1],
+                        ins,
+                        seed_v,
+                        seed_w,
+                        seed_p,
+                        seed_R,
+                        seed_xf,
+                        eps_u=1e-4,
+                    )
                 next_states.append(nxt)
 
             physics_pred = torch.cat(next_states, dim=0).to(dtype=torch.float32, device=self.device)

@@ -8,6 +8,7 @@ Agents:
     - DynaAgent: Dyna-style learning with real + imagined experience
     - MBPOAgent: Model-Based Policy Optimization with short-horizon rollouts
     - MPCAgent: Model Predictive Control using learned dynamics
+    - DifferentiableMPCAgent: MPC with gradient-based planning via differentiable physics
 """
 
 import torch
@@ -894,6 +895,109 @@ class MPCAgent:
 
     def step(self, observation: np.ndarray) -> Tuple[np.ndarray, Dict]:
         """Take a step (for compatibility with other agents)."""
+        action = self.predict(observation)
+        return action, {}
+
+
+class DifferentiableMPCAgent:
+    """
+    MPC agent using differentiable physics for gradient-based planning.
+
+    Unlike the sampling-based MPCAgent, this agent uses exact gradients from
+    the differentiable physics model to optimize action sequences. This enables
+    more efficient planning by directly following gradients rather than sampling.
+
+    Requires DifferentiableCatheterEnv which provides gradient-based MPC planning
+    via backpropagation through the physics model.
+    """
+
+    def __init__(
+        self,
+        env,
+        horizon: int = 5,
+        num_iterations: int = 20,
+        learning_rate: float = 0.1
+    ):
+        """
+        Initialize DifferentiableMPCAgent.
+
+        Args:
+            env: DifferentiableCatheterEnv instance
+            horizon: Planning horizon (number of timesteps to optimize)
+            num_iterations: Number of gradient descent iterations
+            learning_rate: Learning rate for gradient descent
+
+        Raises:
+            TypeError: If env is not a DifferentiableCatheterEnv
+        """
+        from ..envs.differentiable_catheter_env import DifferentiableCatheterEnv
+
+        if not isinstance(env, DifferentiableCatheterEnv):
+            raise TypeError(
+                f"env must be DifferentiableCatheterEnv, got {type(env).__name__}"
+            )
+
+        self.env = env
+        self.horizon = horizon
+        self.num_iterations = num_iterations
+        self.learning_rate = learning_rate
+
+    def plan(self, target_position: np.ndarray) -> np.ndarray:
+        """
+        Plan optimal action sequence using physics gradients.
+
+        Uses gradient descent through the differentiable physics model to
+        optimize an action sequence that reaches the target position.
+
+        Args:
+            target_position: Target position to reach (shape: [3])
+
+        Returns:
+            Optimal action sequence (shape: [horizon, action_dim])
+        """
+        return self.env.plan_mpc(
+            target_position,
+            horizon=self.horizon,
+            num_iterations=self.num_iterations,
+            learning_rate=self.learning_rate
+        )
+
+    def predict(self, observation: np.ndarray, deterministic: bool = True) -> np.ndarray:
+        """
+        Predict action using gradient-based MPC.
+
+        Extracts the target from the observation and plans using gradients.
+        Returns only the first action from the planned sequence (receding horizon).
+
+        Args:
+            observation: Current observation (must include target position)
+            deterministic: Ignored (gradient-based planning is deterministic)
+
+        Returns:
+            First action from optimal sequence
+        """
+        # Extract target from observation (assumes target at indices 6-8)
+        if len(observation) >= 9:
+            target = observation[6:9]
+        else:
+            target = np.zeros(3)
+
+        # Plan action sequence
+        action_sequence = self.plan(target)
+
+        # Return first action (receding horizon)
+        return action_sequence[0]
+
+    def step(self, observation: np.ndarray) -> Tuple[np.ndarray, Dict]:
+        """
+        Take a step (for compatibility with other agents).
+
+        Args:
+            observation: Current observation
+
+        Returns:
+            Tuple of (action, info_dict)
+        """
         action = self.predict(observation)
         return action, {}
 

@@ -318,8 +318,118 @@ dynamics_backward(
                 grad_curr_ptr[i * 3 + j] = grad_u_j;
             }
 
-            // Phase 3B TODO: Compute seed gradients from A Jacobian
-            // For now, seed gradients remain zero (initialized above)
+            // Phase 3B: Compute seed gradients from A Jacobian
+            // Extract A Jacobian: ∂y/∂seed_state (shape: 6 x num_seed_components)
+            py::array_t<double> A_np = result["A"].cast<py::array_t<double>>();
+            auto A_buf = A_np.unchecked<2>();
+
+            // Verify A shape (should have 6 rows for output dimension)
+            if (A_buf.shape(0) != 6) {
+                throw std::runtime_error(
+                    "Expected A to have 6 rows (output dim), got " +
+                    std::to_string(A_buf.shape(0))
+                );
+            }
+
+            int64_t num_seed_components = A_buf.shape(1);
+
+            // Compute seed gradients: grad_seed = A^T @ grad_y
+            // grad_y is (6,), A is (6, num_seed_components)
+            // Result: (num_seed_components,)
+
+            // Track current position in A matrix columns
+            int64_t seed_offset = 0;
+
+            // 1. grad_seed_v (num_sets * 3 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_v_jk = 0.0;
+                    for (int64_t l = 0; l < 6; ++l) {
+                        grad_v_jk += A_buf(l, seed_offset) * grad_y[l];
+                    }
+                    grad_seed_v.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_v_jk;
+                    seed_offset++;
+                }
+            }
+
+            // 2. grad_seed_w (num_sets * 3 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_w_jk = 0.0;
+                    for (int64_t l = 0; l < 6; ++l) {
+                        grad_w_jk += A_buf(l, seed_offset) * grad_y[l];
+                    }
+                    grad_seed_w.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_w_jk;
+                    seed_offset++;
+                }
+            }
+
+            // 3. grad_seed_p (num_sets * 3 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_p_jk = 0.0;
+                    for (int64_t l = 0; l < 6; ++l) {
+                        grad_p_jk += A_buf(l, seed_offset) * grad_y[l];
+                    }
+                    grad_seed_p.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_p_jk;
+                    seed_offset++;
+                }
+            }
+
+            // 4. grad_seed_R (num_sets * 9 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 9; ++k) {
+                    double grad_R_jk = 0.0;
+                    for (int64_t l = 0; l < 6; ++l) {
+                        grad_R_jk += A_buf(l, seed_offset) * grad_y[l];
+                    }
+                    grad_seed_R.data_ptr<double>()[i * num_sets * 9 + j * 9 + k] = grad_R_jk;
+                    seed_offset++;
+                }
+            }
+
+            // 5. grad_seed_xf (15 components)
+            for (int64_t k = 0; k < 15; ++k) {
+                double grad_xf_k = 0.0;
+                for (int64_t l = 0; l < 6; ++l) {
+                    grad_xf_k += A_buf(l, seed_offset) * grad_y[l];
+                }
+                grad_seed_xf.data_ptr<double>()[i * 15 + k] = grad_xf_k;
+                seed_offset++;
+            }
+
+            // 6. grad_seed_mL (num_sets * 3 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_mL_jk = 0.0;
+                    for (int64_t l = 0; l < 6; ++l) {
+                        grad_mL_jk += A_buf(l, seed_offset) * grad_y[l];
+                    }
+                    grad_seed_mL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_mL_jk;
+                    seed_offset++;
+                }
+            }
+
+            // 7. grad_seed_nL (num_sets * 3 components)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    double grad_nL_jk = 0.0;
+                    for (int64_t l = 0; l < 6; ++l) {
+                        grad_nL_jk += A_buf(l, seed_offset) * grad_y[l];
+                    }
+                    grad_seed_nL.data_ptr<double>()[i * num_sets * 3 + j * 3 + k] = grad_nL_jk;
+                    seed_offset++;
+                }
+            }
+
+            // Verification: seed_offset should equal num_seed_components
+            if (seed_offset != num_seed_components) {
+                throw std::runtime_error(
+                    "Seed component count mismatch: expected " +
+                    std::to_string(num_seed_components) +
+                    ", got " + std::to_string(seed_offset)
+                );
+            }
 
         } catch (const std::exception& e) {
             throw std::runtime_error("Batch element " + std::to_string(i) +
