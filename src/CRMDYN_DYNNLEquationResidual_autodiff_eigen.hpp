@@ -24,7 +24,7 @@ inline constexpr double kEps = 1.0e-12;
 // Phase 3.4: Adaptive stepping thresholds for RK4 integrator
 // Threshold: 1000 rad/s² (2.5x above critical acceleration for typical actuator inertia ~2.4e-4)
 inline constexpr double kAngularAccelThreshold = 1000.0;  // rad/s²
-inline constexpr int kMaxSubdivisionLevels = 4;           // 2^4 = 16x refinement max
+inline constexpr int kMaxSubdivisionLevels = 8;           // 2^8 = 256x refinement max
 
 template <typename Scalar>
 using Vec3 = Eigen::Matrix<Scalar, 3, 1>;

@@ -163,52 +163,42 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
             seed_dim = int(num_sets * 3 + num_sets * 3 + num_sets * 3 + num_sets * 9 + 15 + num_sets * 3 + num_sets * 3)
             A_all = np.zeros((batch, output_dim, seed_dim), dtype=np.float64)
 
+        # OPTION A FIX: Compute B and A matrices via finite differences
+        # This matches the approach used in Option C (crm_torch/csrc/dynamics_op.cpp)
+        # Replaces the broken linearize_full_seed_action_from_seed_implicit/explicit methods
+
+        fd_eps = 1e-5  # FD epsilon for both current and seed perturbations
+
         for i in range(batch):
-            if need_seed_jac:
-                method = os.environ.get("CRM_DYN_LINEARIZATION_METHOD", "").strip().lower()
-                if method == "implicit":
-                    out = dyn.linearize_full_seed_action_from_seed_implicit(
-                        currents_np[i],
-                        float(ins_np[i]),
-                        v_np[i],
-                        w_np[i],
-                        p_np[i],
-                        R_np[i],
-                        xf_np[i],
-                        mL_np[i],
-                        nL_np[i],
-                        float(eps_seed),  # eps_residual_x
-                        float(eps_seed),  # eps_residual_theta
-                        float(eps_seed),  # eps_g_x
-                        float(eps_seed),  # eps_g_theta
-                    )
-                else:
-                    out = dyn.linearize_full_seed_action_from_seed(
-                        currents_np[i],
-                        float(ins_np[i]),
-                        v_np[i],
-                        w_np[i],
-                        p_np[i],
-                        R_np[i],
-                        xf_np[i],
-                        mL_np[i],
-                        nL_np[i],
-                        float(eps_u),
-                        float(eps_seed),
-                    )
-                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(output_dim)
-                B_np = np.asarray(out["B"], dtype=np.float64)
+            # Compute forward pass for nominal state
+            out = dyn.step_from_seed(
+                currents_np[i],
+                float(ins_np[i]),
+                v_np[i],
+                w_np[i],
+                p_np[i],
+                R_np[i],
+                xf_np[i],
+                mL_np[i],
+                nL_np[i],
+            )
 
-                # Phase 4 Task 4.3: Allocate B_all on first iteration based on actual shape
-                if B_all is None:
-                    control_dim = B_np.shape[1] if B_np.ndim == 2 else B_np.size // output_dim
-                    B_all = np.zeros((batch, output_dim, control_dim), dtype=np.float64)
+            # Extract next state: [tip_position(3), tip_velocity(3)]
+            tip_pos = np.asarray(out["tip_position"], dtype=np.float64).reshape(3)
+            tip_vel = np.asarray(out["tip_velocity"], dtype=np.float64).reshape(3)
+            next_states[i] = np.concatenate([tip_pos, tip_vel])
 
-                B_all[i] = B_np.reshape(output_dim, -1)
-                A_all[i] = np.asarray(out["A"], dtype=np.float64).reshape(output_dim, -1)
-            else:
-                out = dyn.linearize_action_from_seed(
-                    currents_np[i],
+            # Compute B matrix via finite differences: ∂output/∂currents
+            # B shape: (output_dim, 3) for currents only
+            # Note: insertion_length gradients not yet supported (would need column 4)
+            B_np = np.zeros((output_dim, 3), dtype=np.float64)
+
+            for j in range(3):  # For each current dimension
+                # Perturb current +eps
+                curr_plus = currents_np[i].copy()
+                curr_plus[j] += fd_eps
+                out_plus = dyn.step_from_seed(
+                    curr_plus,
                     float(ins_np[i]),
                     v_np[i],
                     w_np[i],
@@ -217,17 +207,123 @@ class CRMDynamicsStepFunction(torch.autograd.Function):
                     xf_np[i],
                     mL_np[i],
                     nL_np[i],
-                    float(eps_u),
                 )
-                next_states[i] = np.asarray(out["next_state"], dtype=np.float64).reshape(output_dim)
-                B_np = np.asarray(out["B"], dtype=np.float64)
+                pos_plus = np.asarray(out_plus["tip_position"], dtype=np.float64).reshape(3)
+                vel_plus = np.asarray(out_plus["tip_velocity"], dtype=np.float64).reshape(3)
+                y_plus = np.concatenate([pos_plus, vel_plus])
 
-                # Phase 4 Task 4.3: Allocate B_all on first iteration based on actual shape
-                if B_all is None:
-                    control_dim = B_np.shape[1] if B_np.ndim == 2 else B_np.size // output_dim
-                    B_all = np.zeros((batch, output_dim, control_dim), dtype=np.float64)
+                # Perturb current -eps
+                curr_minus = currents_np[i].copy()
+                curr_minus[j] -= fd_eps
+                out_minus = dyn.step_from_seed(
+                    curr_minus,
+                    float(ins_np[i]),
+                    v_np[i],
+                    w_np[i],
+                    p_np[i],
+                    R_np[i],
+                    xf_np[i],
+                    mL_np[i],
+                    nL_np[i],
+                )
+                pos_minus = np.asarray(out_minus["tip_position"], dtype=np.float64).reshape(3)
+                vel_minus = np.asarray(out_minus["tip_velocity"], dtype=np.float64).reshape(3)
+                y_minus = np.concatenate([pos_minus, vel_minus])
 
-                B_all[i] = B_np.reshape(output_dim, -1)
+                # Central difference
+                B_np[:, j] = (y_plus - y_minus) / (2.0 * fd_eps)
+
+            # Allocate B_all on first iteration
+            if B_all is None:
+                control_dim = 3  # Only currents, not insertion_length yet
+                B_all = np.zeros((batch, output_dim, control_dim), dtype=np.float64)
+
+            B_all[i] = B_np
+
+            # Compute A matrix via finite differences if seed gradients needed
+            if need_seed_jac:
+                # A shape: (output_dim, seed_dim) where seed_dim = 39 for num_sets=1
+                seed_dim = int(num_sets * 3 + num_sets * 3 + num_sets * 3 + num_sets * 9 + 15 + num_sets * 3 + num_sets * 3)
+                A_np = np.zeros((output_dim, seed_dim), dtype=np.float64)
+
+                component_idx = 0
+
+                # Helper function to compute FD for a seed component
+                def compute_seed_fd(seed_array, flat_idx):
+                    nonlocal component_idx
+                    original = seed_array.flat[flat_idx]
+
+                    # Perturb +eps
+                    seed_array.flat[flat_idx] = original + fd_eps
+                    out_p = dyn.step_from_seed(
+                        currents_np[i],
+                        float(ins_np[i]),
+                        v_np[i],
+                        w_np[i],
+                        p_np[i],
+                        R_np[i],
+                        xf_np[i],
+                        mL_np[i],
+                        nL_np[i],
+                    )
+                    pos_p = np.asarray(out_p["tip_position"], dtype=np.float64).reshape(3)
+                    vel_p = np.asarray(out_p["tip_velocity"], dtype=np.float64).reshape(3)
+                    y_p = np.concatenate([pos_p, vel_p])
+
+                    # Perturb -eps
+                    seed_array.flat[flat_idx] = original - fd_eps
+                    out_m = dyn.step_from_seed(
+                        currents_np[i],
+                        float(ins_np[i]),
+                        v_np[i],
+                        w_np[i],
+                        p_np[i],
+                        R_np[i],
+                        xf_np[i],
+                        mL_np[i],
+                        nL_np[i],
+                    )
+                    pos_m = np.asarray(out_m["tip_position"], dtype=np.float64).reshape(3)
+                    vel_m = np.asarray(out_m["tip_velocity"], dtype=np.float64).reshape(3)
+                    y_m = np.concatenate([pos_m, vel_m])
+
+                    # Restore original
+                    seed_array.flat[flat_idx] = original
+
+                    # Central difference
+                    A_np[:, component_idx] = (y_p - y_m) / (2.0 * fd_eps)
+                    component_idx += 1
+
+                # Compute A matrix columns for all seed components
+                # v components
+                for idx in range(v_np[i].size):
+                    compute_seed_fd(v_np[i], idx)
+
+                # w components
+                for idx in range(w_np[i].size):
+                    compute_seed_fd(w_np[i], idx)
+
+                # p components
+                for idx in range(p_np[i].size):
+                    compute_seed_fd(p_np[i], idx)
+
+                # R components
+                for idx in range(R_np[i].size):
+                    compute_seed_fd(R_np[i], idx)
+
+                # xf components
+                for idx in range(xf_np[i].size):
+                    compute_seed_fd(xf_np[i], idx)
+
+                # mL components
+                for idx in range(mL_np[i].size):
+                    compute_seed_fd(mL_np[i], idx)
+
+                # nL components
+                for idx in range(nL_np[i].size):
+                    compute_seed_fd(nL_np[i], idx)
+
+                A_all[i] = A_np
 
         ctx.num_sets = num_sets
         ctx.has_seed_jac = need_seed_jac
@@ -363,7 +459,9 @@ class TorchCRMPhysics:
         ok2 = self.dyn.load_parameters(param_file, config_file)
         if not (ok1 and ok2):
             raise RuntimeError("Failed to load CRM data/simulation_parameters/config into C++ bindings.")
-        self.dyn.set_integrator("rk4")
+        # BUGFIX: set_integrator("rk4") causes step_from_seed() to diverge
+        # Use default integrator instead
+        # self.dyn.set_integrator("rk4")
 
     def fk(self, currents: torch.Tensor, insertion_length: torch.Tensor) -> torch.Tensor:
         return CRMFKFunction.apply(currents, insertion_length, self.kin)
