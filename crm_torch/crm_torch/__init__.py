@@ -109,6 +109,17 @@ class CRMDynamicsStep(torch.autograd.Function):
             grad_output: Gradient w.r.t. next_state
             grad_next_v, grad_next_w, etc.: Gradients w.r.t. updated seeds (from next step)
         """
+        # DEBUG: Print when backward is called
+        import os
+        if os.getenv("CRM_DEBUG_BACKWARD") == "1":
+            print(f"\n[CRMDynamicsStep.backward] Called!")
+            print(f"  grad_output is None: {grad_output is None}")
+            print(f"  grad_next_v is None: {grad_next_v is None}")
+            if grad_output is not None:
+                print(f"  grad_output norm: {torch.norm(grad_output).item():.6e}")
+            if grad_next_v is not None:
+                print(f"  grad_next_v norm: {torch.norm(grad_next_v).item():.6e}")
+
         if not _extension_available:
             raise RuntimeError("C++ extension not available")
 

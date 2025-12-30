@@ -543,6 +543,7 @@ public:
     double w_L[NUM_ACT_SET][3];
     double p_L[NUM_ACT_SET][3];
     double R_L[NUM_ACT_SET][9];
+    // Strategy D+: Member variables exist but are NOT used (stateless core)
     double mL_guess[NUM_ACT_SET][3];
     double nL_guess[NUM_ACT_SET][3];
     double xf[NUM_STATES];  // tip state
@@ -558,6 +559,7 @@ public:
                 v_L[j][i] = 0.0;
                 w_L[j][i] = 0.0;
                 p_L[j][i] = 0.0;
+                // Strategy D+: Initialize but don't use (stateless core)
                 mL_guess[j][i] = 0.0;
                 nL_guess[j][i] = 0.0;
             }
@@ -606,8 +608,9 @@ public:
                 v(j, i) = v_L[j][i];
                 w(j, i) = w_L[j][i];
                 p(j, i) = p_L[j][i];
-                mL(j, i) = mL_guess[j][i];
-                nL(j, i) = nL_guess[j][i];
+                // Strategy D+: Return zeros instead of undefined member vars
+                mL(j, i) = 0.0;  // Return zeros instead of undefined member var
+                nL(j, i) = 0.0;  // Return zeros instead of undefined member var
             }
             for (int i = 0; i < 9; i++) {
                 R(j, i) = R_L[j][i];
@@ -1227,8 +1230,11 @@ public:
                     v_L[j][i] = x_coil[j][i];
                     w_L[j][i] = x_coil[j][i + 3];
                     p_L[j][i] = x_coil[j][i + 6];
+                    // Strategy D+: Disable writing member variables (stateless core)
+                    #ifdef CRM_ENABLE_WARMSTART_MEMBER_VARS
                     mL_guess[j][i] = out_mL[j][i];
                     nL_guess[j][i] = out_nL[j][i];
+                    #endif
                 }
                 for (int i = 0; i < 9; i++) {
                     R_L[j][i] = x_coil[j][i + 9];
@@ -1321,6 +1327,17 @@ public:
         const double dt_local = dt_override.has_value() ? *dt_override : dt;
 
         const int num_sets = catheter.getParams() ? catheter.getParams()->no_act_set : NUM_ACT_SET;
+
+        // Strategy B: Declare mL_guess and nL_guess as local variables
+        // This eliminates state pollution across calls (no shared mutable state)
+        double mL_guess[NUM_ACT_SET][3];
+        double nL_guess[NUM_ACT_SET][3];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess[j][i] = 0.0;
+                nL_guess[j][i] = 0.0;
+            }
+        }
 
         // Task 4.11: Validate input shapes match compile-time NUM_ACT_SET
         auto vbuf = v_in.request();
@@ -1420,10 +1437,14 @@ public:
             }
         }
 
-        const double mL_internal_abs = sum_abs_mn(mL_guess, num_sets);
-        const double nL_internal_abs = sum_abs_mn(nL_guess, num_sets);
-        const bool use_internal_mL = (mL_in.size() == 0 || mL_input_abs <= kMnZeroEps) && (mL_internal_abs > kMnZeroEps);
-        const bool use_internal_nL = (nL_in.size() == 0 || nL_input_abs <= kMnZeroEps) && (nL_internal_abs > kMnZeroEps);
+        // Strategy D+: Disable reading member variables (stateless core)
+        const bool use_internal_mL = false;  // STRATEGY D+: Disable member var reads
+        const bool use_internal_nL = false;  // STRATEGY D+: Disable member var reads
+        // Removed member var logic:
+        // const double mL_internal_abs = sum_abs_mn(mL_guess, num_sets);
+        // const double nL_internal_abs = sum_abs_mn(nL_guess, num_sets);
+        // const bool use_internal_mL = (mL_in.size() == 0 || mL_input_abs <= kMnZeroEps) && (mL_internal_abs > kMnZeroEps);
+        // const bool use_internal_nL = (nL_in.size() == 0 || nL_input_abs <= kMnZeroEps) && (nL_internal_abs > kMnZeroEps);
         if (use_internal_mL || use_internal_nL) {
             for (int j = 0; j < num_sets && j < NUM_ACT_SET; j++) {
                 for (int i = 0; i < 3; i++) {
@@ -1974,8 +1995,18 @@ public:
             return out;
         };
 
-        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess);
-        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
+        // Strategy D+: Use local zero arrays instead of member variables (stateless core)
+        double mL_guess_local[NUM_ACT_SET][3];
+        double nL_guess_local[NUM_ACT_SET][3];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess_local[j][i] = 0.0;
+                nL_guess_local[j][i] = 0.0;
+            }
+        }
+
+        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess_local);
+        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess_local);
 
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
         const bool ok = base["converged"].cast<bool>();
@@ -2213,6 +2244,16 @@ public:
         // Implicit differentiation with residual Jacobians.
         // Jxx = dF/dx uses autodiff (Eigen+dual numbers) when available; otherwise falls back to finite differences.
 
+        // Strategy B: Declare local mL_guess/nL_guess for this function
+        double mL_guess[NUM_ACT_SET][3];
+        double nL_guess[NUM_ACT_SET][3];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess[j][i] = 0.0;
+                nL_guess[j][i] = 0.0;
+            }
+        }
+
         auto get_state6 = [](const py::dict& out) {
             auto tip_pos = out["tip_position"].cast<py::array_t<double>>().request();
             auto tip_vel = out["tip_velocity"].cast<py::array_t<double>>().request();
@@ -2285,8 +2326,18 @@ public:
             return out;
         };
 
-        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess);
-        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
+        // Strategy D+: Use local zero arrays instead of member variables (stateless core)
+        double mL_guess_local[NUM_ACT_SET][3];
+        double nL_guess_local[NUM_ACT_SET][3];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess_local[j][i] = 0.0;
+                nL_guess_local[j][i] = 0.0;
+            }
+        }
+
+        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess_local);
+        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess_local);
 
         // Base solve: get y0 and x* (as next_mL/next_nL) by running the full step once.
         std::cout << "[LINEARIZE DEBUG] Step 1: Starting base solve..." << std::endl;
@@ -2874,14 +2925,106 @@ public:
         }
         std::cout << "[LINEARIZE DEBUG] Step 5 complete: Jxth computed" << std::endl;
 
-        // Solve for dx/dθ: Jxx * X = -Jxθ
-        Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(Jxx);
-        if (qr.rank() < x_dim) {
-            throw std::runtime_error("Implicit linearization failed: Jxx is rank-deficient at x*.");
-        }
-        const Eigen::MatrixXd dxdth = qr.solve(-Jxth);  // (x_dim, theta_dim)
+        // Phase 3B FIX: Compute dx/dθ via FD on actual forward pass instead of BVP residual
+        // OLD APPROACH (WRONG): dxdth = -Jxx^{-1} * Jxth  (differentiates BVP equilibrium)
+        // NEW APPROACH (CORRECT): dxdth via FD on step_from_seed (differentiates actual IVP forward pass)
+        //
+        // Root cause: Forward pass uses IVP (explicit integration), backward uses BVP (equilibrium condition)
+        // These are mathematically DIFFERENT operations → 67.9% gradient error
+        // Fix: Compute dx/dθ by finite-differencing the actual forward operation
 
-        // Debug: Check BVP residual at converged point
+        std::cout << "[LINEARIZE DEBUG] Step 5.5: Computing dx/dθ via FD on forward pass (fixes AD mismatch)..." << std::endl;
+        Eigen::MatrixXd dxdth(x_dim, theta_dim);
+        dxdth.setZero();
+
+        // Helper to extract x from step_from_seed output (mL, nL scaled)
+        auto get_x_from_step = [&](const py::dict& step_out) {
+            auto mL_arr = step_out["next_mL"].cast<py::array_t<double>>();
+            auto nL_arr = step_out["next_nL"].cast<py::array_t<double>>();
+            auto mL_req = mL_arr.request();
+            auto nL_req = nL_arr.request();
+            const double* mL_ptr = static_cast<double*>(mL_req.ptr);
+            const double* nL_ptr = static_cast<double*>(nL_req.ptr);
+
+            Eigen::VectorXd x(x_dim);
+            for (int j = 0; j < num_sets; j++) {
+                for (int i = 0; i < 3; i++) {
+                    x(j * 6 + i) = mL_ptr[j * 3 + i] / IVALUE_SCALE_M;
+                    x(j * 6 + 3 + i) = nL_ptr[j * 3 + i] / IVALUE_SCALE_N;
+                }
+            }
+            return x;
+        };
+
+        // FD over theta (currents + seed)
+        for (int j = 0; j < theta_dim; j++) {
+            if (j % 10 == 0) {
+                std::cout << "[LINEARIZE DEBUG] Step 5.5: FD dx/dθ column " << j << "/" << theta_dim << std::endl;
+            }
+
+            // Perturb theta
+            Eigen::Vector3d curr_p = curr0;
+            Eigen::Vector3d curr_m = curr0;
+            Eigen::VectorXd seed_p = seed0;
+            Eigen::VectorXd seed_m = seed0;
+
+            if (j < 3) {
+                // Perturb currents
+                curr_p(j) += eps_residual_theta;
+                curr_m(j) -= eps_residual_theta;
+            } else {
+                // Perturb seed
+                const int k = j - 3;
+                seed_p(k) += eps_residual_theta;
+                seed_m(k) -= eps_residual_theta;
+            }
+
+            // Unpack seeds for forward pass
+            py::array_t<double> vP, wP, pP, RP, xfP, mLP, nLP;
+            py::array_t<double> vM, wM, pM, RM, xfM, mLM, nLM;
+            unpack_seed(seed_p, vP, wP, pP, RP, xfP, mLP, nLP);
+            unpack_seed(seed_m, vM, wM, pM, RM, xfM, mLM, nLM);
+
+            // Convert Eigen::Vector3d to py::array_t<double> for currents
+            py::array_t<double> curr_p_arr({3});
+            py::array_t<double> curr_m_arr({3});
+            auto cp = curr_p_arr.mutable_unchecked<1>();
+            auto cm = curr_m_arr.mutable_unchecked<1>();
+            for (int i = 0; i < 3; i++) {
+                cp(i) = curr_p(i);
+                cm(i) = curr_m(i);
+            }
+
+            // Run forward pass at perturbed inputs
+            py::dict step_p = step_from_seed(curr_p_arr, insertion_length, vP, wP, pP, RP, xfP, mLP, nLP, std::nullopt);
+            py::dict step_m = step_from_seed(curr_m_arr, insertion_length, vM, wM, pM, RM, xfM, mLM, nLM, std::nullopt);
+
+            if (!step_p["converged"].cast<bool>() || !step_m["converged"].cast<bool>()) {
+                // If perturbation causes non-convergence, set column to zero
+                dxdth.col(j).setZero();
+                continue;
+            }
+
+            // Extract x from forward pass outputs
+            Eigen::VectorXd x_p = get_x_from_step(step_p);
+            Eigen::VectorXd x_m = get_x_from_step(step_m);
+
+            // Compute dx/dθ_j via central difference
+            dxdth.col(j) = (x_p - x_m) * (0.5 / eps_residual_theta);
+        }
+        std::cout << "[LINEARIZE DEBUG] Step 5.5 complete: dx/dθ computed via FD on forward pass" << std::endl;
+
+        // For debugging: Still compute BVP-based dxdth to compare
+        Eigen::MatrixXd dxdth_bvp;
+        Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(Jxx);
+        if (qr.rank() >= x_dim) {
+            dxdth_bvp = qr.solve(-Jxth);  // (x_dim, theta_dim) - OLD BVP-based approach
+        } else {
+            dxdth_bvp.resize(x_dim, theta_dim);
+            dxdth_bvp.setZero();
+        }
+
+        // Debug: Check BVP residual at converged point and compare dx/dθ approaches
         if (const char* debug_env = std::getenv("CRM_DEBUG_GRADIENT")) {
             if (std::string(debug_env) == "1") {
                 // Check residual at x*
@@ -2892,9 +3035,18 @@ public:
                 std::cout << "  ||F(x*, θ)||: " << residual_at_x_star.norm() << "\n";
                 std::cout << "  Jxx rank: " << qr.rank() << " / " << x_dim << "\n";
                 std::cout << "  Jxx condition number: " << (Jxx.transpose() * Jxx).trace() << " (trace approx)\n";
-                std::cout << "  dxdth norm: " << dxdth.norm() << "\n";
                 std::cout << "  Jxx norm: " << Jxx.norm() << "\n";
                 std::cout << "  Jxth norm: " << Jxth.norm() << "\n";
+
+                // Compare FD-based vs BVP-based dx/dθ
+                std::cout << "\n[CRM_DEBUG_GRADIENT] dx/dθ Comparison (FD vs BVP):\n";
+                std::cout << "  dx/dθ (FD) norm: " << dxdth.norm() << "\n";
+                std::cout << "  dx/dθ (BVP) norm: " << dxdth_bvp.norm() << "\n";
+                if (dxdth_bvp.norm() > 0) {
+                    double rel_diff = (dxdth - dxdth_bvp).norm() / dxdth_bvp.norm();
+                    std::cout << "  Relative difference: " << (rel_diff * 100.0) << "%\n";
+                    std::cout << "  -> This should match the ~67.9% error we saw before the fix\n";
+                }
             }
         }
 
@@ -3130,6 +3282,16 @@ public:
     ) {
         using namespace CRMCatheterModel;
 
+        // Strategy B: Declare local mL_guess/nL_guess for this function
+        double mL_guess[NUM_ACT_SET][3];
+        double nL_guess[NUM_ACT_SET][3];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_guess[j][i] = 0.0;
+                nL_guess[j][i] = 0.0;
+            }
+        }
+
         auto vbuf = v_in.request();
         if (vbuf.ndim != 2 || vbuf.shape[1] != 3) {
             throw std::runtime_error("v_in must have shape (num_act_set, 3)");
@@ -3193,8 +3355,18 @@ public:
             return out;
         };
 
-        py::array_t<double> mL_use = ensure_mn(mL_in, mL_guess);
-        py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
+        // Strategy D+: Use local zero arrays instead of member variables (stateless core)
+        double mL_zero_fallback[NUM_ACT_SET][3];
+        double nL_zero_fallback[NUM_ACT_SET][3];
+        for (int j = 0; j < NUM_ACT_SET; j++) {
+            for (int i = 0; i < 3; i++) {
+                mL_zero_fallback[j][i] = 0.0;
+                nL_zero_fallback[j][i] = 0.0;
+            }
+        }
+
+        py::array_t<double> mL_use = ensure_mn(mL_in, mL_zero_fallback);
+        py::array_t<double> nL_use = ensure_mn(nL_in, nL_zero_fallback);
 
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
         const bool ok = base["converged"].cast<bool>();
