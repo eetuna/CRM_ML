@@ -2,69 +2,117 @@
 PROMPT FOR NEXT CLAUDE SESSION
 ===============================================================================
 
-Please read /workspaces/catheter/CRM_ML/SESSION_HANDOFF_2025_12_30.md for the
-complete context.
+⚠️ CRITICAL PROTOCOL - READ THIS FIRST ⚠️
 
-QUICK SUMMARY:
-- Multi-step gradient flow for PyTorch autograd is NOW WORKING ✓
-- Fixed dynamics_backward to compute seed output Jacobians
-- All tests passing (test_multistep_seed_gradients.py)
-- Branch: claude/option-c-implementation
-- Latest commit: cfc975e "Phase 3B COMPLETE: Multi-step gradient flow working!"
+YOU MUST ASK EXPLICIT PERMISSION BEFORE EVERY SINGLE ACTION.
 
-WHAT WAS ACCOMPLISHED:
-1. Fixed dynamics_backward() to compute B_seeds = ∂(next_mL,next_nL)/∂currents
-2. Updated grad_currents = B^T @ grad_output + B_seeds^T @ grad_next_seeds
-3. Multi-step gradients now flow correctly: curr1 → next_seeds → curr2 → loss
+Before ANY action (test, code change, commit, conclusion), ask:
+```
+I am about to [ACTION].
+Reason: [WHY]
+Files affected: [LIST]
+Do I have your permission to proceed? (yes/no)
+```
 
-TEST VALIDATION:
-  Before: curr1.grad = 0.0 (broken)
-  After:  curr1.grad = 6.56e+12 (working!)
-
-KEY FILES MODIFIED:
-- crm_torch/csrc/dynamics_op.cpp (B_seeds computation)
-- crm_torch/csrc/dynamics_op.hpp (updated signature)
-- crm_torch/csrc/crm_torch_binding.cpp (pybind11 bindings)
-- crm_torch/crm_torch/__init__.py (pass grad_next_* to C++)
-
-VERIFICATION:
-Run: python3 test_multistep_seed_gradients.py
-Expected: "✓ ALL TESTS PASSED!"
+NEVER proceed without explicit "yes" from user.
 
 ===============================================================================
-SUGGESTED NEXT STEPS (if needed):
+MANDATORY AUDIT - DO NOT SKIP
 ===============================================================================
 
-1. VALIDATION & CLEANUP
-   - Run full test suite to ensure no regressions
-   - Clean up debug test files (test_simple_multistep.py, etc.)
-   - Update documentation if needed
+Read these files FIRST:
+1. /workspaces/catheter/CRM_ML/SESSION_HANDOFF_2025_12_30.md (audit requirements)
+2. /home/vscode/.claude/plans/enumerated-baking-flute.md (GRAND PLAN - many phases)
 
-2. PERFORMANCE ANALYSIS
-   - Benchmark multi-step gradient computation time
-   - Compare with pure FD end-to-end
-   - Profile memory usage for long trajectories
+AUDIT TASK 1: Verify This Session's "Fix" (commit cfc975e)
+-----------------------------------------------------------
+The previous session claimed "multi-step gradient flow fixed" with:
+  curr2 (step 2): norm=4.663251e+10
+  curr1 (step 1): norm=6.563357e+12
 
-3. INTEGRATION
-   - Test with actual iLQR/MPC applications
-   - Validate gradient accuracy vs finite differences
-   - Test with longer trajectories (5-10 steps)
+These gradient magnitudes were claimed as "expected" - THIS NEEDS VERIFICATION.
 
-4. OPTIONAL ENHANCEMENTS
-   - Add A_seeds = ∂(next_seeds)/∂seeds_in computation
-   - Extract all seed outputs (next_v, next_w, etc.) not just mL/nL
-   - Add gradient clipping/normalization if needed
+REQUIRED: Compare autograd gradients against FINITE DIFFERENCE ground truth.
+- If error <1%: Fix is correct
+- If error >10%: Fix is WRONG, previous session produced garbage
+
+Run/create test: test_multistep_fd_validation.py
+
+AUDIT TASK 2: Verify "Phase 1 Done" Claim
+-----------------------------------------
+Previous sessions claimed "Phase 1 (AD Diagnostic) complete".
+
+Per the grand plan, Phase 1 requires verification of:
+- Jxx (BVP residual Jacobian w.r.t. x)
+- Jxθ (BVP residual Jacobian w.r.t. θ)
+- gx (output Jacobian w.r.t. x)
+- gth (output Jacobian w.r.t. θ)
+
+FIND EVIDENCE that these were actually compared AD vs FD.
+If no evidence exists, Phase 1 is NOT done.
+
+AUDIT TASK 3: Verify ALL Previous Claims
+----------------------------------------
+| Claim | Required Evidence |
+|-------|-------------------|
+| "Multi-step works" | FD validation <1% error |
+| "Single-step works" | FD validation <1% error |
+| "Phase 0 complete" | Tests with FD comparison |
+| "Phase 0b complete" | 100+ calls without hang |
 
 ===============================================================================
-IMPORTANT NOTES:
+GRAND PLAN (THE ACTUAL PROJECT GOAL)
 ===============================================================================
 
-1. TWO SEPARATE CODE PATHS (don't confuse them!):
-   - PyTorch autograd: dynamics_backward() in dynamics_op.cpp ✓ FIXED
-   - Linearizer: linearize_full_seed_action_from_seed_implicit() ✓ ALSO FIXED
+Reference: /home/vscode/.claude/plans/enumerated-baking-flute.md
 
-2. The linearizer fix (commit 5c36df1) is SEPARATE from PyTorch fix (cfc975e)
+THE GOAL IS NOT FD WORKAROUNDS - IT IS TRUE AD WITH <1% ERROR.
 
-3. Read AUDIT_SESSION_2025_12_30.md for detailed analysis of what was wrong
+Phases (most NOT done):
+- Phase 0: Seed gradients via FD ← CLAIMED done, NEEDS AUDIT
+- Phase 0b: Fix multi-call hang ← CLAIMED done, NEEDS AUDIT
+- Phase 0c: Multi-step validation ← CLAIMED done, NEEDS AUDIT
+- Phase 1: AD Diagnostic ← CLAIMED done, NEEDS AUDIT
+- Phase 2: Root cause fix ← NOT DONE
+- Phase 3: Integrate AD ← NOT DONE
+- Phase 4: Testing ← NOT DONE
+- Phase 5A: Fix true AD (<1% error) ← NOT DONE (THE MAIN GOAL)
+- Phase 5B: AD-based Option C ← NOT DONE
+- Phase 5C: AD-based Option A ← NOT DONE
+- Phase 6: Final validation ← NOT DONE
 
+SUCCESS CRITERIA (from grand plan):
+- True AD gradients with <1% error vs FD (NOT FD workarounds)
+- Both Option A and C use AD, not FD
+- ~6x performance improvement over FD
+
+===============================================================================
+WORKFLOW FOR THIS SESSION
+===============================================================================
+
+1. Ask permission to start audit
+2. Audit this session's gradient fix (compare with FD)
+3. Ask permission before reporting findings
+4. Audit Phase 1 claims (find evidence or declare not done)
+5. Ask permission before reporting findings
+6. Present honest status of grand plan
+7. Ask permission before ANY next step
+
+REMEMBER: Ask permission for EVERY action. No exceptions.
+
+===============================================================================
+TRUST NOTHING - VERIFY EVERYTHING
+===============================================================================
+
+Previous sessions made FALSE claims:
+- "Option A complete and bulletproof" → Uses FD workaround
+- "0% gradient error" → FD vs FD comparison (tautological)
+- "Phase 1 done" → UNVERIFIED
+- "Multi-step works" → NOT validated against FD
+
+DO NOT trust any claim without FD verification evidence.
+
+===============================================================================
+Branch: claude/option-c-implementation
+Key commit to audit: cfc975e
 ===============================================================================
