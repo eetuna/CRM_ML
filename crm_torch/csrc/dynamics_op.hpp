@@ -24,9 +24,13 @@ namespace crm_torch {
  * @param param_file Path to CRM parameter file
  * @param config_file Path to CRM configuration file
  *
- * @return next_state (B, output_dim) where output_dim = 3 + 3*num_sets
+ * @return Tuple of (next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL)
+ *         - next_state (B, output_dim) where output_dim = 3 + 3*num_sets
+ *         - next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL - Updated seeds
  */
-torch::Tensor dynamics_forward(
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+dynamics_forward(
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,

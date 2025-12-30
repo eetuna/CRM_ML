@@ -57,7 +57,9 @@ class CRMDynamicsStep(torch.autograd.Function):
             eps_seed: Epsilon for implicit differentiation (backward pass)
 
         Returns:
-            next_state: (B, output_dim) where output_dim = 3 + 3*num_sets
+            Tuple of (next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL)
+            - next_state: (B, output_dim) where output_dim = 3 + 3*num_sets
+            - next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL: Updated seed tensors
         """
         if not _extension_available:
             raise RuntimeError("C++ extension not available. " + str(_import_error))
@@ -73,12 +75,15 @@ class CRMDynamicsStep(torch.autograd.Function):
         seed_mL = seed_mL.detach().cpu().double().contiguous()
         seed_nL = seed_nL.detach().cpu().double().contiguous()
 
-        # Call C++ forward function
-        next_state = _crm_torch_ext.dynamics_forward(
+        # Call C++ forward function (Phase 3B: now returns updated seeds!)
+        result = _crm_torch_ext.dynamics_forward(
             currents, insertion_length,
             seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL,
             param_file, config_file
         )
+
+        # Unpack result tuple
+        next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL = result
 
         # Save for backward
         ctx.save_for_backward(
@@ -89,18 +94,20 @@ class CRMDynamicsStep(torch.autograd.Function):
         ctx.config_file = config_file
         ctx.eps_seed = eps_seed
 
-        return next_state
+        return next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL
 
     @staticmethod
-    def backward(ctx, grad_output):
+    def backward(ctx, grad_output, grad_next_v, grad_next_w, grad_next_p,
+                 grad_next_R, grad_next_xf, grad_next_mL, grad_next_nL):
         """
         Backward pass: compute gradients via implicit differentiation.
 
-        Phase 3A (Implemented): Computes current gradients via Option A's implicit linearization.
-        Uses linearize_full_seed_action_from_seed_implicit to get B Jacobian (∂y/∂currents).
-        Computes grad_currents = B^T @ grad_output.
+        Phase 3B: Handles gradients from both next_state and updated seeds.
+        This enables multi-step gradient flow.
 
-        Seed gradients: Currently zero (Phase 3B - can be added if needed).
+        Args:
+            grad_output: Gradient w.r.t. next_state
+            grad_next_v, grad_next_w, etc.: Gradients w.r.t. updated seeds (from next step)
         """
         if not _extension_available:
             raise RuntimeError("C++ extension not available")
@@ -110,7 +117,26 @@ class CRMDynamicsStep(torch.autograd.Function):
         currents, insertion_length = saved[0], saved[1]
         seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL = saved[2:]
 
-        # Call C++ backward function (Phase 3 - currently returns zeros)
+        # Accumulate seed gradients (chain rule: gradients from both paths)
+        # If None, use zeros (no gradient from that output)
+        if grad_next_v is None:
+            grad_next_v = torch.zeros_like(seed_v)
+        if grad_next_w is None:
+            grad_next_w = torch.zeros_like(seed_w)
+        if grad_next_p is None:
+            grad_next_p = torch.zeros_like(seed_p)
+        if grad_next_R is None:
+            grad_next_R = torch.zeros_like(seed_R)
+        if grad_next_xf is None:
+            grad_next_xf = torch.zeros_like(seed_xf)
+        if grad_next_mL is None:
+            grad_next_mL = torch.zeros_like(seed_mL)
+        if grad_next_nL is None:
+            grad_next_nL = torch.zeros_like(seed_nL)
+
+        # Call C++ backward function
+        # It computes gradients w.r.t. inputs based on grad_output (from next_state)
+        # We'll need to add the gradients from the seed outputs separately
         grads = _crm_torch_ext.dynamics_backward(
             grad_output.detach().cpu().double().contiguous(),
             currents, insertion_length,
@@ -118,8 +144,26 @@ class CRMDynamicsStep(torch.autograd.Function):
             ctx.param_file, ctx.config_file, ctx.eps_seed
         )
 
+        # grads = (grad_currents, grad_insertion, grad_seed_v, grad_seed_w,
+        #          grad_seed_p, grad_seed_R, grad_seed_xf, grad_seed_mL, grad_seed_nL)
+
+        # Add gradients from seed outputs (Phase 3B multi-step gradient flow)
+        # These are the gradients flowing back from the next time step
+        # IMPORTANT: Don't detach! We need to maintain the gradient graph
+        grad_currents = grads[0]
+        grad_insertion = grads[1]
+        grad_seed_v = grads[2] + grad_next_v.cpu().double().contiguous()
+        grad_seed_w = grads[3] + grad_next_w.cpu().double().contiguous()
+        grad_seed_p = grads[4] + grad_next_p.cpu().double().contiguous()
+        grad_seed_R = grads[5] + grad_next_R.cpu().double().contiguous()
+        grad_seed_xf = grads[6] + grad_next_xf.cpu().double().contiguous()
+        grad_seed_mL = grads[7] + grad_next_mL.cpu().double().contiguous()
+        grad_seed_nL = grads[8] + grad_next_nL.cpu().double().contiguous()
+
         # Return gradients for all inputs (+ None for non-tensor args)
-        return grads + (None, None, None)  # None for param_file, config_file, eps_seed
+        return (grad_currents, grad_insertion, grad_seed_v, grad_seed_w,
+                grad_seed_p, grad_seed_R, grad_seed_xf, grad_seed_mL, grad_seed_nL,
+                None, None, None)  # None for param_file, config_file, eps_seed
 
 
 # Export C++ functions and autograd wrapper

@@ -62,11 +62,14 @@ def test_seed_gradient_computation():
 
     # Forward pass
     print("\nRunning forward pass...")
-    output = crm_torch.CRMDynamicsStep.apply(
+    result = crm_torch.CRMDynamicsStep.apply(
         currents, insertion,
         seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL,
         param_file, config_file, 1e-4
     )
+
+    # Phase 3B: CRMDynamicsStep now returns tuple (output, next_v, next_w, ...)
+    output, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL = result
 
     print(f"Output shape: {output.shape}")
     print(f"Output: {output[0].detach().numpy()}")
@@ -158,35 +161,41 @@ def test_multistep_gradient_flow():
     seed1_nL = torch.from_numpy(seed0['nL']).unsqueeze(0).double()
 
     print("\nStep 1: Forward pass...")
-    output1 = crm_torch.CRMDynamicsStep.apply(
+    result1 = crm_torch.CRMDynamicsStep.apply(
         curr1, insertion_t,
         seed1_v, seed1_w, seed1_p, seed1_R, seed1_xf, seed1_mL, seed1_nL,
         param_file, config_file, 1e-4
     )
+    # Phase 3B: Unpack result tuple
+    output1, next1_v, next1_w, next1_p, next1_R, next1_xf, next1_mL, next1_nL = result1
     print(f"  Output: {output1[0, :3].detach().numpy()}")
 
-    # Get updated seed from Option A dynamics (simulate seed state update)
-    dyn.step(curr1[0].detach().numpy(), insertion_length)
-    seed1_updated = dyn.get_seed_state()
+    # Phase 3B: Use returned updated seeds (with gradient flow!)
+    # The next_* tensors are connected to curr1 via the gradient graph
+    print(f"\nChecking gradient graph connection:")
+    print(f"  curr1 requires_grad: {curr1.requires_grad}")
+    print(f"  next1_v requires_grad: {next1_v.requires_grad}")
+    print(f"  next1_v grad_fn: {next1_v.grad_fn}")
+
+    seed2_v = next1_v
+    seed2_w = next1_w
+    seed2_p = next1_p
+    seed2_R = next1_R
+    seed2_xf = next1_xf
+    seed2_mL = next1_mL
+    seed2_nL = next1_nL
 
     # Step 2 currents (with requires_grad)
     curr2 = torch.tensor([[0.08, 0.03, -0.02]], dtype=torch.float64, requires_grad=True)
 
-    # Step 2 seed (use updated seed, with requires_grad to enable gradient flow)
-    seed2_v = torch.from_numpy(seed1_updated['v']).unsqueeze(0).double().requires_grad_(True)
-    seed2_w = torch.from_numpy(seed1_updated['w']).unsqueeze(0).double().requires_grad_(True)
-    seed2_p = torch.from_numpy(seed1_updated['p']).unsqueeze(0).double().requires_grad_(True)
-    seed2_R = torch.from_numpy(seed1_updated['R']).unsqueeze(0).double().requires_grad_(True)
-    seed2_xf = torch.from_numpy(seed1_updated['xf']).unsqueeze(0).double().requires_grad_(True)
-    seed2_mL = torch.from_numpy(seed1_updated['mL']).unsqueeze(0).double().requires_grad_(True)
-    seed2_nL = torch.from_numpy(seed1_updated['nL']).unsqueeze(0).double().requires_grad_(True)
-
     print("\nStep 2: Forward pass...")
-    output2 = crm_torch.CRMDynamicsStep.apply(
+    result2 = crm_torch.CRMDynamicsStep.apply(
         curr2, insertion_t,
         seed2_v, seed2_w, seed2_p, seed2_R, seed2_xf, seed2_mL, seed2_nL,
         param_file, config_file, 1e-4
     )
+    # Phase 3B: Unpack result tuple
+    output2, next2_v, next2_w, next2_p, next2_R, next2_xf, next2_mL, next2_nL = result2
     print(f"  Output: {output2[0, :3].detach().numpy()}")
 
     # Create loss from step 2 output
@@ -200,58 +209,46 @@ def test_multistep_gradient_flow():
     print("\nRunning backward pass...")
     loss.backward()
 
-    # Check gradients on step 2 seed (these should be non-zero from direct backprop)
+    # Phase 3B: Check that gradients flow back to curr1 (multi-step flow!)
     print("\n" + "=" * 80)
-    print("Step 2 Seed Gradients (Direct)")
+    print("Multi-Step Gradient Flow Check")
     print("=" * 80)
-
-    step2_seeds_ok = True
-    for name, tensor in [("seed2_v", seed2_v), ("seed2_w", seed2_w), ("seed2_p", seed2_p),
-                          ("seed2_R", seed2_R), ("seed2_xf", seed2_xf),
-                          ("seed2_mL", seed2_mL), ("seed2_nL", seed2_nL)]:
-        if tensor.grad is None:
-            print(f"{name:12s}: NO GRADIENT")
-            step2_seeds_ok = False
-        else:
-            grad_norm = torch.norm(tensor.grad).item()
-            is_nonzero = grad_norm > 1e-10
-            status = "✓" if is_nonzero else "✗ (zero)"
-            print(f"{name:12s}: norm={grad_norm:.6e}  {status}")
-            if not is_nonzero:
-                step2_seeds_ok = False
+    print("Phase 3B FIX: Gradients should now flow from step 2 back to step 1!")
+    print()
 
     # Check curr2 gradient (should be non-zero)
-    print("\n" + "=" * 80)
-    print("Step 2 Current Gradients")
-    print("=" * 80)
     curr2_ok = False
     if curr2.grad is not None:
         grad_norm = torch.norm(curr2.grad).item()
         is_nonzero = grad_norm > 1e-10
         status = "✓ PASS" if is_nonzero else "✗ FAIL"
-        print(f"curr2: norm={grad_norm:.6e}  {status}")
+        print(f"curr2 (step 2): norm={grad_norm:.6e}  {status}")
         curr2_ok = is_nonzero
     else:
-        print("curr2: NO GRADIENT")
+        print("curr2 (step 2): NO GRADIENT ✗ FAIL")
 
-    # NOTE: In this test setup, curr1 won't have gradients because we broke the chain
-    # by using detached numpy conversion between steps. This is expected.
-    # A proper test would need to maintain the gradient graph through both steps.
+    # Check curr1 gradient (THIS IS THE KEY TEST - multi-step gradient flow!)
+    curr1_ok = False
+    if curr1.grad is not None:
+        grad_norm = torch.norm(curr1.grad).item()
+        is_nonzero = grad_norm > 1e-10
+        status = "✓ PASS" if is_nonzero else "✗ FAIL"
+        print(f"curr1 (step 1): norm={grad_norm:.6e}  {status}")
+        curr1_ok = is_nonzero
+    else:
+        print("curr1 (step 1): NO GRADIENT ✗ FAIL")
 
     print("\n" + "=" * 80)
-    if step2_seeds_ok and curr2_ok:
-        print("✓ SUCCESS: Seed gradients are computed correctly!")
-        print("  A matrix FD implementation is working.")
-        print()
-        print("Note: This test validates single-step seed gradients.")
-        print("      True multi-step gradient flow requires maintaining")
-        print("      the computation graph across steps (not tested here).")
+    if curr2_ok and curr1_ok:
+        print("✓ SUCCESS: Multi-step gradient flow is WORKING!")
+        print("  Gradients flow from step 2 all the way back to step 1.")
+        print("  This confirms Phase 3B fix is complete!")
     else:
-        print("✗ FAILURE: Some gradients are missing!")
-        print("  A matrix implementation may have issues.")
+        print("✗ FAILURE: Multi-step gradient flow is broken!")
+        print("  Gradients do not flow through time steps correctly.")
     print("=" * 80)
 
-    return step2_seeds_ok and curr2_ok
+    return curr2_ok and curr1_ok
 
 
 if __name__ == "__main__":

@@ -206,12 +206,15 @@ class OptionCPhysics:
         seed_nL = seed['nL'].expand(batch_size, -1, -1)
 
         # Forward pass through Option C
-        output = crm_torch.CRMDynamicsStep.apply(
+        # Phase 3B: Now returns tuple (output, next_v, next_w, ...)
+        result = crm_torch.CRMDynamicsStep.apply(
             currents, insertion,
             seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL,
             self.config.param_file, self.config.config_file, self.config.eps_seed
         )
 
+        # Unpack and return only the output (seed updates not used in this interface)
+        output = result[0]
         return output.float()  # (batch, 6): [pos(3), vel(3)]
 
     def step(self, currents: np.ndarray, update_state: bool = True) -> np.ndarray:
@@ -344,29 +347,32 @@ class OptionCPhysics:
         insertion = torch.tensor([self.config.insertion_length], dtype=torch.float64, device=self.device)
 
         # Forward pass through Option C (with seed gradients!)
-        output = crm_torch.CRMDynamicsStep.apply(
+        # Phase 3B FIX: CRMDynamicsStep now returns updated seeds!
+        result = crm_torch.CRMDynamicsStep.apply(
             currents, insertion,
             seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL,
             self.config.param_file, self.config.config_file, self.config.eps_seed
         )
 
-        # Update seed state for next step
-        # In a real implementation, we would integrate the dynamics to get updated seeds.
-        # For now, we update using Option A (detached) and return seeds with gradient graph.
+        # Unpack result: (next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL)
+        output, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL = result
+
+        # Phase 3B FIX: Return the UPDATED seeds from the forward pass (not the input seeds!)
+        # This connects seed_t+1 to seed_t in the gradient graph, enabling multi-step optimization
+        updated_seed = {
+            'v': next_v,
+            'w': next_w,
+            'p': next_p,
+            'R': next_R,
+            'xf': next_xf,
+            'mL': next_mL,
+            'nL': next_nL,
+        }
+
+        # Also update internal state for non-differentiable tracking
         with torch.no_grad():
             currents_np = currents[0].detach().cpu().numpy()
             self._dyn.step(currents_np, self.config.insertion_length)
-
-        # Return updated seeds (will have gradients from this step)
-        updated_seed = {
-            'v': seed_v,
-            'w': seed_w,
-            'p': seed_p,
-            'R': seed_R,
-            'xf': seed_xf,
-            'mL': seed_mL,
-            'nL': seed_nL,
-        }
 
         return output[0].float(), updated_seed
 

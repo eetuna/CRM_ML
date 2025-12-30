@@ -18,7 +18,9 @@ namespace py = pybind11;
 
 namespace crm_torch {
 
-torch::Tensor dynamics_forward(
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
+           torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
+dynamics_forward(
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,
@@ -55,8 +57,19 @@ torch::Tensor dynamics_forward(
     int64_t num_sets = seed_v.size(1);
     int64_t output_dim = 3 + 3 * num_sets;  // tip_pos + velocities
 
-    // Allocate output tensor
+    // Allocate output tensors
     auto next_state = allocate_output(batch_size, output_dim);
+
+    // Phase 3B: Allocate tensors for updated seeds (enables multi-step gradient flow)
+    // Create tensors with the same properties as inputs (including requires_grad)
+    auto options = seed_v.options();
+    auto next_v = torch::empty_like(seed_v);
+    auto next_w = torch::empty_like(seed_w);
+    auto next_p = torch::empty_like(seed_p);
+    auto next_R = torch::empty_like(seed_R);
+    auto next_xf = torch::empty_like(seed_xf);
+    auto next_mL = torch::empty_like(seed_mL);
+    auto next_nL = torch::empty_like(seed_nL);
 
     // Get raw pointers for batch processing
     double* output_ptr = next_state.data_ptr<double>();
@@ -160,13 +173,52 @@ torch::Tensor dynamics_forward(
                 }
             }
 
+            // Phase 3B FIX: Extract updated seed state from forward pass result
+            // This enables multi-step gradient flow by connecting seed_t+1 to seed_t
+            // The step_from_seed C++ function returns next_v, next_w, etc.
+
+            // Extract updated seed arrays
+            py::array_t<double> v_updated = result["next_v"].cast<py::array_t<double>>();
+            py::array_t<double> w_updated = result["next_w"].cast<py::array_t<double>>();
+            py::array_t<double> p_updated = result["next_p"].cast<py::array_t<double>>();
+            py::array_t<double> R_updated = result["next_R"].cast<py::array_t<double>>();
+            py::array_t<double> xf_updated = result["next_xf"].cast<py::array_t<double>>();
+            py::array_t<double> mL_updated = result["next_mL"].cast<py::array_t<double>>();
+            py::array_t<double> nL_updated = result["next_nL"].cast<py::array_t<double>>();
+
+            auto v_updated_buf = v_updated.unchecked<2>();
+            auto w_updated_buf = w_updated.unchecked<2>();
+            auto p_updated_buf = p_updated.unchecked<2>();
+            auto R_updated_buf = R_updated.unchecked<2>();
+            auto xf_updated_buf = xf_updated.unchecked<1>();
+            auto mL_updated_buf = mL_updated.unchecked<2>();
+            auto nL_updated_buf = nL_updated.unchecked<2>();
+
+            // Copy updated seeds to output tensors (for gradient flow)
+            for (int64_t j = 0; j < num_sets; ++j) {
+                for (int64_t k = 0; k < 3; ++k) {
+                    next_v[i][j][k] = v_updated_buf(j, k);
+                    next_w[i][j][k] = w_updated_buf(j, k);
+                    next_p[i][j][k] = p_updated_buf(j, k);
+                    next_mL[i][j][k] = mL_updated_buf(j, k);
+                    next_nL[i][j][k] = nL_updated_buf(j, k);
+                }
+                for (int64_t k = 0; k < 9; ++k) {
+                    next_R[i][j][k] = R_updated_buf(j, k);
+                }
+            }
+
+            for (int64_t k = 0; k < 15; ++k) {
+                next_xf[i][k] = xf_updated_buf(k);
+            }
+
         } catch (const std::exception& e) {
             throw std::runtime_error("Batch element " + std::to_string(i) +
                                    " failed: " + std::string(e.what()));
         }
     }
 
-    return next_state;
+    return std::make_tuple(next_state, next_v, next_w, next_p, next_R, next_xf, next_mL, next_nL);
 }
 
 std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
