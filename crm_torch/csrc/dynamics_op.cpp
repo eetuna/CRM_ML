@@ -225,6 +225,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 dynamics_backward(
     torch::Tensor grad_output,
+    torch::Tensor grad_next_v,
+    torch::Tensor grad_next_w,
+    torch::Tensor grad_next_p,
+    torch::Tensor grad_next_R,
+    torch::Tensor grad_next_xf,
+    torch::Tensor grad_next_mL,
+    torch::Tensor grad_next_nL,
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,
@@ -238,9 +245,11 @@ dynamics_backward(
     const std::string& config_file,
     double eps_seed
 ) {
-    // Phase 3A: Compute gradients using Option A's implicit linearization
-    // Currently implements: grad_currents (∂Loss/∂currents)
-    // Seed gradients: Set to zero for MVP (can be added in Phase 3B)
+    // Phase 3B FIX: Compute gradients including contribution from seed outputs
+    // This enables multi-step gradient flow by propagating grad_next_* to grad_currents
+    //
+    // Chain rule: ∂L/∂curr = ∂L/∂output * ∂output/∂curr + ∂L/∂next_seeds * ∂next_seeds/∂curr
+    //           = grad_output^T @ B + grad_next_seeds^T @ B_seeds
 
     // Validate inputs
     validate_tensor(grad_output, "grad_output");
@@ -332,9 +341,15 @@ dynamics_backward(
 
             const double fd_eps = 1e-5;  // FD epsilon
 
-            // Allocate B matrix (6 rows x 3 cols)
+            // Allocate B matrix (6 rows x 3 cols) for state output
             py::array_t<double> B_np(std::vector<py::ssize_t>{6, 3});
             auto B_buf = B_np.mutable_unchecked<2>();
+
+            // Phase 3B: Also allocate B_seeds matrix for seed outputs (mL, nL)
+            // B_seeds has shape (num_sets * 6, 3) where 6 = 3 (mL) + 3 (nL) per actuator
+            const int64_t seed_out_dim = num_sets * 6;  // mL(3) + nL(3) per actuator
+            py::array_t<double> B_seeds_np(std::vector<py::ssize_t>{seed_out_dim, 3});
+            auto B_seeds_buf = B_seeds_np.mutable_unchecked<2>();
 
             // Initialize to zero
             for (int j = 0; j < 6; ++j) {
@@ -342,8 +357,13 @@ dynamics_backward(
                     B_buf(j, k) = 0.0;
                 }
             }
+            for (int64_t j = 0; j < seed_out_dim; ++j) {
+                for (int k = 0; k < 3; ++k) {
+                    B_seeds_buf(j, k) = 0.0;
+                }
+            }
 
-            // Compute B via central differences: B[:, j] = (f(u+eps*ej) - f(u-eps*ej)) / (2*eps)
+            // Compute B and B_seeds via central differences
             for (int j = 0; j < 3; ++j) {
                 // Perturb current j in positive direction
                 py::array_t<double> curr_plus(std::vector<py::ssize_t>{3});
@@ -358,11 +378,17 @@ dynamics_backward(
                     mL_np, nL_np, py::none()
                 ).cast<py::dict>();
 
-                // Extract output
+                // Extract state output
                 py::array_t<double> pos_plus = result_plus["tip_position"].cast<py::array_t<double>>();
                 py::array_t<double> vel_plus = result_plus["tip_velocity"].cast<py::array_t<double>>();
                 auto pos_plus_buf = pos_plus.unchecked<1>();
                 auto vel_plus_buf = vel_plus.unchecked<1>();
+
+                // Phase 3B: Also extract seed outputs (next_mL, next_nL)
+                py::array_t<double> mL_plus = result_plus["next_mL"].cast<py::array_t<double>>();
+                py::array_t<double> nL_plus = result_plus["next_nL"].cast<py::array_t<double>>();
+                auto mL_plus_buf = mL_plus.unchecked<2>();
+                auto nL_plus_buf = nL_plus.unchecked<2>();
 
                 // Perturb current j in negative direction
                 py::array_t<double> curr_minus(std::vector<py::ssize_t>{3});
@@ -377,25 +403,40 @@ dynamics_backward(
                     mL_np, nL_np, py::none()
                 ).cast<py::dict>();
 
-                // Extract output
+                // Extract state output
                 py::array_t<double> pos_minus = result_minus["tip_position"].cast<py::array_t<double>>();
                 py::array_t<double> vel_minus = result_minus["tip_velocity"].cast<py::array_t<double>>();
                 auto pos_minus_buf = pos_minus.unchecked<1>();
                 auto vel_minus_buf = vel_minus.unchecked<1>();
 
-                // Compute central difference for column j
+                // Phase 3B: Also extract seed outputs
+                py::array_t<double> mL_minus = result_minus["next_mL"].cast<py::array_t<double>>();
+                py::array_t<double> nL_minus = result_minus["next_nL"].cast<py::array_t<double>>();
+                auto mL_minus_buf = mL_minus.unchecked<2>();
+                auto nL_minus_buf = nL_minus.unchecked<2>();
+
+                // Compute central difference for B (state output)
                 // B[0:3, j] = d(tip_position)/d(current_j)
                 for (int k = 0; k < 3; ++k) {
                     B_buf(k, j) = (pos_plus_buf(k) - pos_minus_buf(k)) / (2.0 * fd_eps);
                 }
-
                 // B[3:6, j] = d(tip_velocity)/d(current_j)
                 for (int k = 0; k < 3; ++k) {
                     B_buf(3 + k, j) = (vel_plus_buf(k) - vel_minus_buf(k)) / (2.0 * fd_eps);
                 }
+
+                // Phase 3B: Compute B_seeds (seed output Jacobians)
+                // B_seeds[act*6 : act*6+3, j] = d(next_mL[act])/d(current_j)
+                // B_seeds[act*6+3 : act*6+6, j] = d(next_nL[act])/d(current_j)
+                for (int64_t act = 0; act < num_sets; ++act) {
+                    for (int k = 0; k < 3; ++k) {
+                        B_seeds_buf(act * 6 + k, j) = (mL_plus_buf(act, k) - mL_minus_buf(act, k)) / (2.0 * fd_eps);
+                        B_seeds_buf(act * 6 + 3 + k, j) = (nL_plus_buf(act, k) - nL_minus_buf(act, k)) / (2.0 * fd_eps);
+                    }
+                }
             }
 
-            // B matrix is now computed via FD - guaranteed to match forward pass!
+            // B and B_seeds matrices computed via FD - multi-step gradient flow enabled!
 
             // Extract grad_output for this sample (shape: 6)
             double grad_y[6];
@@ -403,15 +444,35 @@ dynamics_backward(
                 grad_y[j] = grad_output[i][j].item<double>();
             }
 
-            // Compute grad_currents = B^T @ grad_y (vector-Jacobian product)
-            // B is (6, 3), grad_y is (6,) -> result is (3,)
-            // For each current dimension j:
-            //   grad_currents[j] = sum_k B[k, j] * grad_y[k]
+            // Phase 3B: Extract grad_next_mL and grad_next_nL for this sample
+            // These are the gradients flowing back from the next time step
+            std::vector<double> grad_seeds_out(seed_out_dim, 0.0);
+            for (int64_t act = 0; act < num_sets; ++act) {
+                for (int k = 0; k < 3; ++k) {
+                    grad_seeds_out[act * 6 + k] = grad_next_mL[i][act][k].item<double>();
+                    grad_seeds_out[act * 6 + 3 + k] = grad_next_nL[i][act][k].item<double>();
+                }
+            }
+
+            // Compute grad_currents = B^T @ grad_y + B_seeds^T @ grad_seeds_out
+            // This is the key fix: include contribution from seed outputs!
+            //
+            // Term 1: B^T @ grad_y (from state output path)
+            // Term 2: B_seeds^T @ grad_seeds_out (from seed output path - MULTI-STEP FIX)
             for (int j = 0; j < 3; ++j) {
                 double grad_u_j = 0.0;
+
+                // Term 1: Contribution from state output (tip_pos, tip_vel)
                 for (int k = 0; k < 6; ++k) {
                     grad_u_j += B_buf(k, j) * grad_y[k];
                 }
+
+                // Term 2: Contribution from seed outputs (next_mL, next_nL)
+                // This enables multi-step gradient flow!
+                for (int64_t k = 0; k < seed_out_dim; ++k) {
+                    grad_u_j += B_seeds_buf(k, j) * grad_seeds_out[k];
+                }
+
                 grad_curr_ptr[i * 3 + j] = grad_u_j;
             }
 

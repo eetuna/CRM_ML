@@ -128,7 +128,7 @@ class CRMDynamicsStep(torch.autograd.Function):
         currents, insertion_length = saved[0], saved[1]
         seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL = saved[2:]
 
-        # Accumulate seed gradients (chain rule: gradients from both paths)
+        # Phase 3B FIX: Pass grad_next_* to C++ for proper multi-step gradient flow
         # If None, use zeros (no gradient from that output)
         if grad_next_v is None:
             grad_next_v = torch.zeros_like(seed_v)
@@ -145,11 +145,17 @@ class CRMDynamicsStep(torch.autograd.Function):
         if grad_next_nL is None:
             grad_next_nL = torch.zeros_like(seed_nL)
 
-        # Call C++ backward function
-        # It computes gradients w.r.t. inputs based on grad_output (from next_state)
-        # We'll need to add the gradients from the seed outputs separately
+        # Call C++ backward function with grad_next_* for multi-step gradient flow
+        # C++ now computes: grad_currents = B^T @ grad_output + B_seeds^T @ grad_next_seeds
         grads = _crm_torch_ext.dynamics_backward(
             grad_output.detach().cpu().double().contiguous(),
+            grad_next_v.detach().cpu().double().contiguous(),
+            grad_next_w.detach().cpu().double().contiguous(),
+            grad_next_p.detach().cpu().double().contiguous(),
+            grad_next_R.detach().cpu().double().contiguous(),
+            grad_next_xf.detach().cpu().double().contiguous(),
+            grad_next_mL.detach().cpu().double().contiguous(),
+            grad_next_nL.detach().cpu().double().contiguous(),
             currents, insertion_length,
             seed_v, seed_w, seed_p, seed_R, seed_xf, seed_mL, seed_nL,
             ctx.param_file, ctx.config_file, ctx.eps_seed
@@ -157,17 +163,21 @@ class CRMDynamicsStep(torch.autograd.Function):
 
         # grads = (grad_currents, grad_insertion, grad_seed_v, grad_seed_w,
         #          grad_seed_p, grad_seed_R, grad_seed_xf, grad_seed_mL, grad_seed_nL)
-
-        # Add gradients from seed outputs (Phase 3B multi-step gradient flow)
-        # These are the gradients flowing back from the next time step
-        # IMPORTANT: Don't detach! We need to maintain the gradient graph
+        #
+        # Note: C++ now handles the multi-step contribution to grad_currents!
+        # The seed gradients still need the pass-through term added here
+        # (for seeds that are essentially copied forward like v, w, p, R)
         grad_currents = grads[0]
         grad_insertion = grads[1]
+        # Add pass-through gradients for non-solved seeds (v, w, p, R, xf)
+        # These are approximately identity-transformed, so grad flows directly
         grad_seed_v = grads[2] + grad_next_v.cpu().double().contiguous()
         grad_seed_w = grads[3] + grad_next_w.cpu().double().contiguous()
         grad_seed_p = grads[4] + grad_next_p.cpu().double().contiguous()
         grad_seed_R = grads[5] + grad_next_R.cpu().double().contiguous()
         grad_seed_xf = grads[6] + grad_next_xf.cpu().double().contiguous()
+        # For mL/nL: the C++ already included their contribution to grad_currents
+        # but we still add them here for the seed input gradient
         grad_seed_mL = grads[7] + grad_next_mL.cpu().double().contiguous()
         grad_seed_nL = grads[8] + grad_next_nL.cpu().double().contiguous()
 

@@ -37,6 +37,13 @@ PYBIND11_MODULE(_crm_torch_ext, m) {
     m.def("dynamics_backward",
           &crm_torch::dynamics_backward,
           py::arg("grad_output"),
+          py::arg("grad_next_v"),
+          py::arg("grad_next_w"),
+          py::arg("grad_next_p"),
+          py::arg("grad_next_R"),
+          py::arg("grad_next_xf"),
+          py::arg("grad_next_mL"),
+          py::arg("grad_next_nL"),
           py::arg("currents"),
           py::arg("insertion_length"),
           py::arg("seed_v"),
@@ -49,5 +56,5 @@ PYBIND11_MODULE(_crm_torch_ext, m) {
           py::arg("param_file"),
           py::arg("config_file"),
           py::arg("eps_seed") = 1e-4,
-          "Compute gradients via implicit differentiation");
+          "Compute gradients via implicit differentiation with multi-step support");
 }

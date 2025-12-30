@@ -60,6 +60,13 @@ std::tuple<torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor,
            torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor, torch::Tensor>
 dynamics_backward(
     torch::Tensor grad_output,
+    torch::Tensor grad_next_v,
+    torch::Tensor grad_next_w,
+    torch::Tensor grad_next_p,
+    torch::Tensor grad_next_R,
+    torch::Tensor grad_next_xf,
+    torch::Tensor grad_next_mL,
+    torch::Tensor grad_next_nL,
     torch::Tensor currents,
     torch::Tensor insertion_length,
     torch::Tensor seed_v,
