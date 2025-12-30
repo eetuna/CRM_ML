@@ -252,30 +252,41 @@ Investigate WHY zero velocity causes high angular acceleration in the physics mo
 ## 🚀 HANDOFF PROMPT FOR NEXT SESSION
 
 ```
-Continuing Option A/C differentiable simulator fix.
+Continue Phase 2: Implement true automatic differentiation for implicit linearization.
 
 STATUS:
 - Phase 1 COMPLETE: Both Option A and C work with FD (0% error)
-- RK4 bug fix COMPLETE: Fixed integrator divergence
+- RK4 bug fix COMPLETE: Fixed integrator divergence (proper engineering)
+- Phase 2 IN PROGRESS: Root cause of AD mismatch identified - ready for implementation
 
-FIX APPLIED (2025-12-29):
-Increased kMaxSubdivisionLevels from 4 to 8 in src/CRMDYN_DYNNLEquationResidual_autodiff_eigen.hpp:27
-- Allows 256x refinement instead of 16x
-- RK4 integrator now handles zero-velocity seeds correctly
-- All validation tests pass with 0% error
+PHASE 2 STATUS:
+Current AD error: 67.9% (linearize_full_seed_action_from_seed_implicit)
 
-VALIDATION RESULTS:
-✅ validate_option_a_fix.py: ALL TESTS PASSED
-  - B matrix (current gradients): 0.0002% max error
-  - A matrix (seed gradients): 0.0000% error
-✅ test_option_c_integration.py: 7/7 tests passed
-✅ test_dynnlequation_residual_eigen_autodiff.py: PASSED
+ROOT CAUSE VERIFIED:
+The function computes: dy/dθ = gth + gx * dxdth
+- gth = ∂y/∂θ|ₓ (partial derivative) ✓ CORRECT
+- gx = ∂y/∂x ✓ CORRECT
+- dxdth = dx/dθ from BVP residual ✗ WRONG
 
-NEXT STEPS:
-- Phase 2: Investigate AD forward/backward mismatch (if needed)
-- Phase 3: Consider adding true AD to Option C to replace FD
+Bug: dxdth computed from BVP (backward integration), but forward pass uses IVP
+(forward integration). These are DIFFERENT operations → wrong gradients.
 
-See HANDOFF_OPTION_A_C_FIX.md for full context.
+SOLUTION: Option 2C (Hybrid FD+AD)
+- Compute dx/dθ by finite-differencing the actual forward pass
+- Use in chain rule with existing gth and gx
+- ~100 lines of code in crm_bindings.cpp:2700-2862
+
+VERIFIED FACTS (rigorous analysis):
+1. gth is partial derivative ∂y/∂θ|ₓ (line 1538: x_ad captured as constant)
+2. Chain rule IS necessary (removing it made error worse: 67.9% → 387.1%)
+3. Forward pass uses DYNSolverIVP (confirmed via grep)
+4. Current dxdth from BVP residual doesn't match forward pass
+
+FILES: crm_bindings.cpp lines 2700-2862
+TEST: python3 test_ad_forward_backward_mismatch.py (should show <1% after fix)
+
+See PHASE_2_HANDOFF.md for complete implementation plan.
+See PHASE_2_AD_MISMATCH_ANALYSIS.md for corrected technical analysis.
 ```
 
 ---
@@ -289,19 +300,31 @@ See HANDOFF_OPTION_A_C_FIX.md for full context.
 ✅ Phase 1: Verify Option A 0% gradient error
 ✅ RK4 Fix: Increase kMaxSubdivisionLevels from 4 to 8 (COMPLETE)
 ✅ RK4 Fix: Verify all tests pass with new subdivision limit
-⏸️ Phase 2: Investigate AD forward/backward mismatch (optional)
-⏸️ Phase 2: Implement true AD fix (optional)
-⏸️ Phase 3: Add AD to Option C to replace FD (optional)
+✅ RK4 Investigation: Add diagnostics to RK4 and ABM4 integrators
+✅ RK4 Investigation: Trace code paths to understand integrator usage
+✅ RK4 Investigation: Document findings in RK4_ABM4_INVESTIGATION_REPORT.md
+⏸️ Phase 2: Investigate AD forward/backward mismatch (optional - not urgent)
+⏸️ Phase 2: Implement true AD fix (optional - works fine with current FD)
+⏸️ Phase 3: Add AD to Option C to replace FD (optional - works fine as-is)
 ```
 
 ---
 
 ## 🔗 KEY REFERENCES
 
+### Phase 1 (Complete)
 - **Original plan:** `/home/vscode/.claude/plans/synthetic-swimming-candle.md`
 - **Phase A3 completion:** `docs/PHASE_A3_COMPLETE_2025_12_29.md`
 - **Architecture doc:** `docs/architecture/PLAN_end_to_end_differentiable_simulator_options_A_B_C.md`
-- **RK4 debug script:** `/tmp/debug_rk4.py`
+- **RK4 Investigation:** `RK4_ABM4_INVESTIGATION_REPORT.md`
+- **Validation script:** `validate_option_a_fix.py` (0% error ✓)
+- **RK4 diagnostic scripts:** `test_rk4_diagnostics.py`, `test_rk4_diagnostics_ad.py`
+
+### Phase 2 (In Progress) ⭐ NEW
+- **HANDOFF:** `PHASE_2_HANDOFF.md` - Start here for next session
+- **Analysis:** `PHASE_2_AD_MISMATCH_ANALYSIS.md` - Problem analysis (CORRECTED)
+- **Implementation:** `PHASE_2_IMPLEMENTATION_PLAN.md` - Detailed solution design
+- **Test:** `test_ad_forward_backward_mismatch.py` - Shows 67.9% error (target: <1%)
 
 ---
 

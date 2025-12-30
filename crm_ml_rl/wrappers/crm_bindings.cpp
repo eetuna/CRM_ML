@@ -2289,8 +2289,10 @@ public:
         py::array_t<double> nL_use = ensure_mn(nL_in, nL_guess);
 
         // Base solve: get y0 and x* (as next_mL/next_nL) by running the full step once.
+        std::cout << "[LINEARIZE DEBUG] Step 1: Starting base solve..." << std::endl;
         py::dict base = step_from_seed(currents, insertion_length, v_in, w_in, p_in, R_in, xf_in, mL_use, nL_use, std::nullopt);
         const bool ok = base["converged"].cast<bool>();
+        std::cout << "[LINEARIZE DEBUG] Step 1: Base solve completed, converged=" << ok << std::endl;
 
         const Eigen::Matrix<double, 6, 1> y0 = get_state6(base);
 
@@ -2602,6 +2604,7 @@ public:
         };
 
         // Task 1.2: Current vector (3D) + insertion_length for 4D control Jacobian
+        std::cout << "[LINEARIZE DEBUG] Step 2: Preparing current and seed vectors..." << std::endl;
         Eigen::Vector3d curr0(0.0, 0.0, 0.0);
         auto curr_buf = currents.request();
         const double* curr_ptr = static_cast<double*>(curr_buf.ptr);
@@ -2621,6 +2624,7 @@ public:
         const double residual_norm = F0.norm();
 
         // Residual Jacobians: Jxx and Jxθ (θ = currents3 + seed_flat).
+        std::cout << "[LINEARIZE DEBUG] Step 3: Computing Jxx (dF/dx) via AD..." << std::endl;
         Eigen::MatrixXd Jxx(x_dim, x_dim);
         bool have_ad_jxx = false;
         if (x_dim == NUM_DYN_RESIDUAL && num_sets == 1) {
@@ -2699,21 +2703,30 @@ public:
                 }
 
                 Eigen::VectorXd Fad;
+                std::cout << "[LINEARIZE DEBUG] Step 3a: Calling DYNNLEquationJacobianEigenAD..." << std::endl;
                 Eigen::MatrixXd Jad = DYNNLEquationJacobianEigenAD(x_star_scaled, DYNNLEParams, &Fad);
+                std::cout << "[LINEARIZE DEBUG] Step 3b: AD Jacobian returned, size=" << Jad.rows() << "x" << Jad.cols() << std::endl;
                 if (Jad.rows() == x_dim && Jad.cols() == x_dim && Jad.allFinite()) {
                     Jxx = Jad;
                     have_ad_jxx = true;
+                    std::cout << "[LINEARIZE DEBUG] Step 3c: AD Jacobian validated successfully" << std::endl;
                 }
             } catch (...) {
+                std::cout << "[LINEARIZE DEBUG] Step 3: AD Jacobian failed, will use FD" << std::endl;
                 have_ad_jxx = false;
             }
         }
+        std::cout << "[LINEARIZE DEBUG] Step 3 complete: have_ad_jxx=" << have_ad_jxx << std::endl;
 
         Eigen::MatrixXd Jxx_fd;
         if (!have_ad_jxx || return_debug) {
+            std::cout << "[LINEARIZE DEBUG] Step 4: Computing Jxx via FD (x_dim=" << x_dim << ")..." << std::endl;
             Jxx_fd.resize(x_dim, x_dim);
             Jxx_fd.setZero();
             for (int j = 0; j < x_dim; j++) {
+                if (j % 2 == 0) {
+                    std::cout << "[LINEARIZE DEBUG] Step 4: FD Jxx column " << j << "/" << x_dim << std::endl;
+                }
                 Eigen::VectorXd xp = x_star_scaled;
                 Eigen::VectorXd xm = x_star_scaled;
                 xp(j) += eps_residual_x;
@@ -2724,6 +2737,7 @@ public:
                 const Eigen::VectorXd Fm = eval_residual(xm, curr0, seed0, tau_m, u0_m);
                 Jxx_fd.col(j) = (Fp - Fm) * (0.5 / eps_residual_x);
             }
+            std::cout << "[LINEARIZE DEBUG] Step 4 complete: FD Jxx computed" << std::endl;
         }
         if (!have_ad_jxx) {
             Jxx = Jxx_fd;
@@ -2733,6 +2747,7 @@ public:
         Eigen::MatrixXd Jxth(x_dim, theta_dim);
         Jxth.setZero();
 
+        std::cout << "[LINEARIZE DEBUG] Step 5: Computing Jxth (dF/dtheta)..." << std::endl;
         // Compute ∂F/∂u (currents) using AD when available (Task 1.5)
         bool have_ad_jxu = false;
         Eigen::MatrixXd Jxu_ad;  // Task 1.2: Declare outside try block for later access
@@ -2830,10 +2845,14 @@ public:
         }
 
         // Compute remaining ∂F/∂θ for seed and currents (if AD failed) using FD
+        std::cout << "[LINEARIZE DEBUG] Step 5a: Computing remaining Jxth columns via FD (theta_dim=" << theta_dim << ")..." << std::endl;
         for (int j = 0; j < theta_dim; j++) {
             if (j < 3 && have_ad_jxu) {
                 // Skip currents - already computed via AD
                 continue;
+            }
+            if (j % 10 == 0) {
+                std::cout << "[LINEARIZE DEBUG] Step 5a: FD Jxth column " << j << "/" << theta_dim << std::endl;
             }
             Eigen::Vector3d curr_p = curr0;
             Eigen::Vector3d curr_m = curr0;
@@ -2853,6 +2872,7 @@ public:
             const Eigen::VectorXd Fm = eval_residual(x_star_scaled, curr_m, seed_m, tau_m, u0_m);
             Jxth.col(j) = (Fp - Fm) * (0.5 / eps_residual_theta);
         }
+        std::cout << "[LINEARIZE DEBUG] Step 5 complete: Jxth computed" << std::endl;
 
         // Solve for dx/dθ: Jxx * X = -Jxθ
         Eigen::ColPivHouseholderQR<Eigen::MatrixXd> qr(Jxx);
@@ -2860,6 +2880,23 @@ public:
             throw std::runtime_error("Implicit linearization failed: Jxx is rank-deficient at x*.");
         }
         const Eigen::MatrixXd dxdth = qr.solve(-Jxth);  // (x_dim, theta_dim)
+
+        // Debug: Check BVP residual at converged point
+        if (const char* debug_env = std::getenv("CRM_DEBUG_GRADIENT")) {
+            if (std::string(debug_env) == "1") {
+                // Check residual at x*
+                Eigen::VectorXd tau_check, residual_at_x_star;
+                Eigen::Vector3d u0_check;
+                residual_at_x_star = eval_residual(x_star_scaled, curr0, seed0, tau_check, u0_check);
+                std::cout << "\n[CRM_DEBUG_GRADIENT] BVP Residual at x*:\n";
+                std::cout << "  ||F(x*, θ)||: " << residual_at_x_star.norm() << "\n";
+                std::cout << "  Jxx rank: " << qr.rank() << " / " << x_dim << "\n";
+                std::cout << "  Jxx condition number: " << (Jxx.transpose() * Jxx).trace() << " (trace approx)\n";
+                std::cout << "  dxdth norm: " << dxdth.norm() << "\n";
+                std::cout << "  Jxx norm: " << Jxx.norm() << "\n";
+                std::cout << "  Jxth norm: " << Jxth.norm() << "\n";
+            }
+        }
 
         // Phase 2 Task 2.3: Compute output gradients gx and gθ using AD
         Eigen::MatrixXd gx(6, x_dim);
@@ -2946,13 +2983,63 @@ public:
         // Task 4.9: Compute output dimension dynamically
         const int output_dim = 3 + 3 * num_sets;  // tip_position + velocity_per_actuator
 
+        std::cout << "[LINEARIZE DEBUG] Step 6: Computing output Jacobians (gx, gth) via AD..." << std::endl;
         // Call AD function to compute gradients
         CRMCatheterModel::dynnl_ad_eigen::DYNNLEquationOutputJacobianEigenAD(
             x_star_scaled, curr0, seed0, DYNNLEParams_for_AD, gx, gth
         );
+        std::cout << "[LINEARIZE DEBUG] Step 6 complete: Output Jacobians computed" << std::endl;
 
-        // Assemble dy/dθ = gθ + gx * dx/dθ
+        // Debug: Print gradient components
+        if (const char* debug_env = std::getenv("CRM_DEBUG_GRADIENT")) {
+            if (std::string(debug_env) == "1") {
+                std::cout << "\n[CRM_DEBUG_GRADIENT] Output Jacobians:\n";
+                std::cout << "  gx (∂y/∂x) shape: " << gx.rows() << " x " << gx.cols() << "\n";
+                std::cout << "  gx norm: " << gx.norm() << "\n";
+                std::cout << "  gth (∂y/∂θ|ₓ) shape: " << gth.rows() << " x " << gth.cols() << "\n";
+                std::cout << "  gth norm: " << gth.norm() << "\n";
+
+                // Show first few rows of gth (currents part)
+                std::cout << "  gth (currents, first 3 rows):\n";
+                for (int i = 0; i < std::min(3, (int)gth.rows()); i++) {
+                    std::cout << "    [" << gth(i, 0) << ", " << gth(i, 1) << ", " << gth(i, 2) << "]\n";
+                }
+
+                // Show chain rule terms
+                Eigen::MatrixXd gx_dxdth = gx * dxdth;
+                std::cout << "  gx * dx/dθ norm: " << gx_dxdth.norm() << "\n";
+                std::cout << "  gx * dx/dθ (currents, first 3 rows):\n";
+                for (int i = 0; i < std::min(3, (int)gx_dxdth.rows()); i++) {
+                    std::cout << "    [" << gx_dxdth(i, 0) << ", " << gx_dxdth(i, 1) << ", " << gx_dxdth(i, 2) << "]\n";
+                }
+            }
+        }
+
+        // Phase 2: The issue is that eval_output_AD_with_params treats x as FIXED
+        // and only differentiates w.r.t. currents and seed GIVEN a fixed x.
+        // But x itself depends on currents and seed through the BVP solve.
+        // So we need the chain rule: dy/dθ = ∂y/∂θ|x + ∂y/∂x * dx/dθ
+        //
+        // Current BUG: dxdth is computed from BVP residual (backward integration)
+        // but the forward pass uses explicit integration (forward)
+        // These are DIFFERENT operations, causing gradient mismatch
+        //
+        // TODO Phase 2: Need to fix dxdth computation to match forward pass
         const Eigen::MatrixXd dydth = gth + gx * dxdth;  // (output_dim, theta_dim)
+
+        // Debug: Print final gradient
+        if (const char* debug_env = std::getenv("CRM_DEBUG_GRADIENT")) {
+            if (std::string(debug_env) == "1") {
+                std::cout << "\n[CRM_DEBUG_GRADIENT] Final Gradient (chain rule):\n";
+                std::cout << "  dy/dθ = gth + gx * dx/dθ\n";
+                std::cout << "  dy/dθ norm: " << dydth.norm() << "\n";
+                std::cout << "  dy/dθ (currents, first 3 rows):\n";
+                for (int i = 0; i < std::min(3, (int)dydth.rows()); i++) {
+                    std::cout << "    [" << dydth(i, 0) << ", " << dydth(i, 1) << ", " << dydth(i, 2) << "]\n";
+                }
+                std::cout << "\n";
+            }
+        }
 
         // Split into B (currents) and A (seed).
         py::array_t<double> next_state({output_dim});
